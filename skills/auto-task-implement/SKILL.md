@@ -1,5 +1,5 @@
 ---
-name: implement
+name: auto-task-implement
 description: Execute tasks from the implementation plan. Use when asked to "implement the plan", "start implementing", "continue implementation", "resume work", or "execute the plan".
 license: MIT
 metadata:

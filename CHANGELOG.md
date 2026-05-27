@@ -9,12 +9,12 @@ Initial extraction of the `auto-task` skill from `~/.claude/skills/auto-task/` i
 ### Added
 
 - `skills/auto-task/` — orchestrator skill (SKILL.md + ARCHITECTURE.md).
-- Forked bundled copies of the six sibling skills: `plan`, `implement`, `verify`, `code-review`, `commit`, `fix`. Snapshot date: TODO (record the upstream commit SHA on each).
+- Forked bundled copies of the six sibling skills, namespaced under the `auto-task-` prefix to avoid clobbering the user's existing skills: `auto-task-plan`, `auto-task-implement`, `auto-task-verify`, `auto-task-code-review`, `auto-task-commit`, `auto-task-fix`. Snapshot date: TODO (record the upstream commit SHA on each).
 - `agents/task-execution-verifier.md` — STUB. Two-mode verifier (completeness / adversarial) referenced by Gate A and Gate B. Needs full prompt scaffolding before claiming v0.1.0.
 - `hooks/block-ai-attribution.sh` — refuses commits / PR bodies containing AI-attribution markers.
 - `hooks/enforce-gates.sh` — blocks `git commit` during a run until all required gates have passed. Path now resolves `.auto-task/<branch>/STATE.json` (was `.patches/AUTO-TASK-STATE.json` in the source machine's settings.json).
 - `hooks/prevent-mid-protocol-stall.sh` — Stop hook backed by `expected_next_action` in STATE.json. Blocks turn-ends mid-pipeline.
-- `settings-fragment.json` — merge template for `~/.claude/settings.json` (hooks + `permissions.ask` entries).
+- `settings-fragment.json` — merge template for `~/.claude/settings.json` (the three hooks).
 - `.claude-plugin/plugin.json` — plugin manifest. Field names are placeholders; verify against the current Claude Code plugin spec before locking.
 - `README.md`, `LICENSE` (MIT), this changelog.
 - `PACKAGING_PLAN.md` — the work plan and open questions for getting to v0.1.0.

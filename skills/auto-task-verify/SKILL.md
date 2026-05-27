@@ -1,5 +1,5 @@
 ---
-name: verify
+name: auto-task-verify
 description: Verify that planned tasks are actually implemented. Use when asked to "verify implementation", "check the plan", "validate changes", "are all tasks done", or "run verification".
 license: MIT
 metadata:

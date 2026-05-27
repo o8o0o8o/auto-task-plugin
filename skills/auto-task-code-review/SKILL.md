@@ -1,5 +1,5 @@
 ---
-name: code-review
+name: auto-task-code-review
 description: Review code via a strict 5-phase workflow (Investigate → Define → Execute → Prevent → Verify). Read-only — never edits code. Use when the user says "code review", "review this code", "find issues in", "what's wrong with this", or asks for a critique of a specific file/function/diff. For PR/staged-diff orchestration use `review`; this skill is the disciplined problem-finding pass.
 ---
 

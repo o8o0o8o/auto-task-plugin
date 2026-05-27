@@ -9,7 +9,7 @@ metadata:
 
 # Auto-task
 
-Autonomous pipeline that takes a task description from intake to pull request. Composes existing skills (`plan`, `implement`, `verify`, `code-review`, `commit`) and `task-execution-verifier` agent passes around them.
+Autonomous pipeline that takes a task description from intake to pull request. Composes existing skills (`auto-task-plan`, `auto-task-implement`, `auto-task-verify`, `auto-task-code-review`, `auto-task-commit`) and `task-execution-verifier` agent passes around them.
 
 ## NON-YIELDING CONTRACT (read first — the highest-priority rule in this skill)
 
@@ -22,16 +22,16 @@ After the user types `approved` / `looks good` / `proceed` / `yes` / `go ahead` 
 
 There are NO other legitimate stopping points between plan approval and Phase 5. In particular:
 
-- A sub-skill (`plan`, `implement`, `verify`, `code-review`, `commit`) returning a structured report is **INPUT**, not an end-of-turn. Parse it, act on it, continue.
+- A sub-skill (`auto-task-plan`, `auto-task-implement`, `auto-task-verify`, `auto-task-code-review`, `auto-task-commit`) returning a structured report is **INPUT**, not an end-of-turn. Parse it, act on it, continue.
 - A verifier agent (`task-execution-verifier` at Gate A or Gate B) returning findings is **INPUT**. Apply fixes (Blocker/Required) or park (Follow-up), then continue.
-- A green check from `/verify` advances to Gate A. Continue.
-- A clean `code-review` pass (no Blockers/Required) advances to Gate B (or Phase 5 for LIGHT tier). Continue.
+- A green check from `/auto-task-verify` advances to Gate A. Continue.
+- A clean `auto-task-code-review` pass (no Blockers/Required) advances to Gate B (or Phase 5 for LIGHT tier). Continue.
 - A "No adversarial findings." from Gate B advances to Phase 5. Continue.
 - Phase 5's gate-precheck passing advances to commit. Continue.
 - A successful commit advances to push. Continue.
 - Output-formatting cues that LOOK like end-of-turn — "Verdict:", "Summary:", a Markdown horizontal rule, a heading-shaped final line, a turn-final blank line, a checklist that has all items ticked — are **paragraph formatting**. They are not interaction points. Do not stop.
 
-**The only sub-skill/sub-agent return that's allowed to end your turn is `commit` after a successful push and `gh pr create` (Phase 5 final).** Everything else feeds the next step.
+**The only sub-skill/sub-agent return that's allowed to end your turn is `auto-task-commit` after a successful push and `gh pr create` (Phase 5 final).** Everything else feeds the next step.
 
 If you find yourself about to write a recap, a "next steps" summary, a "ready for your review" line, or any sentence that addresses the user in the second person mid-pipeline — STOP TYPING and instead make the next tool call. Recaps are for the post-Phase-5 message, not for mid-pipeline.
 
@@ -43,16 +43,16 @@ The single exception during Phase 5: pushing to remote and opening a PR are exte
 
 - **One human gate.** The plan produced in Phase 1 is the contract. After the user approves it, do not stop for confirmation — proceed through Execute → Verify → Review → Handover automatically.
 - **Surface only when the loop rule says to.** See "Loop rule" below. Never invent new stops outside that rule.
-- **Commit after each phase.** Each phase ends with a `/commit` so progress is durable and resumable.
-- **`.auto-task/` is the persistent local history root — gitignored, NEVER committed.** Layout: `.auto-task/<branch-name>/` per run, where `<branch-name>` mirrors the git branch path verbatim (so branch `fix/auth-bug` → `.auto-task/fix/auth-bug/`). Inside each per-run folder:
+- **Commit after each phase.** Each phase ends with a `/auto-task-commit` so progress is durable and resumable.
+- **`.auto-task/` is the persistent local history root — gitignored, NEVER committed.** Layout: `.auto-task/<branch-name>/` per run, where `<branch-name>` mirrors the git branch path verbatim (so branch `fix/auth-bug` → `.auto-task/auto-task-fix/auth-bug/`). Inside each per-run folder:
   - `STATE.json` — the run-state machine ([[state-file-schema]]).
   - `PLAN.md` — the approved plan + critique + AC pre-flight + recon.
-  - `CONTEXT.md` — generated at Phase 5; carries task, human choices, AC results, verification trail, drift events, change diagram, follow-ups. The handover artifact for downstream reviewers (human, `/code-review`, `/review`, future `/auto-task` runs touching the same area).
-  - `TRACE.md` — append-only log of every operation that touched this branch (auto-task phases AND external tool runs like a later `/code-review` session). See the "Persistent history & trace contract" section.
+  - `CONTEXT.md` — generated at Phase 5; carries task, human choices, AC results, verification trail, drift events, change diagram, follow-ups. The handover artifact for downstream reviewers (human, `/auto-task-code-review`, `/review`, future `/auto-task` runs touching the same area).
+  - `TRACE.md` — append-only log of every operation that touched this branch (auto-task phases AND external tool runs like a later `/auto-task-code-review` session). See the "Persistent history & trace contract" section.
   - `recon/` — Phase 1 reconnaissance outputs (screenshots, fetched docs, change-diagram source).
   - `artifacts/` — proofs of completion (test output logs, screenshots confirming the fix, build logs, diff snapshots, command transcripts). Reviewers verify "the fix actually works" by reading these without needing to re-run the run.
 
-  None of this lands in the git index. On branch setup, append `.auto-task/` to `.git/info/exclude` so it's ignored per-clone (do not modify the repo's `.gitignore` — that's a shared file). Before every `git commit` (including the `commit` skill), defensively unstage any `.auto-task/` paths: `git restore --staged .auto-task/ 2>/dev/null || true`. If `git status` after staging shows anything under `.auto-task/`, that's a bug — fix it before committing.
+  None of this lands in the git index. On branch setup, append `.auto-task/` to `.git/info/exclude` so it's ignored per-clone (do not modify the repo's `.gitignore` — that's a shared file). Before every `git commit` (including the `auto-task-commit` skill), defensively unstage any `.auto-task/` paths: `git restore --staged .auto-task/ 2>/dev/null || true`. If `git status` after staging shows anything under `.auto-task/`, that's a bug — fix it before committing.
 - **State on disk.** Maintain `.auto-task/<branch>/STATE.json` so the workflow can be interrupted and resumed via `/auto-task` with no arguments. It lives locally only — see the rule above.
 - **No scope creep.** Every change must trace to the approved plan's Acceptance Criteria. Out-of-scope findings get parked as follow-ups, not implemented.
 - **Evidence at every transition.** The plan gets critiqued before approval; the execution diff is checked against blast radius at every commit; the PR carries an audit trail of judgment calls so the run is reviewable without replaying it.
@@ -67,9 +67,9 @@ Continue iterating while ALL of these hold:
 4. **No test flakiness** — every test failure is reproducible. Any flake (test fails then passes on retry without code change, or fails non-deterministically) → STOP and surface.
 
 Exit the loop successfully when:
-- All `/verify` checks pass.
+- All `/auto-task-verify` checks pass.
 - The most recent `task-execution-verifier` agent says DoD satisfied.
-- The most recent `code-review` produces only follow-ups (no blockers, no required fixes).
+- The most recent `auto-task-code-review` produces only follow-ups (no blockers, no required fixes).
 
 There is no fixed numeric cap on iterations — caps are set by the current effort tier (see below) and can rise when the tier escalates.
 
@@ -77,7 +77,7 @@ There is no fixed numeric cap on iterations — caps are set by the current effo
 
 Define-phase scoring (see Phase 1 rubric) produces Difficulty (D) and Risk (R), each 0-8. The tier is `max(D, R)` bucketed:
 
-| Tier     | Range | `/verify` scope                                  | Fix-loop cap | Gate B                          |
+| Tier     | Range | `/auto-task-verify` scope                                  | Fix-loop cap | Gate B                          |
 |----------|-------|--------------------------------------------------|--------------|---------------------------------|
 | LIGHT    | 0-2   | types + unit                                     | 2            | skipped (Gate A only)           |
 | STANDARD | 3-5   | types + unit + lint                              | 4            | run                             |
@@ -184,7 +184,7 @@ If you cannot map the current transition to one of these, the default is `"auto-
 
 ### Phase 1 — Define (HUMAN GATE)
 
-**Branch setup (new runs only).** Before invoking `plan`, isolate the run:
+**Branch setup (new runs only).** Before invoking `auto-task-plan`, isolate the run:
 
 1. **Branch.** If the current branch is `main` or `master`, create a new one named `<type>/<slug>` to match the repo's existing convention (sample with `git for-each-ref --format='%(refname:short)' refs/heads refs/remotes/origin | head -30` and pick the dominant pattern — most repos here use `feat/`, `fix/`, `chore/`, `docs/`, `cleanup/`, `refactor/`). Pick `<type>` from the task description:
 
@@ -194,7 +194,7 @@ If you cannot map the current transition to one of these, the default is `"auto-
    - `refactor/` — code reorganization with no behavior change
    - `docs/` — docs/README/comments-only changes
    - `cleanup/` — removal of dead code or files
-   - When ambiguous between `feat` and `fix`, prefer `fix` if the user describes existing-but-broken behavior, `feat` if the user describes capability that doesn't exist yet
+   - When ambiguous between `feat` and `auto-task-fix`, prefer `auto-task-fix` if the user describes existing-but-broken behavior, `feat` if the user describes capability that doesn't exist yet
    - Default if truly unclear: `chore/`
 
    `<slug>` is the task description slugified to kebab-case (lowercase, ASCII, ~40 chars at a word boundary, strip stop words like "the", "a", "and"). Do not prepend `auto/` — the branch name should look like one a human would write, since it ends up in `git log` and the PR.
@@ -205,7 +205,7 @@ If you cannot map the current transition to one of these, the default is `"auto-
 
 2. **Exclude `.auto-task/` from git.** Append `.auto-task/` (the root, NOT the per-branch sub-path) to `.git/info/exclude` (one-line append, idempotent — check first with `grep -qxF '.auto-task/' .git/info/exclude`). This is per-clone, so it never lands in the repo's `.gitignore`. One exclude entry covers every per-branch folder under `.auto-task/`, including ones from prior runs that should remain readable for history.
 
-3. **Create the per-branch folder.** `mkdir -p .auto-task/<branch>/artifacts .auto-task/<branch>/recon`. Slashes in the branch name are preserved literally (branch `fix/auth-bug` → `.auto-task/fix/auth-bug/`).
+3. **Create the per-branch folder.** `mkdir -p .auto-task/<branch>/artifacts .auto-task/<branch>/recon`. Slashes in the branch name are preserved literally (branch `fix/auth-bug` → `.auto-task/auto-task-fix/auth-bug/`).
 
 4. **State.** Initialize `.auto-task/<branch>/STATE.json` with `phase: "define"`, `expected_next_action: null`, `approved: false`, `description: "<verbatim task input>"`, `branch: "<resolved name>"`, and empty containers for the rest (see "State file" schema). `expected_next_action` is `null` while `approved` is `false` — the Stop hook allows yields freely until the user has approved the plan.
 
@@ -213,7 +213,7 @@ If you cannot map the current transition to one of these, the default is `"auto-
 
 **Do NOT make any commit during branch setup.** The branch starts empty (zero commits ahead of the base). The first commit comes only after the user approves the plan, in Phase 2 — and it commits real code changes, not `.auto-task/<branch>/` content. The plan itself lives on disk under `.auto-task/<branch>/` for the user to read and for resumption, but it is never part of the git history.
 
-All commits in the run go through the `commit` skill. Before invoking `commit`, run `git restore --staged .auto-task/ 2>/dev/null || true` defensively, even though the `.git/info/exclude` entry from step 2 should already keep `.auto-task/` out of the index.
+All commits in the run go through the `auto-task-commit` skill. Before invoking `auto-task-commit`, run `git restore --staged .auto-task/ 2>/dev/null || true` defensively, even though the `.git/info/exclude` entry from step 2 should already keep `.auto-task/` out of the index.
 
 **Clarifying questions (HUMAN GATE — first interaction).** Before reconnaissance or planning, surface every decision-changing ambiguity in one batched up-front round. The goal: once the user answers, you can plan, execute, verify, and ship the task without coming back for clarification. This is the FIRST half of Phase 1's human gate; plan approval at the end of Phase 1 is the second half. There is no separate gate later — anything you'll need to know to finish the run, ask now.
 
@@ -247,7 +247,7 @@ Process:
 
 After clarifications are recorded, proceed to reconnaissance.
 
-**Pre-plan reconnaissance (auto, no human gate).** Before invoking `plan`, decide whether the task requires inspecting an external system, a running UI, or a documentation source to plan it properly. Do the inspection yourself — never punt this to the user.
+**Pre-plan reconnaissance (auto, no human gate).** Before invoking `auto-task-plan`, decide whether the task requires inspecting an external system, a running UI, or a documentation source to plan it properly. Do the inspection yourself — never punt this to the user.
 
 Trigger reconnaissance when the task description involves any of:
 - Visual / UI / styling / layout / responsive behavior ("the card looks wrong", "background image is off", "spacing on mobile").
@@ -297,7 +297,7 @@ When triggered:
 
 Use the recon findings as input to the next step.
 
-Invoke the `plan` skill internally. The plan MUST include an explicit **Acceptance Criteria** section with objectively verifiable items. The `plan` skill's default template does NOT produce one — you MUST append it before stopping, or the run cannot proceed.
+Invoke the `auto-task-plan` skill internally. The plan MUST include an explicit **Acceptance Criteria** section with objectively verifiable items. The `auto-task-plan` skill's default template does NOT produce one — you MUST append it before stopping, or the run cannot proceed.
 
 **Acceptance Criteria contract (NON-NEGOTIABLE).** Phase 1 cannot complete unless `.auto-task/<branch>/PLAN.md` contains an `## Acceptance Criteria` section that satisfies every rule below. If any rule fails, do NOT stop for human approval — fix the AC table first, then stop. The user approval gate verifies these rules are met before accepting "approved".
 
@@ -316,14 +316,14 @@ Rules each row MUST satisfy:
 1. **Observable** — phrased as something a third party can witness from outside the code ("login route returns 200 for valid creds", "CLS on /home mobile drops below 0.1"). NOT internal/aspirational ("auth works correctly", "code is cleaner").
 2. **Bound to a check** — `Verification method` is a concrete command, assertion, or observation step. Examples: `pnpm test packages/ui/__tests__/Foo.test.ts`, `curl -s localhost:3000/api/x | jq .status`, `grep -n 'export const Bar' packages/ui/src/Bar.tsx`, `playwright: navigate to /home, screenshot, confirm no layout shift on scroll`. NOT vague ("manually check", "looks right").
 3. **Falsifiable** — `Expected result` is a value or boolean that can be compared. ("status code = 200", "exit code 0", "selector `.cls-warning` absent", "console errors empty"). NOT "no problems".
-4. **Gate-bound** — every row's `Gate` column names which gate runs the check: `self-verify` (Phase 3 / `verify` skill — types, lint, build, tests), `gate-a` (independent verifier reads diff + runs check), or `gate-b` (adversarial pass). Every AC MUST appear in at least one gate. ACs with `Gate = self-verify` MUST have a `Verification method` that the `verify` skill actually runs (a test file, a build command, a lint rule) — if there's no automated check, the gate is `gate-a` with a manual observation step.
+4. **Gate-bound** — every row's `Gate` column names which gate runs the check: `self-verify` (Phase 3 / `auto-task-verify` skill — types, lint, build, tests), `gate-a` (independent verifier reads diff + runs check), or `gate-b` (adversarial pass). Every AC MUST appear in at least one gate. ACs with `Gate = self-verify` MUST have a `Verification method` that the `auto-task-verify` skill actually runs (a test file, a build command, a lint rule) — if there's no automated check, the gate is `gate-a` with a manual observation step.
 5. **Complete** — together, the AC rows cover every behavior the task description promises. If the task description mentions UX behavior X but no row checks X, the AC is incomplete.
 
 After writing the table, run a self-check before stopping:
 
 - Count rows. If `< 2` for non-trivial tasks (Tier ≥ STANDARD), that's almost certainly missing coverage — re-read the task description and add rows.
 - For each row, mentally run the `Verification method` and ask: "If this command/observation returned the `Expected result`, would I believe the criterion is satisfied?" If no, the row is too weak — rewrite it.
-- For each row with `Gate = self-verify`, confirm the verification method maps to a check the current tier's `/verify` scope actually runs. Types-only tier won't run a build assertion — escalate the tier or move the row to `gate-a`.
+- For each row with `Gate = self-verify`, confirm the verification method maps to a check the current tier's `/auto-task-verify` scope actually runs. Types-only tier won't run a build assertion — escalate the tier or move the row to `gate-a`.
 
 If the AC table fails any of these self-checks, the human gate is NOT reached — fix the table first. The Critique pass's `[AC]` dimension is a second line of defense, not a substitute.
 
@@ -349,7 +349,7 @@ Pre-flight produces one of three outcomes:
 
 Pre-flight evidence (the pinned baselines + sample-verification log) MUST appear in `.auto-task/<branch>/PLAN.md` as a `## AC Pre-flight` section between Acceptance Criteria and Critique, with one terse bullet per AC: `AC #N — baseline pinned (<value>); sample-verified N entries, FP=X%`.
 
-In addition to what `plan` produces, write a short feasibility note at the top of `.auto-task/<branch>/PLAN.md`:
+In addition to what `auto-task-plan` produces, write a short feasibility note at the top of `.auto-task/<branch>/PLAN.md`:
 - **Feasibility:** GREEN / YELLOW / RED with one sentence.
 - **Unknowns:** items that would change the plan if learned.
 - **Blast radius:** files/modules touched, consumers to keep working.
@@ -394,7 +394,7 @@ A disclaimer is REQUIRED when ANY of the following holds (compute from the rubri
 |---|---|---|
 | Reversibility | schema migration / data migration / irreversible side effect | "This run includes irreversible changes (schema/data). A bad outcome cannot be rolled back by reverting the commit — recovery requires manual data work. Confirm before proceeding." |
 | External integration | external API / third-party | "This run wires up an external third-party (<name>). Bad input or misuse can incur charges, leak data, or rate-limit the service. Confirm the integration target and credentials are correct." |
-| Test coverage | none on touched code | "The touched code currently has no automated test coverage. Regressions introduced by this run will not be caught by `verify` and may only surface in production. Confirm you accept the lower verification floor." |
+| Test coverage | none on touched code | "The touched code currently has no automated test coverage. Regressions introduced by this run will not be caught by `auto-task-verify` and may only surface in production. Confirm you accept the lower verification floor." |
 | Production blast | auth / payments / data integrity / multi-tenant | "This run touches a critical surface (<auth | payments | data integrity | multi-tenant>). Bugs here can compromise user accounts, mis-charge, corrupt records, or cross tenant boundaries. The blast radius if something goes wrong is large." |
 
 Also REQUIRED when the Critique pass returned a specific concern in the `[Rollback]` dimension, even if it didn't pass any other threshold above.
@@ -426,7 +426,7 @@ The global pre-commit hook in `~/.claude/settings.json` enforces this mechanical
 
 ### Phase 2 — Execute (auto, NO COMMIT)
 
-Invoke the `implement` skill. It will tick off tasks in `.auto-task/<branch>/PLAN.md`. Treat each `<!-- COMMIT CHECKPOINT -->` marker as a **drift-check checkpoint, NOT a commit checkpoint**.
+Invoke the `auto-task-implement` skill. It will tick off tasks in `.auto-task/<branch>/PLAN.md`. Treat each `<!-- COMMIT CHECKPOINT -->` marker as a **drift-check checkpoint, NOT a commit checkpoint**.
 
 At each checkpoint:
 
@@ -436,15 +436,15 @@ At each checkpoint:
    - **Drift** (act on it): files in a top-level app/package the plan did not list; schema migrations (`prisma/migrations/`, `*.sql`); CI/CD config (`.github/workflows/`); `package.json` dependency add/remove; auth/payments/data-integrity touchpoints; any file the Risk rubric would now score as `2`.
 3. On **Drift**:
    - Append `{ phase: "execute-checkpoint", result: "drift", files: [...], summary: "...", at: "ISO-8601" }` to `state.history`.
-   - Re-run the D/R rubric with the actual touched set. If tier escalates, log to `effort.history` and apply the new tier's `/verify` scope and fix-loop cap to subsequent iterations.
+   - Re-run the D/R rubric with the actual touched set. If tier escalates, log to `effort.history` and apply the new tier's `/auto-task-verify` scope and fix-loop cap to subsequent iterations.
    - If the drift represents work outside the plan's intent (not just outside the planned file list — e.g., the plan was about typography and the drift adds auth code, or the plan was a pure-code change and the drift introduces an irreversible side effect not anticipated in Unknowns) → treat as out-of-scope per Loop rule clause 2 → STOP and surface. Otherwise continue.
-4. Re-invoke `implement` until all tasks are checked.
+4. Re-invoke `auto-task-implement` until all tasks are checked.
 
-When `implement` reports "all tasks complete", advance to Phase 3. **Do not commit.**
+When `auto-task-implement` reports "all tasks complete", advance to Phase 3. **Do not commit.**
 
 ### Phase 3 — Self-verify (auto, NO COMMIT)
 
-Invoke the `verify` skill on the **uncommitted working-tree diff** (`git diff <base>` — no `..HEAD`, the changes are not yet committed). Parse its report.
+Invoke the `auto-task-verify` skill on the **uncommitted working-tree diff** (`git diff <base>` — no `..HEAD`, the changes are not yet committed). Parse its report.
 
 **MCP usage in verification is open.** Any MCP available to the session may be used during self-verify and the gates if it's the most direct way to execute a Verification method or confirm an observation. Common picks:
 
@@ -456,19 +456,19 @@ Invoke the `verify` skill on the **uncommitted working-tree diff** (`git diff <b
 
 Same rules as Phase 1 recon apply: **read-only by default** (writes to external systems are forbidden during verification without explicit user authorization in this run); auth prompts are not blockers — log `result: "ac-blocked"` for that AC and treat it as fail, since an AC that can't be executed can't pass; mandatory prerequisite skills (`figma-use` before `use_figma`) still load. If the AC's `Verification method` literally names an MCP call, run that call; otherwise, prefer the cheapest tool that produces the evidence.
 
-**AC execution contract (NON-NEGOTIABLE).** In addition to whatever the `verify` skill runs by default, you MUST execute every row in PLAN.md's Acceptance Criteria table whose `Gate` column contains `self-verify`. For each such row:
+**AC execution contract (NON-NEGOTIABLE).** In addition to whatever the `auto-task-verify` skill runs by default, you MUST execute every row in PLAN.md's Acceptance Criteria table whose `Gate` column contains `self-verify`. For each such row:
 
 1. Run the `Verification method` literally as written (the command, assertion, or MCP call).
 2. Capture stdout/stderr/exit code (or MCP response payload) and compare against `Expected result`.
 3. Record the run in `state.history` as `{ phase: "self-verify-ac", ac: <#>, result: "pass|fail", evidence: "<command or MCP call + result snippet>", mcps: ["..."] (if any), at: "ISO-8601" }`.
 
-`gates.self_verify.passed` cannot be set to `true` unless EVERY `self-verify`-gated AC row has a recorded `result: "pass"` entry from the current iteration. If the `verify` skill's report says "all quality checks PASS" but an AC's bound check was never executed (e.g., the test file the AC names doesn't exist yet), that is a FAIL — surface it as a missing test, not a pass. Do not treat AC coverage as optional just because the generic checks were green.
+`gates.self_verify.passed` cannot be set to `true` unless EVERY `self-verify`-gated AC row has a recorded `result: "pass"` entry from the current iteration. If the `auto-task-verify` skill's report says "all quality checks PASS" but an AC's bound check was never executed (e.g., the test file the AC names doesn't exist yet), that is a FAIL — surface it as a missing test, not a pass. Do not treat AC coverage as optional just because the generic checks were green.
 
-- All `verify`-skill tasks COMPLETE + all quality checks PASS + every `self-verify` AC executed with `result: "pass"` → set `gates.self_verify = { passed: true, at: <ISO>, evidence: "<short summary of checks that passed, including which AC rows ran>" }` and advance to Gate A.
+- All `auto-task-verify`-skill tasks COMPLETE + all quality checks PASS + every `self-verify` AC executed with `result: "pass"` → set `gates.self_verify = { passed: true, at: <ISO>, evidence: "<short summary of checks that passed, including which AC rows ran>" }` and advance to Gate A.
 - Any task PARTIAL/NOT FOUND, or any quality check FAIL → diagnose:
   - If the failure indicates flakiness (intermittent test, retry-passes-without-change) → STOP and surface per Loop rule.
-  - Otherwise → invoke `/fix` against the failing item (which modifies the working tree, no commit), then return to start of Phase 3. Increment `iteration.fix`.
-- **Re-score hook.** Before incrementing `iteration.fix`, check whether the failure exposes anything outside PLAN.md's Blast Radius / Unknowns. If so, re-run the rubric, update `effort`, log to `effort.history`, and apply the new tier's caps and `/verify` scope to the next iteration.
+  - Otherwise → invoke `/auto-task-fix` against the failing item (which modifies the working tree, no commit), then return to start of Phase 3. Increment `iteration.fix`.
+- **Re-score hook.** Before incrementing `iteration.fix`, check whether the failure exposes anything outside PLAN.md's Blast Radius / Unknowns. If so, re-run the rubric, update `effort`, log to `effort.history`, and apply the new tier's caps and `/auto-task-verify` scope to the next iteration.
 - Apply the Loop rule between iterations to detect "no progress". If `iteration.fix` has reached the current tier's fix-loop cap, do a forced re-score before STOPPING; if the tier escalates, the new cap applies and one more iteration is granted.
 
 ### Gate A — Independent verifier (auto, NO COMMIT)
@@ -489,15 +489,15 @@ If every `gate-a` AC passed its bound check AND the agent confirms all criteria 
 
 ### Phase 4 — Code review + fix loop (auto, NO COMMIT)
 
-**MANDATORY tool:** invoke the `code-review` **skill** via the Skill tool, on the **working-tree diff** (not a staged diff — there is no staged or committed diff yet) with the diff, the approved plan, AND the persistent history as context. Per the "Read-before-review contract" in the "Persistent history & trace contract" section: pass the skill the paths `.auto-task/<branch>/CONTEXT.md` (if it exists from a prior Phase 5 — relevant on resumed runs or re-reviews) and `.auto-task/<branch>/TRACE.md`. The skill is expected to read those before forming findings so it doesn't re-raise issues already considered earlier in the run or in prior sessions. **Do NOT** spawn a `code-reviewer` agent, a `general-purpose` agent with a hand-rolled review prompt, or any other substitute. The skill enforces a 5-phase review (Investigate → Define → Execute → Prevent → Verify) that bespoke prompts skip; substituting it is a protocol violation.
+**MANDATORY tool:** invoke the `auto-task-code-review` **skill** via the Skill tool, on the **working-tree diff** (not a staged diff — there is no staged or committed diff yet) with the diff, the approved plan, AND the persistent history as context. Per the "Read-before-review contract" in the "Persistent history & trace contract" section: pass the skill the paths `.auto-task/<branch>/CONTEXT.md` (if it exists from a prior Phase 5 — relevant on resumed runs or re-reviews) and `.auto-task/<branch>/TRACE.md`. The skill is expected to read those before forming findings so it doesn't re-raise issues already considered earlier in the run or in prior sessions. **Do NOT** spawn a `code-reviewer` agent, a `general-purpose` agent with a hand-rolled review prompt, or any other substitute. The skill enforces a 5-phase review (Investigate → Define → Execute → Prevent → Verify) that bespoke prompts skip; substituting it is a protocol violation.
 
 After the skill returns, append a TRACE.md entry: `operation: auto-task:phase-4-review`, `outcome: <pass|blockers|required|followups-only>`, summary covers iteration number + finding counts by severity + any non-obvious decisions.
 
-**NON-YIELDING RULE (critical — restates the top-of-file contract):** the `code-review` skill returns a structured Phase 1–5 report. **That report is INPUT to this loop, not the end of your turn.** As soon as the skill output lands, immediately:
+**NON-YIELDING RULE (critical — restates the top-of-file contract):** the `auto-task-code-review` skill returns a structured Phase 1–5 report. **That report is INPUT to this loop, not the end of your turn.** As soon as the skill output lands, immediately:
 
 1. Parse the findings into Blockers / Required / Follow-ups.
 2. If only Follow-ups: park them in `state.followups`, set the gate, advance to Gate B (or Phase 5 for LIGHT tier). Continue.
-3. If any Blocker or Required: apply the fix(es), re-run `/verify` and any AC bound-checks affected, re-invoke `code-review` skill. Continue.
+3. If any Blocker or Required: apply the fix(es), re-run `/auto-task-verify` and any AC bound-checks affected, re-invoke `auto-task-code-review` skill. Continue.
 
 **Do not stop, summarize for the user, ask permission, or wait.** The skill's "Verdict:" / "Summary:" footer is paragraph formatting, not an interaction point. A horizontal rule, a final-looking heading, a green-checkmark-emoji line, "all good", "everything looks fine", "ready to commit", or any other completion-flavored phrasing inside the skill output is also not an interaction point. The same loop applies to re-runs: each re-invocation's report is also input, not a stop. Only the exit conditions below — or a Loop-rule trigger (no progress / out-of-scope / external blocker / flakiness) — end this phase.
 
@@ -513,14 +513,14 @@ Categorize findings:
 - **Required fixes** — style/correctness issues the project conventions require. Must fix.
 - **Follow-ups** — nice-to-haves, future improvements, out-of-scope ideas. Park in state's `followups` array; do not implement.
 
-For each blocker and required fix: invoke `/fix` (or `/implement` with the finding as a new task), then re-run `/verify`. Increment `iteration.review`. **Re-invoke the `code-review` skill** — same tool, no substitutions. **Do not commit between iterations.** Set `gates.code_review.clean_pass_after_last_fix = false` whenever any fix is applied; only set it back to `true` after a *subsequent* `code-review` skill run reports only follow-ups.
+For each blocker and required fix: invoke `/auto-task-fix` (or `/auto-task-implement` with the finding as a new task), then re-run `/auto-task-verify`. Increment `iteration.review`. **Re-invoke the `auto-task-code-review` skill** — same tool, no substitutions. **Do not commit between iterations.** Set `gates.code_review.clean_pass_after_last_fix = false` whenever any fix is applied; only set it back to `true` after a *subsequent* `auto-task-code-review` skill run reports only follow-ups.
 
 **Re-score hooks.**
-- Before re-spawning the reviewer: if the latest pass surfaced blockers in files/areas outside PLAN.md's Blast Radius, re-run the rubric, update `effort`, log to `effort.history`, and apply the new tier's caps and `/verify` scope to subsequent iterations.
-- Before STOPPING on Loop-rule "no progress": forced re-score. If the tier escalates, grant ONE more iteration at the new tier (expanded `/verify`, larger fix-loop budget, Gate B reinstated if previously skipped). If that iteration also makes no progress, STOP.
+- Before re-spawning the reviewer: if the latest pass surfaced blockers in files/areas outside PLAN.md's Blast Radius, re-run the rubric, update `effort`, log to `effort.history`, and apply the new tier's caps and `/auto-task-verify` scope to subsequent iterations.
+- Before STOPPING on Loop-rule "no progress": forced re-score. If the tier escalates, grant ONE more iteration at the new tier (expanded `/auto-task-verify`, larger fix-loop budget, Gate B reinstated if previously skipped). If that iteration also makes no progress, STOP.
 
 Exit conditions for this phase:
-- Reviewer's latest pass produces only follow-ups → set `gates.code_review = { passed: true, tool: "skill:code-review", clean_pass_after_last_fix: true, at: <ISO>, evidence: "<reviewer summary; only follow-ups, no blockers/required>" }` → advance to Gate B (skipped at LIGHT tier — set `gates.gate_b.skipped_reason = "tier=light"` and go straight to Phase 5). The `tool` field MUST be the literal string `"skill:code-review"` — the pre-commit hook rejects any other value (including agent invocations).
+- Reviewer's latest pass produces only follow-ups → set `gates.code_review = { passed: true, tool: "skill:auto-task-code-review", clean_pass_after_last_fix: true, at: <ISO>, evidence: "<reviewer summary; only follow-ups, no blockers/required>" }` → advance to Gate B (skipped at LIGHT tier — set `gates.gate_b.skipped_reason = "tier=light"` and go straight to Phase 5). The `tool` field MUST be the literal string `"skill:auto-task-code-review"` — the pre-commit hook rejects any other value (including agent invocations).
 - Loop rule triggers (no progress / out-of-scope / blocker / flakiness) **after** the re-score hook has been given its chance → STOP and surface (do NOT set `gates.code_review.passed`).
 
 ### Gate B — Adversarial verifier (auto, NO COMMIT)
@@ -591,7 +591,7 @@ This is the **only phase that commits**. By the time you reach it, the working t
 
    **Persist the source.** Save the chosen diagram (or the skip line) to `.auto-task/<branch>/recon/change-diagram.mmd` so it can be regenerated on resume. Log a `state.history` entry: `{ phase: "handover-diagram", type: "<flowchart|sequenceDiagram|stateDiagram-v2|erDiagram|skipped>", reason: "<one line>", at: "ISO-8601" }`.
 
-3. **Collect verification artifacts.** Before writing CONTEXT.md, gather the proofs of completion that confirm the fix/feature actually works, and save them under `.auto-task/<branch>/artifacts/`. These are gitignored — they exist for local review, future `/code-review` sessions, and your own audit trail. Examples per task shape:
+3. **Collect verification artifacts.** Before writing CONTEXT.md, gather the proofs of completion that confirm the fix/feature actually works, and save them under `.auto-task/<branch>/artifacts/`. These are gitignored — they exist for local review, future `/auto-task-code-review` sessions, and your own audit trail. Examples per task shape:
    - **Tests added/touched.** Save `<test-runner> <changed-test-paths> 2>&1` output as `artifacts/tests.txt`. Include exit code on the last line.
    - **Type / lint / build.** Save the final passing run as `artifacts/typecheck.txt`, `artifacts/lint.txt`, `artifacts/build.txt` (only the runs whose ACs reference them).
    - **UI / visual changes.** Save the playwright screenshots (before + after if a "before" was captured during Phase 1 recon) as `artifacts/screenshot-before.png` / `artifacts/screenshot-after.png`.
@@ -602,7 +602,7 @@ This is the **only phase that commits**. By the time you reach it, the working t
 
    Skip categories that don't apply — don't fabricate files. Log one `state.history` entry summarizing what was saved: `{ phase: "handover-artifacts", saved: ["tests.txt", "final-diff.patch", ...], at: "ISO-8601" }`.
 
-4. **Write the CONTEXT.md artifact (LOCAL ONLY, gitignored).** Write a single Markdown file at `.auto-task/<branch>/CONTEXT.md` that captures everything a downstream consumer (human, a later `/code-review` session, `/review` skill, or future `/auto-task` run touching the same area) needs to understand this run without replaying the conversation. This file is **NOT committed** — it lives in the gitignored `.auto-task/` tree alongside STATE.json, PLAN.md, TRACE.md, and `artifacts/`.
+4. **Write the CONTEXT.md artifact (LOCAL ONLY, gitignored).** Write a single Markdown file at `.auto-task/<branch>/CONTEXT.md` that captures everything a downstream consumer (human, a later `/auto-task-code-review` session, `/review` skill, or future `/auto-task` run touching the same area) needs to understand this run without replaying the conversation. This file is **NOT committed** — it lives in the gitignored `.auto-task/` tree alongside STATE.json, PLAN.md, TRACE.md, and `artifacts/`.
 
    If `.auto-task/<branch>/CONTEXT.md` already exists (re-run, resumed run), overwrite without prompting — it's generated content.
 
@@ -659,7 +659,7 @@ This is the **only phase that commits**. By the time you reach it, the working t
    ## Verification trail
    - **Self-verify** (Phase 3): <gates.self_verify.evidence; iteration count if > 1>
    - **Gate A** (independent verifier): <gates.gate_a.evidence; or "skipped — <reason>" if applicable>
-   - **Code review** (Phase 4, `code-review` skill): <gates.code_review.evidence; iteration count if > 1>
+   - **Code review** (Phase 4, `auto-task-code-review` skill): <gates.code_review.evidence; iteration count if > 1>
    - **Gate B** (adversarial verifier): <gates.gate_b.evidence; or "skipped — tier=light" / other skip reason>
 
    ## Drift events
@@ -678,7 +678,7 @@ This is the **only phase that commits**. By the time you reach it, the working t
    One bullet per `state.followups` entry: `<source>: <note>`. If none, write `None.`
 
    ## Reviewer notes
-   Anything that would help a `/code-review` re-run or a human reviewer skip dead ends:
+   Anything that would help a `/auto-task-code-review` re-run or a human reviewer skip dead ends:
    - Areas the run touched but deliberately did NOT change (with one-line "why not").
    - Known weak spots in the diff the reviewer should look at first.
    - Test files the user should run if they want to spot-check.
@@ -692,7 +692,7 @@ This is the **only phase that commits**. By the time you reach it, the working t
    Log a `state.history` entry: `{ phase: "handover-context", path: ".auto-task/<branch>/CONTEXT.md", at: "ISO-8601" }`.
 
 5. **Stage the code changes.** Run `git restore --staged .auto-task/ 2>/dev/null || true` defensively (catches both `.auto-task/<branch>/` and any stray sibling), then `git add` the planned files only — never `.auto-task/`, never CONTEXT.md, never the artifacts. Confirm `git diff --cached --name-only` shows no `.auto-task/` paths and no files outside PLAN.md's Blast Radius (counting drift events that legitimately escalated tier).
-6. **Commit.** Use the `commit` skill — message derives from PLAN.md's summary. The pre-commit hook will validate the gates; if it blocks, do not work around it.
+6. **Commit.** Use the `auto-task-commit` skill — message derives from PLAN.md's summary. The pre-commit hook will validate the gates; if it blocks, do not work around it.
 7. Verify `.auto-task/` did not leak into history: `git log <base>..HEAD --name-only -- .auto-task/` MUST be empty.
 8. **Yield-point: push / PR prompt.** Set `expected_next_action: "user-push-prompt"` in STATE.json — this is the single allowed Phase 5 interaction surface and the Stop hook will allow the yield. Ask the user once whether to push & open PR / push only / hold. After the user answers, write back `expected_next_action: "auto-continue"` and proceed with their choice. If the user holds, jump to step 11 (record state, skip 9–10).
 9. Push the branch if it has no upstream: `git push -u origin HEAD`.
@@ -722,7 +722,7 @@ This is the **only phase that commits**. By the time you reach it, the working t
 
    Per the global rule in `~/.claude/CLAUDE.md`: do NOT add a `Co-Authored-By: Claude` trailer, a `🤖 Generated with [Claude Code]` line, or any other AI-attribution marker to the PR body or title.
 
-   The PR body does NOT reference `.auto-task/<branch>/CONTEXT.md` or anything under `.auto-task/` — those paths are local-only and would be broken links for anyone reading the PR on GitHub. Reviewers who want the full context fetch the branch and read `.auto-task/<branch>/CONTEXT.md` locally; the `/code-review` skill is expected to do this automatically (see "Read-before-review contract").
+   The PR body does NOT reference `.auto-task/<branch>/CONTEXT.md` or anything under `.auto-task/` — those paths are local-only and would be broken links for anyone reading the PR on GitHub. Reviewers who want the full context fetch the branch and read `.auto-task/<branch>/CONTEXT.md` locally; the `/auto-task-code-review` skill is expected to do this automatically (see "Read-before-review contract").
 
 11. **Append the handover trace.** Append a final entry to `.auto-task/<branch>/TRACE.md` summarizing the completed run (see "Persistent history & trace contract" for format): operation=`auto-task:phase-5`, summary covers PR URL, files touched count, AC pass count, follow-up count.
 
@@ -740,13 +740,13 @@ If none of the above produced bullets, write a single line: `Clean run — no es
 
 ## Persistent history & trace contract
 
-`.auto-task/` is the local, gitignored audit trail of every `/auto-task` run on this clone. It survives across runs, branches, and Claude Code sessions so any later operation (a `/code-review` re-run from a fresh session, a `/verify` pass, a future `/auto-task` touching the same code) can pick up the history without replaying conversations.
+`.auto-task/` is the local, gitignored audit trail of every `/auto-task` run on this clone. It survives across runs, branches, and Claude Code sessions so any later operation (a `/auto-task-code-review` re-run from a fresh session, a `/auto-task-verify` pass, a future `/auto-task` touching the same code) can pick up the history without replaying conversations.
 
 ### Folder layout (per branch)
 
 ```
 .auto-task/
-└── <branch-name>/                # branch path preserved literally (fix/foo → .auto-task/fix/foo/)
+└── <branch-name>/                # branch path preserved literally (fix/foo → .auto-task/auto-task-fix/foo/)
     ├── STATE.json                # run-state machine
     ├── PLAN.md                   # approved plan + Critique + AC + Pre-flight + Recon
     ├── CONTEXT.md                # Phase 5 handover artifact (regenerated each Phase 5)
@@ -764,7 +764,7 @@ Per-branch folders are NEVER auto-deleted by `/auto-task`. They accumulate. A us
 ```markdown
 # Auto-task trace — `<branch-name>`
 
-Append-only log of every operation that touched this branch. Source-agnostic — `/auto-task` writes here, but so should any later `/code-review`, `/verify`, `/fix`, or other audit-relevant tool. Read top-to-bottom to reconstruct the run's history.
+Append-only log of every operation that touched this branch. Source-agnostic — `/auto-task` writes here, but so should any later `/auto-task-code-review`, `/auto-task-verify`, `/auto-task-fix`, or other audit-relevant tool. Read top-to-bottom to reconstruct the run's history.
 
 ---
 ```
@@ -774,7 +774,7 @@ Each entry is one Markdown block in this exact shape:
 ```markdown
 ## <ISO-8601 timestamp> · <operation> · <source>
 
-- **Phase / context:** <e.g., auto-task phase-3-self-verify, external /code-review session, manual /fix>
+- **Phase / context:** <e.g., auto-task phase-3-self-verify, external /auto-task-code-review session, manual /auto-task-fix>
 - **Inputs:** <what the op read — STATE.json snapshot? PLAN.md? a specific file/diff range?>
 - **Summary:** <one to three sentences, plain prose. What was done, what was decided, what changed.>
 - **Outcome:** <pass | fail | partial | surfaced | no-op>
@@ -797,9 +797,9 @@ Field rules:
 
 Any other tool or session that does meaningful work on the branch SHOULD append too. Specifically:
 
-- **A standalone `/code-review` on the branch** — append before stopping. Entry summarizes: how many findings, severity breakdown, whether they were applied, and whether the reviewer read this trace first.
-- **A standalone `/verify`** — append the verification outcome (passing checks, failing checks, what was inferred about regression risk).
-- **A standalone `/fix` after the PR is open** — append what the bug was, root cause, the patch summary.
+- **A standalone `/auto-task-code-review` on the branch** — append before stopping. Entry summarizes: how many findings, severity breakdown, whether they were applied, and whether the reviewer read this trace first.
+- **A standalone `/auto-task-verify`** — append the verification outcome (passing checks, failing checks, what was inferred about regression risk).
+- **A standalone `/auto-task-fix` after the PR is open** — append what the bug was, root cause, the patch summary.
 - **A manual code change pushed to the branch outside `/auto-task`** — when the user mentions it, append `manual:<short-reason>` with the gist.
 
 Skipping an append leaves a gap in the trail. The contract is *append liberally* — when in doubt, append a short entry; never lengthy back-fills.
@@ -808,7 +808,7 @@ Skipping an append leaves a gap in the trail. The contract is *append liberally*
 
 **Any code-review or audit operation on a branch MUST first check whether `.auto-task/<branch>/` exists and, if so, read CONTEXT.md and TRACE.md before issuing findings.** The reason: a reviewer that doesn't know the run's human choices, drift events, prior review iterations, and parked follow-ups will (a) re-raise findings that were explicitly considered and resolved, (b) miss real issues that earlier reviewers flagged but never followed up on, and (c) waste user time on already-decided questions.
 
-The contract for any consumer (the `/code-review` skill, the `/review` skill, a `general-purpose` agent doing a review, a future `/auto-task` run touching the same code):
+The contract for any consumer (the `/auto-task-code-review` skill, the `/review` skill, a `general-purpose` agent doing a review, a future `/auto-task` run touching the same code):
 
 1. **Discover.** `git branch --show-current` → look for `.auto-task/<current-branch>/`. If absent, the branch isn't auto-task-tracked; proceed normally without history input.
 2. **Read CONTEXT.md** if present — it's the curated summary. Pay attention to the "Human choices" section: never re-raise findings about choices the user already weighed in on (unless you genuinely disagree with the choice itself).
@@ -840,11 +840,11 @@ When the workflow stops mid-pipeline:
 - **`expected_next_action` is mandatory and mechanically enforced.** Every state write that occurs after `approved: true` MUST include an `expected_next_action` value. The Stop hook reads this field on every turn-end and blocks the model from yielding when the value is `"auto-continue"`. The only legitimate user-* values are `"user-approval"` (Phase 1 plan presentation, Loop-rule surface, destructive-action confirmation) and `"user-push-prompt"` (the single Phase 5 push/PR/hold ask). Setting a user-* value when no user gate is actually pending is a contract violation analogous to flipping a gate flag without running the gate. The Stop hook is the antidote to sub-skill output looking completion-shaped; do not work around it.
 - Do not modify `CLAUDE.md`, project settings, or git config.
 - Never use `--no-verify`, `--no-gpg-sign`, or `--force` on git operations unless the user has already explicitly authorized them in this run.
-- Commit only with the `commit` skill so messages stay consistent.
+- Commit only with the `auto-task-commit` skill so messages stay consistent.
 - **Never commit anything under `.auto-task/`.** That directory is local harness + history only — see the "harness scratch" rule in "Operating principles" and the "Persistent history & trace contract" section. Every commit must be code/test/doc changes that pertain to the user's task. Before each commit, run `git restore --staged .auto-task/ 2>/dev/null || true` and then check `git diff --cached --name-only` — if any `.auto-task/` path appears, stop and unstage it.
 - **Never commit other people's pre-staged work.** When the run starts, capture `git diff --cached --name-only` into `state.history` as the "pre-existing-staged" baseline. At every commit, exclude any path in that baseline that you did not modify yourself — those belong to the user's separate work and must not be swept into auto-task commits.
 - Each Agent spawn (Gate A, Gate B) gets fresh context with only the diff and the plan — do not pass conversation history into them. Agents MAY read `.auto-task/<branch>/CONTEXT.md` and `.auto-task/<branch>/TRACE.md` if instructed in their prompt; this is the recommended way to give them prior-review history without leaking the parent session's conversation.
-- Phase 4 code review is invoked via the **`code-review` skill** through the Skill tool. Never spawn a `code-reviewer` agent, never spawn a `general-purpose` agent with a hand-rolled review prompt, and never write your own review prompt inline. This is a non-negotiable rule (the user has set it explicitly) and is enforced by the pre-commit hook: `gates.code_review.tool` must equal `"skill:code-review"`. Before invoking the skill, hand it the path `.auto-task/<branch>/CONTEXT.md` (and TRACE.md if it exists) per the "Read-before-review contract" so it can pick up prior decisions.
+- Phase 4 code review is invoked via the **`auto-task-code-review` skill** through the Skill tool. Never spawn a `code-reviewer` agent, never spawn a `general-purpose` agent with a hand-rolled review prompt, and never write your own review prompt inline. This is a non-negotiable rule (the user has set it explicitly) and is enforced by the pre-commit hook: `gates.code_review.tool` must equal `"skill:auto-task-code-review"`. Before invoking the skill, hand it the path `.auto-task/<branch>/CONTEXT.md` (and TRACE.md if it exists) per the "Read-before-review contract" so it can pick up prior decisions.
 - If `.auto-task/<branch>/STATE.json` exists when starting a new `/auto-task <description>`, ask the user: resume the existing run, or start fresh? On "start fresh", advise the user to either rename / remove `.auto-task/<branch>/` (preserving history if they want) and (optionally) switch off the prior run's branch (recorded in `state.branch`) before re-running — auto-task will not delete prior work.
 - If a previous bad run created a commit containing `.auto-task/` files (legacy behavior before this rule existed), do NOT silently rewrite history. Surface the issue: report the offending commit hash(es) and ask the user how to clean up (interactive rebase to drop, `git reset --soft` and recommit, or leave it).
 - Mark items as follow-ups liberally. The bar for adding to the active loop is "addresses an Acceptance Criterion or fixes a blocker"; everything else parks.

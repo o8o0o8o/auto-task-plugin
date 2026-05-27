@@ -1,5 +1,5 @@
 ---
-name: plan
+name: auto-task-plan
 description: Analyze requirements and create a structured implementation plan. Use when asked to "plan", "design a solution", "break down this task", "create a plan", or "how should I implement this".
 license: MIT
 metadata:

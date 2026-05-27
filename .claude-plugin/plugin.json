@@ -7,12 +7,12 @@
   "comment": "Field names below are placeholders — verify against the current Claude Code plugin spec via Context7 before locking. Wrong field names fail silently at install.",
   "skills": [
     "skills/auto-task",
-    "skills/plan",
-    "skills/implement",
-    "skills/verify",
-    "skills/code-review",
-    "skills/commit",
-    "skills/fix"
+    "skills/auto-task-plan",
+    "skills/auto-task-implement",
+    "skills/auto-task-verify",
+    "skills/auto-task-code-review",
+    "skills/auto-task-commit",
+    "skills/auto-task-fix"
   ],
   "agents": [
     "agents/task-execution-verifier.md"

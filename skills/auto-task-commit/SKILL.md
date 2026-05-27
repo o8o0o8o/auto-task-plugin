@@ -1,5 +1,5 @@
 ---
-name: commit
+name: auto-task-commit
 description: Create a conventional commit from staged changes. Use when asked to "commit", "save changes", "commit my work", or "create a commit".
 license: MIT
 metadata:

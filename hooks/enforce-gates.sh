@@ -46,8 +46,8 @@ if [ "$review_passed" != "true" ]; then
   exit 2
 fi
 
-if [ "$review_tool" != "skill:code-review" ]; then
-  printf 'Blocked by auto-task-plugin: code-review must be invoked via the `code-review` SKILL, not an agent or hand-rolled prompt.\nRequired:\n  gates.code_review.tool = "skill:code-review"   (currently: %s)\nRe-run the review via the Skill tool with skill="code-review" and update the flag with real evidence.\n' "$review_tool" >&2
+if [ "$review_tool" != "skill:auto-task-code-review" ]; then
+  printf 'Blocked by auto-task-plugin: code-review must be invoked via the `auto-task-code-review` SKILL, not an agent or hand-rolled prompt.\nRequired:\n  gates.code_review.tool = "skill:auto-task-code-review"   (currently: %s)\nRe-run the review via the Skill tool with skill="auto-task-code-review" and update the flag with real evidence.\n' "$review_tool" >&2
   exit 2
 fi
 

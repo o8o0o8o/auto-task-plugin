@@ -1,5 +1,5 @@
 ---
-name: fix
+name: auto-task-fix
 description: Fix a bug via a strict 5-phase workflow (Investigate → Define → Execute → Prevent → Verify). Use when asked to "fix this bug", "debug this", "something is broken", "fix the error", or "patch this issue".
 license: MIT
 metadata:

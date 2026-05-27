@@ -5,11 +5,11 @@ End-to-end autonomous task workflow for Claude Code. Takes a task description fr
 ## What it ships
 
 - **`auto-task` skill** — the orchestrator. Composes the six bundled sibling skills and the verifier agent across five phases (Define → Execute → Self-verify → Review → Handover).
-- **Six forked sibling skills** — `plan`, `implement`, `verify`, `code-review`, `commit`, `fix`. Patched to participate in the read-before-review contract.
+- **Six namespaced sibling skills** — `auto-task-plan`, `auto-task-implement`, `auto-task-verify`, `auto-task-code-review`, `auto-task-commit`, `auto-task-fix`. Forked from the upstream skills and patched to participate in the read-before-review contract. The `auto-task-` prefix avoids clobbering your existing `/plan`, `/verify`, etc.
 - **`task-execution-verifier` agent** — read-only verifier spawned at Gate A (completeness) and Gate B (adversarial). Fresh context per spawn.
 - **Three hooks** —
   - `block-ai-attribution.sh` (PreToolUse on Bash): refuses commits and PR bodies containing `Co-Authored-By: Claude`, `🤖 Generated`, etc.
-  - `enforce-gates.sh` (PreToolUse on Bash): blocks `git commit` during an auto-task run unless `gates.code_review.passed`, `gates.code_review.tool === "skill:code-review"`, `gates.code_review.clean_pass_after_last_fix`, and Gate B's gate (or skip reason) are all satisfied.
+  - `enforce-gates.sh` (PreToolUse on Bash): blocks `git commit` during an auto-task run unless `gates.code_review.passed`, `gates.code_review.tool === "skill:auto-task-code-review"`, `gates.code_review.clean_pass_after_last_fix`, and Gate B's gate (or skip reason) are all satisfied.
   - `prevent-mid-protocol-stall.sh` (Stop event): blocks turn-ends mid-pipeline by reading `expected_next_action` from STATE.json. The antidote to sub-skill output looking completion-shaped.
 - **`settings-fragment.json`** — snippet to merge into `~/.claude/settings.json` that wires up the three hooks.
 
@@ -48,10 +48,10 @@ The skill creates a branch, sets up the per-branch history folder at `.auto-task
 
 After you type `approved` / `proceed` / `yes`, the pipeline runs unattended through:
 
-- **Phase 2** Execute — invokes the bundled `implement` skill; drift-checks each checkpoint against the plan's Blast Radius.
-- **Phase 3** Self-verify — invokes `verify`; runs every Acceptance Criterion bound to the `self-verify` gate.
+- **Phase 2** Execute — invokes the bundled `auto-task-implement` skill; drift-checks each checkpoint against the plan's Blast Radius.
+- **Phase 3** Self-verify — invokes `auto-task-verify`; runs every Acceptance Criterion bound to the `self-verify` gate.
 - **Gate A** — spawns `task-execution-verifier` in `completeness` mode; runs every Acceptance Criterion bound to `gate-a`.
-- **Phase 4** Code review — invokes `code-review`, applies any blockers / required fixes, re-invokes until the latest pass is clean.
+- **Phase 4** Code review — invokes `auto-task-code-review`, applies any blockers / required fixes, re-invokes until the latest pass is clean.
 - **Gate B** — spawns `task-execution-verifier` in `adversarial` mode (skipped for `tier=light` tasks).
 - **Phase 5** Handover — single commit, push, PR with embedded change diagram. Asks once whether to push & open PR / push only / hold.
 
@@ -76,7 +76,7 @@ You get a status with **why stopped** + **current state** + **suggested next mov
 
 ## Read-before-review contract
 
-When the bundled `code-review`, `verify`, or `fix` skill runs in a repo with an existing `.auto-task/<branch>/` folder, it reads `CONTEXT.md` and `TRACE.md` first so it doesn't re-litigate decisions or miss real issues that earlier reviewers flagged but never followed up on.
+When the bundled `auto-task-code-review`, `auto-task-verify`, or `auto-task-fix` skill runs in a repo with an existing `.auto-task/<branch>/` folder, it reads `CONTEXT.md` and `TRACE.md` first so it doesn't re-litigate decisions or miss real issues that earlier reviewers flagged but never followed up on.
 
 **For third-party tools that want to participate:** the contract is "if `.auto-task/$(git branch --show-current)/` exists, read `CONTEXT.md` and `TRACE.md` before forming findings; append a new TRACE entry on completion (block format documented in `skills/auto-task/SKILL.md`)." Adopt this in your own tool to interoperate.
 
