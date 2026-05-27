@@ -117,4 +117,4 @@ MIT — see `LICENSE`.
 
 ## Status
 
-**v0.1.0 — pre-release.** The `task-execution-verifier` agent is still a stub, and the end-to-end install hasn't been tested in a clean room. Use at your own risk; file issues on GitHub.
+**v0.1.0 — pre-release.** The install path has been verified in a throwaway directory and all three hooks function correctly. The `task-execution-verifier` agent has a real protocol prompt but has not yet been exercised end-to-end inside a real auto-task run — treat Gate A/B as functional but not yet battle-tested. File issues on GitHub.
