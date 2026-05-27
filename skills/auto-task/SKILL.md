@@ -215,15 +215,14 @@ If you cannot map the current transition to one of these, the default is `"auto-
 
 All commits in the run go through the `auto-task-commit` skill. Before invoking `auto-task-commit`, run `git restore --staged .auto-task/ 2>/dev/null || true` defensively, even though the `.git/info/exclude` entry from step 2 should already keep `.auto-task/` out of the index.
 
-**Clarifying questions (HUMAN GATE — first interaction).** Before reconnaissance or planning, surface every decision-changing ambiguity in one batched up-front round. The goal: once the user answers, you can plan, execute, verify, and ship the task without coming back for clarification. This is the FIRST half of Phase 1's human gate; plan approval at the end of Phase 1 is the second half. There is no separate gate later — anything you'll need to know to finish the run, ask now.
+**Clarifying questions (HUMAN GATE — first interaction).** Before reconnaissance or planning, surface every decision-changing ambiguity that you cannot resolve yourself. The goal: once the user answers (and reviews your auto-resolved items at plan approval), you can plan, execute, verify, and ship the task without coming back for clarification. This is the FIRST half of Phase 1's human gate; plan approval at the end of Phase 1 is the second half. There is no separate gate later — anything you'll need to know to finish the run, resolve or surface now.
 
-Process:
+**Core principle:** do not burden the user with anything you can answer with reliable evidence. Do NOT guess, assume, or extrapolate from "looks like the convention" — if you don't have a verifiable cite, ask the user. Every candidate that you resolve yourself is recorded in PLAN.md with its source so the user can audit your evidence at approval time.
 
-1. **Quick scan first.** Spend a tightly-bounded read of the repo against the task description: README, CLAUDE.md, the directories and entry points the task most obviously touches, any file the user named. Goal is to ground the questions in current reality, not to do deep exploration. If you can answer a candidate question yourself from the codebase, README, or CLAUDE.md — do NOT ask it.
+Process (mandatory six-stage gate — do them in order, do not skip stages):
 
-2. **Enumerate ambiguity.** For each candidate question, apply the test: "If I picked the wrong answer here, would the run fail, drift out of scope, miss an AC, or produce something the user wouldn't accept?" Include only the questions that pass. The bar is **decision-changing**, not "might be relevant".
+1. **Draft the full candidate question list.** Read the task description carefully. Enumerate every potential decision-changing ambiguity — do NOT filter yet, do NOT try to answer yet, just list them. Cover every category that has any ambiguity for this task (omit categories with none):
 
-   Cover every category that actually has ambiguity for this task (omit categories with none):
    - **Scope** — what's in / out (which files, modules, routes, user segments, platforms); whether adjacent broken things get fixed or parked.
    - **Acceptance** — what "done" looks like that the task left implicit (specific behavior, visual outcome, error/empty/edge handling, accessibility, i18n, mobile).
    - **Approach** — when more than one viable implementation exists and the choice changes blast radius, risk, dependency, API shape, or migration cost.
@@ -233,17 +232,56 @@ Process:
    - **Verification** — how the user will judge success (specific URL/route/test/manual check), what counts as a regression worth blocking on.
    - **Trade-offs** — explicit user preferences that contradict obvious defaults ("fewer dependencies even if more code", "ship behind a flag", "prefer rewrite over patch").
 
-3. **Batch with `AskUserQuestion`.** Present 1–4 questions per call (the tool's cap). If you genuinely have more than 4, prioritize the highest-impact and fold the rest into PLAN.md's Unknowns for surfacing during plan approval. Each question MUST:
+   Apply the decision-changing test: "If I picked the wrong answer here, would the run fail, drift out of scope, miss an AC, or produce something the user wouldn't accept?" Drop questions that don't pass. The remainder is your draft list.
+
+2. **Research each draft question.** For every candidate on the list, spend bounded effort trying to find a verifiable answer. Go deep enough to reach reliable evidence OR confirm there isn't any, then move on. Sources are limited to material that produces a CITE — a `file:line`, a doc URL, an MCP response, a memory entry, or the user's own verbatim words in the task description. No inference from "this looks like the convention." Sources, in roughly this order:
+
+   - The task description itself — re-read carefully; users often answer in the prompt without realizing it. Cite the quoted phrase.
+   - Repo state — `README.md`, `CLAUDE.md`, `package.json` / pyproject / equivalent for stack and dep policy, the directories and entry points the task obviously touches. Cite the `file:line`.
+   - Prior auto-task runs — `.auto-task/<branch>/CONTEXT.md` if it exists for this branch, and the most recent CONTEXT.md from adjacent branches on the same area. Cite the section.
+   - User memory — `~/.claude/projects/<slug>/memory/MEMORY.md` if it exists; project/feedback/reference memories often resolve approach/policy questions. Cite the memory file name.
+   - Codebase via `Read` / `Glob` / `Grep` — for scope, existing patterns. Cite the `file:line`. **One example is not a convention** — to cite "the repo uses pattern X", you need ≥3 occurrences in distinct files and zero counter-examples in the area the task touches.
+   - MCPs — the same allowance as the recon step below. Context7 for library API shape, Figma for design refs, Playwright for live-URL behavior, etc. Cite the MCP and the specific response.
+
+   What you CANNOT cite, you CANNOT resolve. "Probably X", "usually X", "looks like X", "would make sense", "common pattern" — these are not cites. If your only basis is inference without evidence, the question goes to the Asked bucket in stage 3.
+
+3. **Triage each candidate into one of two buckets.**
+
+   - **Resolved** — verifiable answer found with a cite. Record under `## Clarifications` as `Q: <question> / A: <answer> / Source: <cite — file:line, doc URL, MCP source, memory entry, or quoted phrase from the task description>`. If you cannot produce a cite in this format, the candidate is NOT resolved — push it to Asked.
+   - **Asked** — no verifiable answer found, OR the question is high-stakes enough that even strong evidence isn't sufficient (writes to external systems, irreversible operations, anything in CLAUDE.md's "Executing actions with care" territory — for these, always ask even if you have a cite, because the user has standing to override).
+
+   There is no third bucket. Do not invent "Defaulted", "Assumed", "Probably-X". Either you have a cite and resolve, or you don't and you ask.
+
+4. **Ask only the Asked bucket** via `AskUserQuestion`. Present 1–4 questions per call (the tool's cap). If you genuinely have more than 4 items in the Asked bucket, prioritize the highest-impact and fold the rest into PLAN.md's Unknowns. Each question MUST:
    - Be answerable with a short selection (offer 2–4 concrete options; avoid open-ended phrasing).
    - State the decision impact in the description so the user knows why it matters (what changes if A vs B).
    - Lead with the option you'd pick if forced to decide alone, marked `(Recommended)`.
    - Use a short header chip (≤12 chars).
 
-4. **Record answers.** Write the resolved Q&A as a `## Clarifications` section at the very top of `.auto-task/<branch>/PLAN.md` (above Feasibility). Log each pair to `state.history`: `{ phase: "define-clarify", question: "...", answer: "...", at: "ISO-8601" }`. Treat the answers as binding inputs to recon, plan body, AC table, and tier scoring.
+   If the Asked bucket is empty after stages 1–3, skip this step entirely — do NOT invent questions to "look thorough". A run where every ambiguity was resolved with evidence is a *better* run, not a lazier one.
 
-5. **Zero-question exit.** If the quick scan turns up no decision-changing ambiguity, write `## Clarifications\n\nNone — task description was unambiguous against current repo state.\n` to PLAN.md and proceed directly to recon. Log `{ phase: "define-clarify", result: "no-questions", at: "..." }`. Do NOT pad the gate with low-value questions to "look thorough" — asking what the user already specified, or what's already in CLAUDE.md, wastes the gate.
+5. **Record everything.** Write a `## Clarifications` section at the very top of `.auto-task/<branch>/PLAN.md` (above Feasibility). The section contains both buckets in this order:
 
-6. **No mid-pipeline re-asking.** After this step, Phase 2–5 must not stop to ask clarifying questions. If a genuine new ambiguity surfaces later (typically because the codebase contradicts a Phase 1 assumption), that's a Loop-rule clause 3 ("external blocker") trigger — STOP and surface per the Surfacing protocol; do not silently ask. This is what forces the questions to be exhaustive *here*.
+   ```
+   ## Clarifications
+
+   ### Resolved (evidence-backed)
+   - **Q:** <question>
+     **A:** <answer>
+     **Source:** <cite — file:line, doc URL, MCP source, memory entry, or quoted task phrase>
+   - ...
+
+   ### Asked (user-provided)
+   - **Q:** <question>
+     **A:** <user's answer>
+   - ...
+   ```
+
+   Omit any subsection whose bucket is empty. If both buckets are empty (no ambiguity at all), write `## Clarifications\n\nNone — task description was unambiguous against current repo state.\n` and skip the rest.
+
+   Log to `state.history`: one entry per candidate question, in either bucket: `{ phase: "define-clarify", question: "...", answer: "...", resolution: "resolved|asked", source: "<cite for resolved; \"user\" for asked>", at: "ISO-8601" }`. Treat answers from both buckets as binding inputs to recon, plan body, AC table, and tier scoring.
+
+6. **No mid-pipeline re-asking.** After this step, Phase 2–5 must not stop to ask clarifying questions. If a genuine new ambiguity surfaces later (typically because the codebase contradicts a Phase 1 assumption), that's a Loop-rule clause 3 ("external blocker") trigger — STOP and surface per the Surfacing protocol; do not silently ask. This is what forces stages 1–5 to be exhaustive *here*.
 
 After clarifications are recorded, proceed to reconnaissance.
 
@@ -413,6 +451,8 @@ The disclaimer is generated from the rubric values + plan metadata; do NOT inven
 If the user proceeds with approval despite a disclaimer, that's a binding choice — record it in CONTEXT.md under `Human choices → Plan approval → Disclaimer acknowledged` with the list of triggers the user accepted. Later phases (Phase 4 review, Gate B) should NOT re-raise the same risk as a finding to fix; the user already made the call. They MAY raise it as a follow-up if the implementation made the risk worse than the plan anticipated.
 
 Before presenting the plan, set `expected_next_action: "user-approval"` in STATE.json — the Stop hook will allow the yield. Then present the plan summary (with the Critique section visible AND, if assembled above, the Risk disclaimer block) and **STOP**. Wait for explicit user approval (keywords: `approved`, `looks good`, `continue`, `proceed`, `yes`, `go ahead`).
+
+When presenting, surface the `## Clarifications` section so the user can audit your evidence. For every Resolved entry, the cite is visible inline — the user can spot a wrong resolution by checking the cite. The Asked entries are the user's own answers from stage 4, replayed for verification.
 
 On approval: write `approved: true` AND `expected_next_action: "auto-continue"` to state, then advance to Phase 2. From this point on, the Stop hook will block any attempt to end the turn until you reach a legitimate yield point or `phase: "done"`. **Do not commit on approval** — `.auto-task/<branch>/PLAN.md` stays out of git, and per the single-commit rule below, no code commit happens until Phase 5.
 
@@ -620,13 +660,15 @@ This is the **only phase that commits**. By the time you reach it, the working t
    The user's explicit decisions during this run. Load-bearing — they constrain what was built and why. Future reviewers should not re-litigate them unless they disagree with the choice itself, not its consequences.
 
    ### Clarifying Q&A (Phase 1, before plan)
-   For each Q&A pair from state.history entries with `phase: "define-clarify"`:
+   This section reflects ONLY entries where the user actually weighed in. The Resolved bucket from PLAN.md's `## Clarifications` is auditable in PLAN.md itself and does not belong in CONTEXT.md's `Human choices` — those were not user choices.
+
+   For each state.history entry with `phase: "define-clarify"` AND `resolution: "asked"`:
    - **Q:** <question text as presented via AskUserQuestion>
      - Options offered: <option labels, comma-separated; mark the recommended one with *>
      - **Chosen:** <user's selected option, verbatim>
      - Why it matters: <one line, derived from the question's description>
 
-   If `result: "no-questions"`, write: `None — the task description was unambiguous against the repo state at Phase 1.`
+   If no `resolution: "asked"` entries exist (every candidate was Resolved with a cite, or there were no candidates at all), write: `None — every ambiguity was resolved with evidence; see PLAN.md ## Clarifications for the cites.`
 
    ### Plan approval
    - Approved at: <ISO timestamp when `approved: true` was set>
