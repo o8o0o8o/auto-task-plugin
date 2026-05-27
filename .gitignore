@@ -1,0 +1,14 @@
+# Auto-task local history (never committed; per the skill's own contract).
+.auto-task/
+
+# Editor / OS noise
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test scratch
+/tmp/
+/scratch/

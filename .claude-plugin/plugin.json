@@ -1,0 +1,39 @@
+{
+  "name": "auto-task-plugin",
+  "version": "0.1.0",
+  "description": "End-to-end autonomous task workflow for Claude Code. One human gate at plan approval; everything after runs unattended until success, a hard blocker, or test flakiness.",
+  "author": "Sergey Labut",
+  "license": "MIT",
+  "comment": "Field names below are placeholders — verify against the current Claude Code plugin spec via Context7 before locking. Wrong field names fail silently at install.",
+  "skills": [
+    "skills/auto-task",
+    "skills/plan",
+    "skills/implement",
+    "skills/verify",
+    "skills/code-review",
+    "skills/commit",
+    "skills/fix"
+  ],
+  "agents": [
+    "agents/task-execution-verifier.md"
+  ],
+  "hooks": [
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "command": "hooks/block-ai-attribution.sh"
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "command": "hooks/enforce-gates.sh"
+    },
+    {
+      "event": "Stop",
+      "command": "hooks/prevent-mid-protocol-stall.sh"
+    }
+  ],
+  "requires": {
+    "tools": ["git", "gh", "jq"]
+  }
+}

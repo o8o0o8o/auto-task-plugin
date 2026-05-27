@@ -1,0 +1,35 @@
+{
+  "_comment": "Merge these entries into your ~/.claude/settings.json. Do NOT replace the file — preserve your existing permissions, enabledPlugins, etc. The hook commands assume the plugin is installed at the default plugin path; adjust paths if needed.",
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_DIR}/hooks/block-ai-attribution.sh" },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_DIR}/hooks/enforce-gates.sh" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_DIR}/hooks/prevent-mid-protocol-stall.sh" }
+        ]
+      }
+    ]
+  },
+
+  "_optional_userpromptsubmit": {
+    "_comment": "Uncomment this block if you want non-bundled tools (third-party reviewers, free-form review prompts) to be informed when an auto-task history folder exists for the current branch. Off by default to avoid token overhead on unrelated prompts.",
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_DIR}/hooks/inject-history-reminder.sh" }
+        ]
+      }
+    ]
+  }
+}
