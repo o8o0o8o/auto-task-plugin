@@ -11,6 +11,8 @@ metadata:
 
 Disciplined bug-fix workflow. Five phases, with a single hard stop for user approval after Phase 2 and quoted evidence required in Phase 5.
 
+> **Working directory.** Run history and patch notes live under the gitignored `.auto-task/<branch>/` root, where `<branch>` is the current git branch (`git branch --show-current`; if detached or not in a repo, fall back to a flat `.auto-task/`). **Never commit anything under `.auto-task/`.** When invoked inside an `/auto-task` run, this skill only modifies the working tree — the orchestrator owns commits and state.
+
 ## Hard rules
 
 - **One stop, after Phase 2.** Do not write code until the user approves the acceptance criteria.
@@ -24,7 +26,7 @@ Disciplined bug-fix workflow. Five phases, with a single hard stop for user appr
 Goal: understand the bug well enough to state the root cause as one sentence.
 
 - Read the user's description, error output, stack trace, or failing test.
-- If `.patches/` exists, skim the `.md` files for prior fixes of the same class.
+- If `.auto-task/<branch>/fixes/` exists, skim its `.md` files for prior fixes of the same class.
 - Trace execution: read the relevant files, follow the call path, identify the exact failing condition.
 - Map the **blast radius**: which files, modules, callers, and consumers are affected?
 - Classify risk: **low** (isolated, pure logic, covered by tests) or **high** (shared module, public contract, async/race, persistence, security).
@@ -59,7 +61,7 @@ Goal: make this class of bug harder to recur.
 - **Classify the root cause** with a tag: e.g. `null-check`, `async`, `race-condition`, `off-by-one`, `state`, `types`, `css`, `api`, `validation`.
 - **Search for siblings.** Grep the codebase for the same class of issue (same pattern, same missing check, same misuse). Fix the ones you find, or list them in the patch file as follow-ups if out of scope.
 - **Add a guardrail** appropriate to the cause: a unit test that pins the fixed behavior, a type tightening, a lint rule, a runtime assertion at a boundary, or a comment explaining a non-obvious invariant. Pick the lightest one that actually prevents recurrence.
-- **Write the patch file.** Ensure `.patches/` exists. Create `.patches/YYYY-MM-DD-HH.mm.md`:
+- **Write the patch file.** Ensure `.auto-task/<branch>/fixes/` exists. Create `.auto-task/<branch>/fixes/YYYY-MM-DD-HH.mm.md`:
 
   ```markdown
   # <Short title>

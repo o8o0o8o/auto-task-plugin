@@ -9,7 +9,9 @@ metadata:
 
 # Plan
 
-Create a structured implementation plan from requirements. Produces `.patches/PLAN.md` with numbered tasks and checkboxes.
+Create a structured implementation plan from requirements. Produces `.auto-task/<branch>/PLAN.md` with numbered tasks and checkboxes.
+
+> **Working directory.** Plan, state, and run history live under the gitignored `.auto-task/<branch>/` root, where `<branch>` is the current git branch (`git branch --show-current`; if detached or not in a repo, fall back to a flat `.auto-task/`). When invoked inside an `/auto-task` run, the orchestrator owns this directory — write to the exact path it references. **Never commit anything under `.auto-task/`** (it is added to `.git/info/exclude` per-clone).
 
 ## Process
 
@@ -27,12 +29,12 @@ Create a structured implementation plan from requirements. Produces `.patches/PL
 
 ### 3. Check for past lessons
 
-- If `.patches/` exists, read all `.md` files there (excluding PLAN.md) for past bug fixes and lessons learned.
+- If `.auto-task/<branch>/fixes/` exists, read its `.md` files for past bug fixes and lessons learned on this branch.
 - Note any relevant patterns or warnings in the plan's Context section.
 
 ### 4. Write the plan
 
-Ensure `.patches/` directory exists (create it if needed). Write `.patches/PLAN.md`:
+Ensure the `.auto-task/<branch>/` directory exists (create it if needed). Write `.auto-task/<branch>/PLAN.md`:
 
 ```markdown
 # Plan: <title>
@@ -73,4 +75,4 @@ Show the user the plan summary and tell them to run `/implement` when ready to s
 - For plans with 5+ tasks, insert `<!-- COMMIT CHECKPOINT -->` lines at logical boundaries (every 3-5 tasks).
 - Order tasks by dependency -- things that must happen first come first.
 - Do NOT start implementation. Planning only.
-- If a `.patches/PLAN.md` already exists, ask the user whether to replace it or work on the existing one.
+- If a `.auto-task/<branch>/PLAN.md` already exists, ask the user whether to replace it or work on the existing one.

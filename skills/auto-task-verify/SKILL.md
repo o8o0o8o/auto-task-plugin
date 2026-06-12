@@ -11,11 +11,13 @@ metadata:
 
 Post-implementation verification. Checks that each planned task is actually implemented and runs available quality checks.
 
+> **Working directory.** Plan, state, and run history live under the gitignored `.auto-task/<branch>/` root, where `<branch>` is the current git branch (`git branch --show-current`; if detached or not in a repo, fall back to a flat `.auto-task/`). When invoked inside an `/auto-task` run, use the exact path the orchestrator references. **Never commit anything under `.auto-task/`.**
+
 ## Process
 
 ### 1. Load the plan
 
-- Read `.patches/PLAN.md`. If it does not exist, tell the user there is no plan to verify and stop.
+- Read `.auto-task/<branch>/PLAN.md`. If it does not exist, tell the user there is no plan to verify and stop.
 - Parse all tasks (both checked and unchecked).
 
 ### 2. Verify each task

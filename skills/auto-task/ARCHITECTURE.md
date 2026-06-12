@@ -10,7 +10,7 @@ This document is a map of the moving parts: the pipeline phases, the artifacts o
 
 ```mermaid
 flowchart TD
-    Start([/auto-task &lt;description&gt;]) --> P1Setup[Phase 1 — Branch setup<br/>git switch -c feat|fix|chore/&lt;slug&gt;<br/>append .patches/ to .git/info/exclude<br/>init AUTO-TASK-STATE.json]
+    Start([/auto-task &lt;description&gt;]) --> P1Setup[Phase 1 — Branch setup<br/>git switch -c feat|fix|chore/&lt;slug&gt;<br/>append .auto-task/ to .git/info/exclude<br/>init .auto-task/&lt;branch&gt;/STATE.json]
     P1Setup --> Recon{Recon trigger?<br/>UI / runtime / external lib /<br/>Figma / Notion / etc.}
     Recon -- yes --> ReconDo[MCP recon, read-only<br/>any MCP if necessary<br/>playwright / context7 / figma /<br/>notion / drive / slack / ide / ...]
     Recon -- no --> P1Plan
@@ -33,7 +33,7 @@ flowchart TD
     GateA -.- ACGate[MCPs allowed for AC<br/>bound-check execution<br/>read-only][Phase 4 — Code review loop<br/>skill: auto-task-code-review on working-tree diff<br/>parse Blockers / Required / Follow-ups<br/>NO COMMIT]
 
     P4 --> P4Cls{findings?}
-    P4Cls -- only follow-ups --> P4OK[park follow-ups in state<br/>set gates.code_review.passed=true<br/>tool='skill:code-review'<br/>clean_pass_after_last_fix=true]
+    P4Cls -- only follow-ups --> P4OK[park follow-ups in state<br/>set gates.code_review.passed=true<br/>tool='skill:auto-task-code-review'<br/>clean_pass_after_last_fix=true]
     P4Cls -- blocker / required --> P4Fix[skill: auto-task-fix<br/>re-run skill: auto-task-verify<br/>iteration.review++<br/>clean_pass_after_last_fix=false]
     P4Fix --> P4
 
@@ -51,7 +51,7 @@ flowchart TD
 
     P5 --> P5Verify{verify gates:<br/>code_review.passed AND<br/>(gate_b.passed OR skipped_reason)}
     P5Verify -- missing --> StopBug([STOP — pipeline bug,<br/>do NOT bypass hook])
-    P5Verify -- ok --> P5Stage[git restore --staged .patches/<br/>git add &lt;planned files only&gt;<br/>confirm no .patches/ in index]
+    P5Verify -- ok --> P5Stage[git restore --staged .auto-task/<br/>git add &lt;planned files only&gt;<br/>confirm no .auto-task/ in index]
     P5Stage --> P5Commit[skill: auto-task-commit<br/>pre-commit hook validates gates]
     P5Commit --> P5Push{push?<br/>only allowed prompt mid-run}
     P5Push -- yes --> P5PR[git push -u origin HEAD<br/>gh pr create]
@@ -96,9 +96,9 @@ Tier can only **escalate** — never auto-de-escalate. Every change is logged to
 
 ---
 
-## State file — `.patches/AUTO-TASK-STATE.json`
+## State file — `.auto-task/<branch>/STATE.json`
 
-The pipeline is fully resumable. State is updated at every phase transition and every loop iteration.
+The pipeline is fully resumable. State is updated at every phase transition and every loop iteration. `<branch>` mirrors `git branch --show-current` verbatim (slashes preserved), so the gate and Stop hooks resolve the same path.
 
 ```json
 {
@@ -125,22 +125,27 @@ The pipeline is fully resumable. State is updated at every phase transition and 
 }
 ```
 
-`.patches/` is **never committed**. It is added to `.git/info/exclude` (per-clone, never to the repo's `.gitignore`) and pre-stage-cleaned before every commit.
+`.auto-task/` is **never committed**. Its root is added to `.git/info/exclude` (per-clone, never to the repo's `.gitignore`) and pre-stage-cleaned before every commit.
 
-### `.patches/` layout during a run
+### `.auto-task/<branch>/` layout during a run
 
 ```
-.patches/
-├── AUTO-TASK-STATE.json   # state machine (see above)
-├── PLAN.md                # plan + Critique + Acceptance Criteria + Effort
-└── recon/                 # (optional) Playwright screenshots from Phase 1
+.auto-task/
+└── <branch>/                 # branch path preserved verbatim (fix/foo → .auto-task/fix/foo/)
+    ├── STATE.json            # state machine (see above)
+    ├── PLAN.md               # plan + Critique + Acceptance Criteria + Pre-flight + Recon
+    ├── CONTEXT.md            # Phase 5 handover artifact (regenerated each Phase 5)
+    ├── TRACE.md              # append-only operation log
+    ├── recon/                # Phase 1 reconnaissance + change-diagram.mmd
+    ├── fixes/                # per-fix patch notes (auto-task-fix lessons)
+    └── artifacts/            # proofs of completion (tests, screenshots, diffs, logs)
 ```
 
 ---
 
 ## Acceptance Criteria contract
 
-Phase 1 cannot complete without an `## Acceptance Criteria` table in `.patches/PLAN.md`. Every row must be:
+Phase 1 cannot complete without an `## Acceptance Criteria` table in `.auto-task/<branch>/PLAN.md`. Every row must be:
 
 1. **Observable** — third-party-witnessable outcome, not "auth works correctly".
 2. **Bound to a check** — concrete command/assertion/observation, not "manually check".
@@ -208,7 +213,7 @@ action: exit 2 with explanation pointing at ~/.claude/CLAUDE.md
 
 Runs only when:
 - the command is a `git commit` (regex-matched at line/pipe boundaries),
-- `.patches/AUTO-TASK-STATE.json` exists,
+- `.auto-task/<branch>/STATE.json` exists (branch from `git branch --show-current`),
 - `approved === true`,
 - `phase !== "done"`.
 
@@ -256,10 +261,10 @@ State is saved. The user gets a short status message: **why stopped** + **what's
 ## Invariants (the contract)
 
 - **Single commit.** Only Phase 5 commits — guaranteed by the pre-commit hook + the skill's per-phase "NO COMMIT" rule.
-- **`.patches/` never committed.** Excluded via `.git/info/exclude`, pre-stage-cleaned at every commit. A leaked commit means a bug — surface, do not silently rewrite history.
+- **`.auto-task/` never committed.** Excluded via `.git/info/exclude`, pre-stage-cleaned at every commit. A leaked commit means a bug — surface, do not silently rewrite history.
 - **One human gate** between approval and PR. Plus one allowed prompt in Phase 5 (push/PR/hold).
 - **Acceptance Criteria are load-bearing.** No gate can pass without literal execution of its bound AC rows.
-- **Effort can only escalate.** Manual de-escalation requires editing `Effort:` in `.patches/PLAN.md`.
+- **Effort can only escalate.** Manual de-escalation requires editing `Effort:` in `.auto-task/<branch>/PLAN.md`.
 - **Fresh-context agents.** Both `task-execution-verifier` spawns receive only `{ diff, AC }` — never conversation history.
 - **Pre-existing user work is preserved.** Pre-staged files at run start are recorded as baseline and excluded from every auto-task commit.
 
@@ -278,6 +283,6 @@ State is saved. The user gets a short status message: **why stopped** + **what's
 | `~/.claude/skills/auto-task-commit/SKILL.md` | Composed by Phase 5 |
 | `~/.claude/CLAUDE.md` | Global rules: commit-message ban, code-review-skill rule, non-yielding, DoD |
 | `~/.claude/settings.json` | Pre-commit hooks (gate enforcement + AI-attribution ban), `git push` deny, `gh pr create` ask |
-| `<project>/.patches/AUTO-TASK-STATE.json` | Per-run state machine (resumable) |
-| `<project>/.patches/PLAN.md` | Per-run plan + AC + Effort + Critique |
-| `<project>/.git/info/exclude` | Per-clone `.patches/` exclusion (never modifies repo `.gitignore`) |
+| `<project>/.auto-task/<branch>/STATE.json` | Per-run state machine (resumable) |
+| `<project>/.auto-task/<branch>/PLAN.md` | Per-run plan + AC + Effort + Critique |
+| `<project>/.git/info/exclude` | Per-clone `.auto-task/` exclusion (never modifies repo `.gitignore`) |

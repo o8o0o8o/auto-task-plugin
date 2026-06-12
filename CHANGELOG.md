@@ -19,9 +19,20 @@ Initial extraction of the `auto-task` skill from `~/.claude/skills/auto-task/` i
 - `README.md`, `LICENSE` (MIT), this changelog.
 - `PACKAGING_PLAN.md` — the work plan and open questions for getting to v0.1.0.
 
+### Fixed
+
+- **Completed the `.patches/` → `.auto-task/<branch>/` migration across all six bundled sibling skills and `ARCHITECTURE.md`.** Previously only the orchestrator `SKILL.md` and `enforce-gates.sh` had been migrated; the siblings still read/wrote `.patches/`, which is not in `.git/info/exclude` and not pre-stage-cleaned — so harness scratch could leak into commits. The siblings now resolve everything under the gitignored `.auto-task/<branch>/` root.
+- **`auto-task-commit` no longer instructs the model to commit harness files.** The rule "If `.patches/` files are in the diff, include them" directly contradicted the orchestrator's "never commit `.auto-task/`" invariant; it is replaced with an explicit unstage-and-warn rule.
+- **Corrected the branch-path examples in `SKILL.md`** (`fix/auth-bug` → `.auto-task/fix/auth-bug/`, not the namespacing-mangled `.auto-task/auto-task-fix/auth-bug/`). A divergent path makes the gate and Stop hooks find no state file and fail open. Added an explicit note that the folder name must match `git branch --show-current` verbatim.
+- **`ARCHITECTURE.md`** state-file path, filename (`STATE.json`, not `AUTO-TASK-STATE.json`), on-disk layout, and `gates.code_review.tool` value (`skill:auto-task-code-review`) brought back in sync with `SKILL.md` and the hooks.
+
+### Added
+
+- `hooks/inject-history-reminder.sh` — the optional `UserPromptSubmit` hook referenced (but previously missing) in `settings-fragment.json`. Informs the session when `.auto-task/<branch>/` history exists so any reviewer honours the read-before-review contract. Off by default.
+
 ### Known issues
 
 - `task-execution-verifier` agent has a real prompt but has not yet been exercised end-to-end inside a real auto-task run — treat Gate A/B as functional but not battle-tested.
 - Plugin manifest field names not verified against the current spec (the canonical install path is `install.sh`, not `/plugin add`, so the manifest is currently informational).
-- Bundled skills do not yet have the full read-before-review patches applied — the verifier agent enforces the contract on its side, but the patched `auto-task-code-review` / `auto-task-verify` / `auto-task-fix` skills are still close to upstream (Phase C item 10 of the original packaging plan).
+- Bundled sibling skills now share the orchestrator's `.auto-task/<branch>/` working-directory convention, but their richer read-before-review behaviour (reading CONTEXT.md / TRACE.md, appending trace entries) still lives mostly in the orchestrator and the verifier agent rather than in each sibling.
 - `enforce-gates.sh` path resolution: assumes `CLAUDE_PROJECT_DIR` is set to the repo root (or falls back to `$PWD`). Verify this environment variable is provided by the Claude Code hook context.

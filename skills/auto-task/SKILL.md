@@ -44,7 +44,7 @@ The single exception during Phase 5: pushing to remote and opening a PR are exte
 - **One human gate.** The plan produced in Phase 1 is the contract. After the user approves it, do not stop for confirmation — proceed through Execute → Verify → Review → Handover automatically.
 - **Surface only when the loop rule says to.** See "Loop rule" below. Never invent new stops outside that rule.
 - **Commit after each phase.** Each phase ends with a `/auto-task-commit` so progress is durable and resumable.
-- **`.auto-task/` is the persistent local history root — gitignored, NEVER committed.** Layout: `.auto-task/<branch-name>/` per run, where `<branch-name>` mirrors the git branch path verbatim (so branch `fix/auth-bug` → `.auto-task/auto-task-fix/auth-bug/`). Inside each per-run folder:
+- **`.auto-task/` is the persistent local history root — gitignored, NEVER committed.** Layout: `.auto-task/<branch-name>/` per run, where `<branch-name>` mirrors the git branch path verbatim (so branch `fix/auth-bug` → `.auto-task/fix/auth-bug/`). Inside each per-run folder:
   - `STATE.json` — the run-state machine ([[state-file-schema]]).
   - `PLAN.md` — the approved plan + critique + AC pre-flight + recon.
   - `CONTEXT.md` — generated at Phase 5; carries task, human choices, AC results, verification trail, drift events, change diagram, follow-ups. The handover artifact for downstream reviewers (human, `/auto-task-code-review`, `/review`, future `/auto-task` runs touching the same area).
@@ -205,7 +205,7 @@ If you cannot map the current transition to one of these, the default is `"auto-
 
 2. **Exclude `.auto-task/` from git.** Append `.auto-task/` (the root, NOT the per-branch sub-path) to `.git/info/exclude` (one-line append, idempotent — check first with `grep -qxF '.auto-task/' .git/info/exclude`). This is per-clone, so it never lands in the repo's `.gitignore`. One exclude entry covers every per-branch folder under `.auto-task/`, including ones from prior runs that should remain readable for history.
 
-3. **Create the per-branch folder.** `mkdir -p .auto-task/<branch>/artifacts .auto-task/<branch>/recon`. Slashes in the branch name are preserved literally (branch `fix/auth-bug` → `.auto-task/auto-task-fix/auth-bug/`).
+3. **Create the per-branch folder.** `mkdir -p .auto-task/<branch>/artifacts .auto-task/<branch>/recon`. Slashes in the branch name are preserved literally (branch `fix/auth-bug` → `.auto-task/fix/auth-bug/`). This MUST match `git branch --show-current` verbatim — the gate and Stop hooks resolve `.auto-task/<branch>/STATE.json` from it, and any divergence (extra prefix, rewritten slug) makes them silently find no state file and fail open.
 
 4. **State.** Initialize `.auto-task/<branch>/STATE.json` with `phase: "define"`, `expected_next_action: null`, `approved: false`, `description: "<verbatim task input>"`, `branch: "<resolved name>"`, and empty containers for the rest (see "State file" schema). `expected_next_action` is `null` while `approved` is `false` — the Stop hook allows yields freely until the user has approved the plan.
 

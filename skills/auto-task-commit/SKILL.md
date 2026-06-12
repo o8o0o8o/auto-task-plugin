@@ -65,6 +65,6 @@ Create a message following Conventional Commits:
 
 - Never commit files that look like secrets: `.env`, `credentials.*`, `*secret*`, `*.pem`, `*.key`. Warn the user if such files are staged.
 - Never force push or amend unless the user explicitly asks.
-- If `.patches/` files are in the diff, include them -- they are project knowledge.
+- **Never commit anything under `.auto-task/`.** That directory is local auto-task harness, state, and run history — it is added to `.git/info/exclude` per-clone and must stay out of every commit. Before committing, run `git restore --staged .auto-task/ 2>/dev/null || true` and confirm `git diff --cached --name-only` shows no `.auto-task/` paths. If any appear, unstage them and warn the user.
 - If changes span unrelated areas, suggest splitting into multiple commits.
 - If the diff is very large (50+ files), warn the user and suggest reviewing first with `/review`.

@@ -9,15 +9,17 @@ metadata:
 
 # Implement
 
-Execute tasks from `.patches/PLAN.md` one by one. Supports session resumption.
+Execute tasks from `.auto-task/<branch>/PLAN.md` one by one. Supports session resumption.
+
+> **Working directory.** Plan, state, and run history live under the gitignored `.auto-task/<branch>/` root, where `<branch>` is the current git branch (`git branch --show-current`; if detached or not in a repo, fall back to a flat `.auto-task/`). When invoked inside an `/auto-task` run, the orchestrator owns this directory — read and write the exact path it references. **Never commit anything under `.auto-task/`.**
 
 ## Process
 
 ### 1. Load context
 
 - Read `CLAUDE.md` for project conventions (if it exists).
-- Read `.patches/PLAN.md`. If it does not exist, tell the user to run `/plan` first and stop.
-- Read all `.md` files in `.patches/` (excluding PLAN.md) to learn from past fixes. If a patch says "always check for X" or "avoid pattern Y", apply that knowledge during implementation.
+- Read `.auto-task/<branch>/PLAN.md`. If it does not exist, tell the user to run `/auto-task-plan` first and stop.
+- Read any `.md` files in `.auto-task/<branch>/fixes/` to learn from past fixes. If a patch says "always check for X" or "avoid pattern Y", apply that knowledge during implementation.
 
 ### 2. Determine starting point
 
@@ -33,7 +35,7 @@ For each unchecked task, in order:
 1. Create a TaskCreate entry with the task description as subject and an activeForm like "Implementing task N".
 2. Set the task to `in_progress` via TaskUpdate.
 3. Implement the change described in the plan. Follow project conventions from CLAUDE.md.
-4. After completing the change, immediately update the checkbox in `.patches/PLAN.md` from `- [ ]` to `- [x]`.
+4. After completing the change, immediately update the checkbox in `.auto-task/<branch>/PLAN.md` from `- [ ]` to `- [x]`.
 5. Set the task to `completed` via TaskUpdate.
 6. Move to the next task.
 
