@@ -103,6 +103,7 @@ Define-phase scoring (see Phase 1 rubric) produces Difficulty (D) and Risk (R), 
   "approved": true,
   "description": "<verbatim task input from /auto-task argument>",
   "branch": "<branch name where the run lives>",
+  "base": "<base-commit SHA captured at branch setup — the point the branch forked from>",
   "effort": {
     "tier": "light|standard|heavy",
     "difficulty": 0,
@@ -118,7 +119,7 @@ Define-phase scoring (see Phase 1 rubric) produces Difficulty (D) and Risk (R), 
   "gates": {
     "self_verify": { "passed": false, "at": null, "evidence": null },
     "gate_a":      { "passed": false, "at": null, "evidence": null },
-    "code_review": { "passed": false, "tool": null, "clean_pass_after_last_fix": false, "at": null, "evidence": null },
+    "code_review": { "passed": false, "tool": null, "clean_pass_after_last_fix": false, "reviewed_diff_sha": null, "at": null, "evidence": null },
     "gate_b":      { "passed": false, "at": null, "evidence": null, "skipped_reason": null }
   },
   "followups": [
@@ -178,7 +179,9 @@ The hook is shipped in the plugin's `settings-fragment.json`. Without it, the fi
 
 If you cannot map the current transition to one of these, the default is `"auto-continue"` — strict case, never lenient.
 
-`gates` is the mechanical contract enforced by the global pre-commit hook in `~/.claude/settings.json`. **No commit is permitted during an auto-task run until `gates.code_review.passed === true` and (for STANDARD/HEAVY tier) `gates.gate_b.passed === true` or `gates.gate_b.skipped_reason` is set.** The hook reads this file at every `git commit`/`git commit --amend` invocation. Setting these flags is a checkable artifact — only set them after the agent actually ran and returned a clean result; never set them speculatively. If a gate fails, leave `passed: false` and surface.
+`gates` is the mechanical contract enforced by the global pre-commit hook (`enforce-gates.sh`). **No commit is permitted during an auto-task run until `gates.code_review.passed === true`, `gates.code_review.clean_pass_after_last_fix === true`, and (for STANDARD/HEAVY tier) `gates.gate_b.passed === true` or `gates.gate_b.skipped_reason` is set.** The hook reads this file at every `git commit`/`git commit --amend` invocation. Setting these flags is a checkable artifact — only set them after the agent actually ran and returned a clean result; never set them speculatively. If a gate fails, leave `passed: false` and surface.
+
+Beyond the booleans, the hook also enforces **review staleness**: when `state.base` and `gates.code_review.reviewed_diff_sha` are both present, it recomputes `git diff <base> | git hash-object --stdin` and blocks the commit if the result differs from `reviewed_diff_sha`. This catches the most common real failure mode — review passes clean, then more code is edited (a "quick" Gate B fix, a stray tweak) and committed without re-review. The flags are self-attested; this binds them to the actual bytes of the diff. The only way past it is to re-review the current diff and refresh the sha, which is exactly the intended behavior.
 
 ## Pipeline
 
@@ -207,7 +210,7 @@ If you cannot map the current transition to one of these, the default is `"auto-
 
 3. **Create the per-branch folder.** `mkdir -p .auto-task/<branch>/artifacts .auto-task/<branch>/recon`. Slashes in the branch name are preserved literally (branch `fix/auth-bug` → `.auto-task/fix/auth-bug/`). This MUST match `git branch --show-current` verbatim — the gate and Stop hooks resolve `.auto-task/<branch>/STATE.json` from it, and any divergence (extra prefix, rewritten slug) makes them silently find no state file and fail open.
 
-4. **State.** Initialize `.auto-task/<branch>/STATE.json` with `phase: "define"`, `expected_next_action: null`, `approved: false`, `description: "<verbatim task input>"`, `branch: "<resolved name>"`, and empty containers for the rest (see "State file" schema). `expected_next_action` is `null` while `approved` is `false` — the Stop hook allows yields freely until the user has approved the plan.
+4. **State.** Initialize `.auto-task/<branch>/STATE.json` with `phase: "define"`, `expected_next_action: null`, `approved: false`, `description: "<verbatim task input>"`, `branch: "<resolved name>"`, `base: "<base-commit SHA>"`, and empty containers for the rest (see "State file" schema). Capture `base` as `git rev-parse HEAD` taken right after the branch is created (for new runs) or, when reusing an existing branch, the merge-base against the default branch (`git merge-base HEAD <default>`) — it is the fixed commit the whole run's diff is measured against (`git diff <base>`). It must NOT change for the life of the run; the review-staleness gate hook recomputes `git diff <base>` against it. `expected_next_action` is `null` while `approved` is `false` — the Stop hook allows yields freely until the user has approved the plan.
 
 5. **Initialize TRACE.md.** Create `.auto-task/<branch>/TRACE.md` with the header block from the "Persistent history & trace contract" section, and append the first trace entry: `operation: auto-task:phase-1-start`, summary: "Branch <name> created from <base>; task: <one-line task summary>".
 
@@ -560,7 +563,8 @@ For each blocker and required fix: invoke `/auto-task-fix` (or `/auto-task-imple
 - Before STOPPING on Loop-rule "no progress": forced re-score. If the tier escalates, grant ONE more iteration at the new tier (expanded `/auto-task-verify`, larger fix-loop budget, Gate B reinstated if previously skipped). If that iteration also makes no progress, STOP.
 
 Exit conditions for this phase:
-- Reviewer's latest pass produces only follow-ups → set `gates.code_review = { passed: true, tool: "skill:auto-task-code-review", clean_pass_after_last_fix: true, at: <ISO>, evidence: "<reviewer summary; only follow-ups, no blockers/required>" }` → advance to Gate B (skipped at LIGHT tier — set `gates.gate_b.skipped_reason = "tier=light"` and go straight to Phase 5). The `tool` field MUST be the literal string `"skill:auto-task-code-review"` — the pre-commit hook rejects any other value (including agent invocations).
+- Reviewer's latest pass produces only follow-ups → set `gates.code_review = { passed: true, tool: "skill:auto-task-code-review", clean_pass_after_last_fix: true, reviewed_diff_sha: "<sha>", at: <ISO>, evidence: "<reviewer summary; only follow-ups, no blockers/required>" }` → advance to Gate B (skipped at LIGHT tier — set `gates.gate_b.skipped_reason = "tier=light"` and go straight to Phase 5). The `tool` field MUST be the literal string `"skill:auto-task-code-review"` — the pre-commit hook rejects any other value (including agent invocations).
+  - **`reviewed_diff_sha`** pins the exact diff this clean pass covered: compute it as `git diff <base> | git hash-object --stdin` (where `<base>` is `state.base`). The pre-commit hook recomputes the same hash at commit time and **blocks the commit if it differs** — i.e. if any tracked code changed after the review went clean. Recompute and overwrite this field on every subsequent clean pass (e.g. after a Gate B fix forces a re-review). Never copy a stale value forward; set it from a freshly-computed hash only when the review is genuinely clean, exactly like the boolean flags.
 - Loop rule triggers (no progress / out-of-scope / blocker / flakiness) **after** the re-score hook has been given its chance → STOP and surface (do NOT set `gates.code_review.passed`).
 
 ### Gate B — Adversarial verifier (auto, NO COMMIT)

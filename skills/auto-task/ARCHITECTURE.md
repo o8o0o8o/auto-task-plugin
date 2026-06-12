@@ -103,9 +103,11 @@ The pipeline is fully resumable. State is updated at every phase transition and 
 ```json
 {
   "phase": "define|execute|self-verify|gate-a|review|gate-b|handover|done",
+  "expected_next_action": "auto-continue|user-approval|user-push-prompt|null",
   "approved": true,
   "description": "<verbatim task input>",
   "branch": "<resolved branch name>",
+  "base": "<base-commit SHA the run's diff is measured against>",
   "effort": {
     "tier": "light|standard|heavy",
     "difficulty": 0,
@@ -117,7 +119,7 @@ The pipeline is fully resumable. State is updated at every phase transition and 
   "gates": {
     "self_verify": { "passed": false, "at": null, "evidence": null },
     "gate_a":      { "passed": false, "at": null, "evidence": null },
-    "code_review": { "passed": false, "tool": null, "clean_pass_after_last_fix": false, "at": null, "evidence": null },
+    "code_review": { "passed": false, "tool": null, "clean_pass_after_last_fix": false, "reviewed_diff_sha": null, "at": null, "evidence": null },
     "gate_b":      { "passed": false, "at": null, "evidence": null, "skipped_reason": null }
   },
   "followups": [{ "source": "code-review", "note": "...", "at": "ISO-8601" }],
@@ -224,9 +226,10 @@ Then it reads the state file and **blocks the commit** unless ALL of:
 | `gates.code_review.passed` | `true` |
 | `gates.code_review.tool` | `"skill:auto-task-code-review"` (literal — agents/hand-rolled prompts rejected) |
 | `gates.code_review.clean_pass_after_last_fix` | `true` |
+| `gates.code_review.reviewed_diff_sha` | must equal `git diff <base> \| git hash-object --stdin` recomputed at commit time (skipped if `base`/`reviewed_diff_sha` absent) |
 | `gates.gate_b.passed` OR `gates.gate_b.skipped_reason` | one of them set, unless `tier === "light"` |
 
-The hook is the single point of mechanical enforcement that makes the **single-commit rule** real. Bypassing it (e.g., `--no-verify`) is forbidden by global rules.
+The first four bind to a single code-review pass; the `reviewed_diff_sha` row additionally proves the committed diff is the one that was reviewed — code edited after the gate went clean produces a hash mismatch and is blocked. The hook is the single point of mechanical enforcement that makes the **single-commit rule** real. Bypassing it (e.g., `--no-verify`) is forbidden by global rules.
 
 ### Other relevant settings (excerpt)
 
@@ -264,6 +267,7 @@ State is saved. The user gets a short status message: **why stopped** + **what's
 - **`.auto-task/` never committed.** Excluded via `.git/info/exclude`, pre-stage-cleaned at every commit. A leaked commit means a bug — surface, do not silently rewrite history.
 - **One human gate** between approval and PR. Plus one allowed prompt in Phase 5 (push/PR/hold).
 - **Acceptance Criteria are load-bearing.** No gate can pass without literal execution of its bound AC rows.
+- **The reviewed diff is the committed diff.** The code-review gate records a hash of `git diff <base>`; the commit is blocked unless the diff still hashes identically, so post-review edits can't sneak in uncommitted-by-review.
 - **Effort can only escalate.** Manual de-escalation requires editing `Effort:` in `.auto-task/<branch>/PLAN.md`.
 - **Fresh-context agents.** Both `task-execution-verifier` spawns receive only `{ diff, AC }` — never conversation history.
 - **Pre-existing user work is preserved.** Pre-staged files at run start are recorded as baseline and excluded from every auto-task commit.

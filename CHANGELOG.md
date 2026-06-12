@@ -19,6 +19,10 @@ Initial extraction of the `auto-task` skill from `~/.claude/skills/auto-task/` i
 - `README.md`, `LICENSE` (MIT), this changelog.
 - `PACKAGING_PLAN.md` — the work plan and open questions for getting to v0.1.0.
 
+### Changed
+
+- **`enforce-gates.sh` now enforces review staleness.** The gate booleans (`code_review.passed`, `clean_pass_after_last_fix`) are values the model sets for itself. The hook now also binds them to the actual code: on a clean review the orchestrator records `gates.code_review.reviewed_diff_sha = git diff <base> | git hash-object --stdin`, and the hook recomputes that hash at commit time and blocks if it differs — catching the common failure mode of editing code after the review went clean and committing without re-review. Backward-compatible: the check is skipped when `state.base` or `reviewed_diff_sha` is absent, so it can only add a block, never spuriously allow. New state fields: `base` (base-commit SHA) and `gates.code_review.reviewed_diff_sha`. `expected_next_action` also added to the `ARCHITECTURE.md` schema (it was already in `SKILL.md`).
+
 ### Fixed
 
 - **Completed the `.patches/` → `.auto-task/<branch>/` migration across all six bundled sibling skills and `ARCHITECTURE.md`.** Previously only the orchestrator `SKILL.md` and `enforce-gates.sh` had been migrated; the siblings still read/wrote `.patches/`, which is not in `.git/info/exclude` and not pre-stage-cleaned — so harness scratch could leak into commits. The siblings now resolve everything under the gitignored `.auto-task/<branch>/` root.
