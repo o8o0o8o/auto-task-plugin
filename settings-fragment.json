@@ -1,13 +1,13 @@
 {
-  "_comment": "Merge these entries into your ~/.claude/settings.json. Do NOT replace the file — preserve your existing permissions, enabledPlugins, etc. The hook commands assume the plugin is installed at the default plugin path; adjust paths if needed.",
+  "_comment": "FALLBACK / REFERENCE ONLY. The recommended install is the marketplace flow (see README); it auto-wires the three core hooks via hooks/hooks.json, so you do NOT need this file for them. Plugin path variables like CLAUDE_PLUGIN_ROOT are substituted ONLY inside plugin-loaded hook configs (hooks/hooks.json) — they do NOT expand when pasted into ~/.claude/settings.json. So the placeholder /ABSOLUTE/PATH/TO/auto-task-plugin below must be replaced with the real absolute path to your clone (this is exactly what install.sh prints for you, so prefer copying install.sh's output). Merge into ~/.claude/settings.json — do NOT replace the file; preserve existing permissions, enabledPlugins, etc.",
 
   "hooks": {
     "PreToolUse": [
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "${CLAUDE_PLUGIN_DIR}/hooks/block-ai-attribution.sh" },
-          { "type": "command", "command": "${CLAUDE_PLUGIN_DIR}/hooks/enforce-gates.sh" }
+          { "type": "command", "command": "/ABSOLUTE/PATH/TO/auto-task-plugin/hooks/block-ai-attribution.sh" },
+          { "type": "command", "command": "/ABSOLUTE/PATH/TO/auto-task-plugin/hooks/enforce-gates.sh" }
         ]
       }
     ],
@@ -15,7 +15,7 @@
       {
         "matcher": "",
         "hooks": [
-          { "type": "command", "command": "${CLAUDE_PLUGIN_DIR}/hooks/prevent-mid-protocol-stall.sh" }
+          { "type": "command", "command": "/ABSOLUTE/PATH/TO/auto-task-plugin/hooks/prevent-mid-protocol-stall.sh" }
         ]
       }
     ]
@@ -35,7 +35,7 @@
       {
         "matcher": "",
         "hooks": [
-          { "type": "command", "command": "${CLAUDE_PLUGIN_DIR}/hooks/inject-history-reminder.sh" }
+          { "type": "command", "command": "/ABSOLUTE/PATH/TO/auto-task-plugin/hooks/inject-history-reminder.sh" }
         ]
       }
     ]

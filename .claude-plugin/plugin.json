@@ -1,39 +1,19 @@
 {
-  "name": "auto-task-plugin",
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "auto-task",
   "version": "0.1.0",
   "description": "End-to-end autonomous task workflow for Claude Code. One human gate at plan approval; everything after runs unattended until success, a hard blocker, or test flakiness.",
-  "author": "Sergey Labut",
+  "author": {
+    "name": "Sergey Labut"
+  },
+  "homepage": "https://github.com/o8o0o8o/auto-task-plugin",
+  "repository": "https://github.com/o8o0o8o/auto-task-plugin",
   "license": "MIT",
-  "comment": "Field names below are placeholders — verify against the current Claude Code plugin spec via Context7 before locking. Wrong field names fail silently at install.",
-  "skills": [
-    "skills/auto-task",
-    "skills/auto-task-plan",
-    "skills/auto-task-implement",
-    "skills/auto-task-verify",
-    "skills/auto-task-code-review",
-    "skills/auto-task-commit",
-    "skills/auto-task-fix"
-  ],
-  "agents": [
-    "agents/task-execution-verifier.md"
-  ],
-  "hooks": [
-    {
-      "event": "PreToolUse",
-      "matcher": "Bash",
-      "command": "hooks/block-ai-attribution.sh"
-    },
-    {
-      "event": "PreToolUse",
-      "matcher": "Bash",
-      "command": "hooks/enforce-gates.sh"
-    },
-    {
-      "event": "Stop",
-      "command": "hooks/prevent-mid-protocol-stall.sh"
-    }
-  ],
-  "requires": {
-    "tools": ["git", "gh", "jq"]
-  }
+  "keywords": [
+    "workflow",
+    "automation",
+    "autonomous",
+    "code-review",
+    "pull-request"
+  ]
 }

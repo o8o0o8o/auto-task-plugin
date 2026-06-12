@@ -70,6 +70,18 @@ unlink_if_ours() {
 }
 
 install() {
+  cat <<'BANNER'
+────────────────────────────────────────────────────────────────────
+NOTE: The recommended install is now the plugin marketplace, which
+auto-wires the skills, agent, AND all hooks (no settings.json editing):
+
+    /plugin marketplace add o8o0o8o/auto-task-plugin
+    /plugin install auto-task@auto-task-plugin
+
+This install.sh is the offline / development fallback (symlinks + a
+hooks snippet you merge by hand). Continuing with that now.
+────────────────────────────────────────────────────────────────────
+BANNER
   mkdir -p "$SKILLS_DIR" "$AGENTS_DIR"
   echo "Installing skills into $SKILLS_DIR:"
   for s in "${SKILLS[@]}"; do

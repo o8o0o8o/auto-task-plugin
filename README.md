@@ -7,15 +7,51 @@ End-to-end autonomous task workflow for Claude Code. Takes a task description fr
 - **`auto-task` skill** — the orchestrator. Composes the six bundled sibling skills and the verifier agent across five phases (Define → Execute → Self-verify → Review → Handover).
 - **Six namespaced sibling skills** — `auto-task-plan`, `auto-task-implement`, `auto-task-verify`, `auto-task-code-review`, `auto-task-commit`, `auto-task-fix`. Forked from the upstream skills and patched to participate in the read-before-review contract. The `auto-task-` prefix avoids clobbering your existing `/plan`, `/verify`, etc.
 - **`task-execution-verifier` agent** — read-only verifier spawned at Gate A (completeness) and Gate B (adversarial). Fresh context per spawn.
-- **Three hooks** —
+- **Four hooks**, all wired automatically by the plugin install (`hooks/hooks.json`) —
   - `block-ai-attribution.sh` (PreToolUse on Bash): refuses commits and PR bodies containing `Co-Authored-By: Claude`, `🤖 Generated`, etc.
   - `enforce-gates.sh` (PreToolUse on Bash): blocks `git commit` during an auto-task run unless `gates.code_review.passed`, `gates.code_review.tool === "skill:auto-task-code-review"`, `gates.code_review.clean_pass_after_last_fix`, and Gate B's gate (or skip reason) are all satisfied. It also enforces **review staleness** — if `git diff <base>` no longer hashes to the recorded `gates.code_review.reviewed_diff_sha`, code changed after the review went clean and the commit is blocked until a re-review. Fails closed: with `jq` missing or `STATE.json` unparseable during an active run, it blocks rather than letting the commit through.
   - `prevent-mid-protocol-stall.sh` (Stop event): blocks turn-ends mid-pipeline by reading `expected_next_action` from STATE.json. The antidote to sub-skill output looking completion-shaped.
-- **`settings-fragment.json`** — snippet to merge into `~/.claude/settings.json` that wires up the three hooks.
+  - `check-version.sh` (SessionStart): best-effort update notice. Once per 24h it compares the installed version against the published `plugin.json` on GitHub and, if you're behind, prints a one-line reminder to run `/plugin update auto-task`. Fails open and silent when current, offline, or unparseable — it never blocks or slows a session.
+- **`inject-history-reminder.sh`** (optional, `UserPromptSubmit`): tells non-bundled tools that an `.auto-task/<branch>/` history folder exists for the current branch. **Off by default** (token overhead on every prompt); opt in via the snippet in `settings-fragment.json`.
+- **`settings-fragment.json`** — fallback only. The marketplace install wires the hooks for you; this snippet is for the offline/dev `install.sh` path and for opting into the two optional hooks.
 
-## Install
+## Install (marketplace — recommended)
 
-Clone the repo, run `install.sh`, merge the printed JSON into `~/.claude/settings.json`.
+This repo is its own plugin marketplace. From inside Claude Code:
+
+```
+/plugin marketplace add o8o0o8o/auto-task-plugin
+/plugin install auto-task@auto-task-plugin
+```
+
+That copies the plugin into your plugin cache and **auto-wires everything** — the seven skills, the `task-execution-verifier` agent, and all four hooks (`hooks/hooks.json`). No `settings.json` editing, no symlinks, no `install.sh`.
+
+Plugin skills are namespaced under the plugin name, so you invoke the orchestrator as:
+
+```
+/auto-task:auto-task <plain-English task description>
+```
+
+and the siblings as `/auto-task:auto-task-plan`, `/auto-task:auto-task-fix`, etc.
+
+### Updating
+
+```
+/plugin update auto-task
+```
+
+The bundled `check-version.sh` SessionStart hook also reminds you (at most once per day) when a newer version has been published, so you don't have to remember to check. Updates ship only when the maintainer bumps `version` in `plugin.json`.
+
+### Optional hooks (opt-in)
+
+Two hooks are off by default — see `settings-fragment.json`:
+
+- **`inject-history-reminder.sh`** (`UserPromptSubmit`) — lets third-party tools discover the per-branch history folder. Off by default to avoid token overhead on every prompt.
+- **Recommended permissions** — the inert `_optional_recommended_permissions` block denies bare `git push` and asks before `gh pr create`, turning the Phase 5 push prompt into a mechanical gate. Not required (the skill already prompts once), and it affects all your work, so it's opt-in.
+
+## Install (offline / development — fallback)
+
+If you can't use the marketplace (air-gapped, or hacking on the plugin itself), `install.sh` symlinks the skills + agent into `~/.claude/` and prints a hooks snippet to merge into `~/.claude/settings.json`:
 
 ```sh
 git clone https://github.com/o8o0o8o/auto-task-plugin.git ~/.claude/auto-task-plugin
@@ -23,13 +59,9 @@ cd ~/.claude/auto-task-plugin
 ./install.sh
 ```
 
-`install.sh` symlinks the seven skills into `~/.claude/skills/` and the verifier agent into `~/.claude/agents/`, then prints a settings snippet with absolute paths for the hooks. Merge that snippet into `~/.claude/settings.json` — preserve your existing keys, append to the `hooks.PreToolUse` / `hooks.Stop` arrays if they already exist. If you don't have a `~/.claude/settings.json` yet, save the printed snippet as that file. The skill will load without the merge, but the gate-enforcement and anti-stall hooks won't fire.
+It symlinks the seven skills into `~/.claude/skills/` and the verifier agent into `~/.claude/agents/`, then prints a settings snippet with absolute paths for the hooks. Merge that snippet into `~/.claude/settings.json` — preserve your existing keys, append to the `hooks.PreToolUse` / `hooks.Stop` arrays if they already exist. The skills load without the merge, but the gate-enforcement and anti-stall hooks won't fire. With this path the skills are invoked by their bare names (`/auto-task`), not namespaced.
 
-Pass `--copy` instead of the default to copy files (no symlinks), or `--uninstall` to remove the links.
-
-**Optional hardening:** `settings-fragment.json` also carries an inert `_optional_recommended_permissions` block. Merging its `permissions` into your settings.json denies bare `git push` and asks before `gh pr create`, turning the Phase 5 push prompt into a mechanical gate. Not required — the skill already prompts once before pushing — and it affects all your work, not just auto-task, so it's opt-in.
-
-To update later: `git pull` inside the clone. Symlinks pick up changes automatically; if you used `--copy`, re-run `./install.sh`.
+Pass `--copy` instead of the default to copy files (no symlinks), or `--uninstall` to remove the links. To update: `git pull` inside the clone (symlinks pick up changes automatically; if you used `--copy`, re-run `./install.sh`). The SessionStart update-notice only fires on a marketplace install (it needs `${CLAUDE_PLUGIN_ROOT}`).
 
 ## Hard prerequisites
 
