@@ -7,10 +7,25 @@
 #
 # Path: resolves the per-branch STATE.json via `git branch --show-current`,
 # so multiple concurrent branches each have their own state.
+#
+# Failure policy: this is a SAFETY hook, so it fails CLOSED. Once we know the
+# command is a `git commit` and a STATE.json exists for the branch, anything
+# that prevents verification (jq missing, malformed JSON) blocks the commit
+# rather than letting it through. `set -e` is intentionally NOT used — a stray
+# non-zero from jq must not crash the script into a fail-open exit.
 
-set -euo pipefail
+set -uo pipefail
 
-cmd="$(jq -r '.tool_input.command // ""')"
+input="$(cat)"
+
+if command -v jq >/dev/null 2>&1; then
+  has_jq=1
+  cmd="$(printf '%s' "$input" | jq -r '.tool_input.command // ""' 2>/dev/null || true)"
+  [ -n "$cmd" ] || cmd="$input"
+else
+  has_jq=0
+  cmd="$input"  # detect the commit verb from the raw payload
+fi
 
 # Only fire on `git commit` (at line/pipe boundaries; not `git committed-xyz`)
 if ! printf '%s' "$cmd" | LC_ALL=C grep -qE '(^|[;&|`]|\$\()[[:space:]]*git[[:space:]]+commit(\b|$)'; then
@@ -26,22 +41,33 @@ fi
 state="$project_dir/.auto-task/$branch/STATE.json"
 [ -f "$state" ] || exit 0
 
-approved="$(jq -r '.approved // false' "$state")"
+# From here: a commit is being attempted AND an auto-task state file exists for
+# this branch. We MUST be able to read it to decide. Fail closed otherwise.
+if [ "$has_jq" -eq 0 ]; then
+  printf 'Blocked by auto-task-plugin: an auto-task run state file exists for branch "%s" but `jq` is not installed, so the gate contract cannot be verified before this commit.\nInstall jq (a hard prerequisite of this plugin) and retry. If no run is active, remove .auto-task/%s/.\n' "$branch" "$branch" >&2
+  exit 2
+fi
+if ! jq empty "$state" 2>/dev/null; then
+  printf 'Blocked by auto-task-plugin: .auto-task/%s/STATE.json is not valid JSON, so the gate contract cannot be verified.\nRepair the state file (it must parse and contain the gates object) and retry, or remove .auto-task/%s/ if no run is active.\n' "$branch" "$branch" >&2
+  exit 2
+fi
+
+approved="$(jq -r '.approved // false' "$state" 2>/dev/null || echo false)"
 [ "$approved" = "true" ] || exit 0
 
-phase="$(jq -r '.phase // ""' "$state")"
+phase="$(jq -r '.phase // ""' "$state" 2>/dev/null || echo "")"
 if [ "$phase" = "done" ]; then
   exit 0
 fi
 
-review_passed="$(jq -r '.gates.code_review.passed // false' "$state")"
-review_tool="$(jq -r '.gates.code_review.tool // ""' "$state")"
-review_clean="$(jq -r '.gates.code_review.clean_pass_after_last_fix // false' "$state")"
-reviewed_sha="$(jq -r '.gates.code_review.reviewed_diff_sha // ""' "$state")"
-base="$(jq -r '.base // ""' "$state")"
-tier="$(jq -r '.effort.tier // "standard"' "$state")"
-gate_b_passed="$(jq -r '.gates.gate_b.passed // false' "$state")"
-gate_b_skipped="$(jq -r '.gates.gate_b.skipped_reason // ""' "$state")"
+review_passed="$(jq -r '.gates.code_review.passed // false' "$state" 2>/dev/null || echo false)"
+review_tool="$(jq -r '.gates.code_review.tool // ""' "$state" 2>/dev/null || echo "")"
+review_clean="$(jq -r '.gates.code_review.clean_pass_after_last_fix // false' "$state" 2>/dev/null || echo false)"
+reviewed_sha="$(jq -r '.gates.code_review.reviewed_diff_sha // ""' "$state" 2>/dev/null || echo "")"
+base="$(jq -r '.base // ""' "$state" 2>/dev/null || echo "")"
+tier="$(jq -r '.effort.tier // "standard"' "$state" 2>/dev/null || echo standard)"
+gate_b_passed="$(jq -r '.gates.gate_b.passed // false' "$state" 2>/dev/null || echo false)"
+gate_b_skipped="$(jq -r '.gates.gate_b.skipped_reason // ""' "$state" 2>/dev/null || echo "")"
 
 if [ "$review_passed" != "true" ]; then
   printf 'Blocked by auto-task-plugin: auto-task run in progress (state: %s).\nA git commit is NOT permitted until the code-review loop has passed.\nRequired before commit:\n  gates.code_review.passed = true   (currently: %s)\nRun the code-review skill, fix all blockers/required findings, re-run the skill until it returns only follow-ups, then set the flags.\n' "$state" "$review_passed" >&2
