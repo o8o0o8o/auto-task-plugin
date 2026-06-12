@@ -46,10 +46,18 @@ fi
 
 expected="$(jq -r '.expected_next_action // ""' "$state" 2>/dev/null || echo "")"
 case "$expected" in
-  user-approval|user-push-prompt|null|"")
-    exit 0  # legitimate yield point (or explicitly null)
+  user-approval|user-push-prompt)
+    exit 0  # the only legitimate mid-run yield points
     ;;
 esac
+
+# We are past the approved + done guards, so the run is mid-pipeline. ANY value
+# other than the two explicit user-gates blocks — including an unset/null field.
+# Per the skill ("writing state without an explicit choice keeps the turn alive
+# is the correct failure mode"), a missing expected_next_action must fail closed,
+# not open. Make the unset case explicit in the reason so the model knows to set
+# the field rather than hunt for a phantom gate.
+[ -n "$expected" ] || expected="(unset/null — must be set on every post-approval state write)"
 
 # Mid-protocol stall. Block.
 jq -n --arg p "$phase" --arg e "$expected" '{

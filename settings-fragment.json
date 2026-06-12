@@ -21,6 +21,14 @@
     ]
   },
 
+  "_optional_recommended_permissions": {
+    "_comment": "OPTIONAL defence-in-depth, not required. The plugin does NOT impose permissions (denying git push globally would affect all your work). The Phase 5 push is already gated by the skill's single push prompt. If you want a mechanical backstop, merge the contents of `permissions` below into your settings.json `permissions` block (append to existing deny/ask arrays — do not replace them).",
+    "permissions": {
+      "deny": ["Bash(git push:*)", "Bash(git push)"],
+      "ask": ["Bash(gh pr create:*)", "Bash(gh pr merge:*)"]
+    }
+  },
+
   "_optional_userpromptsubmit": {
     "_comment": "Uncomment this block if you want non-bundled tools (third-party reviewers, free-form review prompts) to be informed when an auto-task history folder exists for the current branch. Off by default to avoid token overhead on unrelated prompts.",
     "UserPromptSubmit": [

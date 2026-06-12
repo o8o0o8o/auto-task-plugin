@@ -231,20 +231,29 @@ Then it reads the state file and **blocks the commit** unless ALL of:
 
 The first four bind to a single code-review pass; the `reviewed_diff_sha` row additionally proves the committed diff is the one that was reviewed — code edited after the gate went clean produces a hash mismatch and is blocked. The hook is the single point of mechanical enforcement that makes the **single-commit rule** real. Bypassing it (e.g., `--no-verify`) is forbidden by global rules.
 
-### Other relevant settings (excerpt)
+### Recommended permissions (NOT shipped by the plugin — opt-in)
+
+The plugin ships only hooks in `settings-fragment.json`. It does **not** impose
+permissions, because denying `git push` globally would affect all of the user's
+work, not just auto-task runs. The Phase 5 push is already user-confirmed by the
+skill itself (it sets `expected_next_action: "user-push-prompt"` and asks once
+before the network call), and the harness's own `gh pr create` permission prompt
+provides a second confirmation. The permissions below are an **optional**
+defence-in-depth backstop a user may add to `~/.claude/settings.json`:
 
 ```json
 {
   "permissions": {
     "deny":  ["Bash(git push:*)", "Bash(git push)"],
-    "ask":   ["Bash(gh pr create:*)", "Bash(gh pr merge:*)", ...],
-    "defaultMode": "bypassPermissions"
+    "ask":   ["Bash(gh pr create:*)", "Bash(gh pr merge:*)"]
   }
 }
 ```
 
-- `git push` is in **deny** — Phase 5's push is therefore an explicit user-confirmed action.
-- `gh pr create` is in **ask** — PR creation always surfaces a permission prompt, which doubles as the Phase 5 "push/PR/hold" gate.
+- With `git push` in **deny**, Phase 5's push becomes an unbypassable user-confirmed action.
+- With `gh pr create` in **ask**, PR creation always surfaces a permission prompt, doubling as the Phase 5 "push/PR/hold" gate.
+
+If a user does not add these, the run is still safe — the skill's single push prompt is the gate; the permissions just make it mechanical rather than instruction-backed. `settings-fragment.json` carries this same block under an `_optional_recommended_permissions` key (inert, for copy-paste).
 
 ---
 
