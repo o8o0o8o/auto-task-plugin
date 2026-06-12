@@ -2,6 +2,23 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.1]
+
+First version that is actually installable as a marketplace plugin (the v0.1.0 manifest failed `claude plugin validate` with 4 errors).
+
+### Added
+
+- **`.claude-plugin/marketplace.json`** — the repo is now its own single-plugin marketplace (`source: "./"`), installable with `/plugin marketplace add o8o0o8o/auto-task-plugin` + `/plugin install auto-task@auto-task-plugin`.
+- **`hooks/hooks.json`** — plugin-native hook wiring (event map nested under the top-level `hooks` key) that auto-wires `block-ai-attribution`, `enforce-gates`, `prevent-mid-protocol-stall`, and the new SessionStart notice via `${CLAUDE_PLUGIN_ROOT}`. No `settings.json` editing required on install.
+- **`hooks/check-version.sh`** — SessionStart update notice. Compares the installed version against the published `plugin.json` on GitHub at most once per 24h (cached in `${CLAUDE_PLUGIN_DATA}`) and prints a one-line `/plugin update auto-task` reminder when behind. Fails open and silent on every error path (no jq/curl, offline, malformed, current/ahead).
+
+### Changed
+
+- **`.claude-plugin/plugin.json`** — rewritten to a spec-valid manifest (object `author`; dropped the invalid array `skills`/`agents`/`hooks` and the unrecognized `comment`/`requires` fields — components are auto-discovered). Plugin renamed to `auto-task`, so skills invoke as `/auto-task:auto-task` under a marketplace install.
+- **`README.md`** — the marketplace flow is now the primary documented install; `install.sh` is demoted to the offline/dev fallback. Corrected the prerequisites list and the sibling-skill namespacing note.
+- **`skills/auto-task/SKILL.md`** — component-preflight now documents that siblings are namespaced (`auto-task:<name>`) under a marketplace install and bare under the `install.sh` fallback; the orchestrator invokes whichever form is registered.
+- **`settings-fragment.json`** — relabeled fallback-only; replaced the non-existent `${CLAUDE_PLUGIN_DIR}` (and the non-expanding `${CLAUDE_PLUGIN_ROOT}`) with an explicit absolute-path placeholder, since plugin path variables do not expand in a hand-merged `settings.json`.
+
 ## [Unreleased] — v0.1.0 (pre-release)
 
 Initial extraction of the `auto-task` skill from `~/.claude/skills/auto-task/` into a self-contained, shareable Claude Code plugin. See `PACKAGING_PLAN.md` for the open work items that remain before a real v0.1.0 release.

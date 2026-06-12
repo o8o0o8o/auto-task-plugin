@@ -5,7 +5,7 @@ End-to-end autonomous task workflow for Claude Code. Takes a task description fr
 ## What it ships
 
 - **`auto-task` skill** — the orchestrator. Composes the six bundled sibling skills and the verifier agent across five phases (Define → Execute → Self-verify → Review → Handover).
-- **Six namespaced sibling skills** — `auto-task-plan`, `auto-task-implement`, `auto-task-verify`, `auto-task-code-review`, `auto-task-commit`, `auto-task-fix`. Forked from the upstream skills and patched to participate in the read-before-review contract. The `auto-task-` prefix avoids clobbering your existing `/plan`, `/verify`, etc.
+- **Six namespaced sibling skills** — `auto-task-plan`, `auto-task-implement`, `auto-task-verify`, `auto-task-code-review`, `auto-task-commit`, `auto-task-fix`. Forked from the upstream skills and patched to participate in the read-before-review contract. The `auto-task-` prefix keeps them distinct from your existing `/plan`, `/verify`, etc.; under a marketplace install they are further namespaced (`auto-task:auto-task-plan`), and under the `install.sh` fallback they keep the bare `auto-task-plan` form.
 - **`task-execution-verifier` agent** — read-only verifier spawned at Gate A (completeness) and Gate B (adversarial). Fresh context per spawn.
 - **Four hooks**, all wired automatically by the plugin install (`hooks/hooks.json`) —
   - `block-ai-attribution.sh` (PreToolUse on Bash): refuses commits and PR bodies containing `Co-Authored-By: Claude`, `🤖 Generated`, etc.
@@ -67,7 +67,8 @@ Pass `--copy` instead of the default to copy files (no symlinks), or `--uninstal
 
 - `git` ≥ 2.30
 - `gh` (GitHub CLI) for PR creation
-- `jq` (used by all three hook scripts)
+- `jq` (used by the hook scripts)
+- `curl` (used by the SessionStart update-notice hook; absence just disables the notice)
 - `bash` ≥ 3.2 (the version macOS ships with works; POSIX `sh` does not — the hook scripts use bash features)
 
 ## Usage
