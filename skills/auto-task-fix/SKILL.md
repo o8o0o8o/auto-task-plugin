@@ -13,6 +13,13 @@ Disciplined bug-fix workflow. Five phases, with a single hard stop for user appr
 
 > **Working directory.** Run history and patch notes live under the gitignored `.auto-task/<branch>/` root, where `<branch>` is the current git branch (`git branch --show-current`; if detached or not in a repo, fall back to a flat `.auto-task/`). **Never commit anything under `.auto-task/`.** When invoked inside an `/auto-task` run, this skill only modifies the working tree — the orchestrator owns commits and state.
 
+> **Caller note (do not strip):** When invoked from an orchestration / fix-loop protocol (e.g. `/auto-task` Phases 3–4 and Gates A/B), the caller owns the human gate, the commit, and the run state. In that mode the skill's standalone stops are **suppressed**:
+> - **Phase 2's "STOP for user approval" does not apply** — the fix tasks come from the caller's already-approved plan and gate findings, so flow straight through Phases 3–5 without stopping.
+> - **Do NOT spawn the Phase 5 diff-review subagent.** The caller owns code review via the `auto-task-code-review` skill plus the Gate A/B verifiers; a hand-rolled `general-purpose`/`code-reviewer` spawn here both duplicates that and violates the caller's "code review only via the skill" rule.
+> - **Do NOT commit.** The working-tree change is the deliverable; the caller commits once, later, after its gates pass.
+>
+> Your output (root cause, change, evidence) is INPUT returned to the caller, not an end-of-turn. When a human runs `/auto-task-fix` directly, keep every gate below as written.
+
 ## Hard rules
 
 - **One stop, after Phase 2.** Do not write code until the user approves the acceptance criteria.
@@ -95,7 +102,7 @@ Goal: prove each acceptance criterion is met, with quoted evidence.
 - Run the project's checks that apply: type-check, lint, tests, build. Quote the relevant lines of output.
 - Reproduce the original bug scenario and confirm it's fixed. Quote the observed behavior.
 - For each acceptance criterion from Phase 2, write one line: criterion → quoted evidence.
-- **Fresh-context diff review.** Spawn a subagent (e.g. `code-reviewer` or `general-purpose`) with only the diff and the Phase 2 report — no prior conversation context. Ask: "Does this diff fix the stated root cause without scope creep, and what could it break?" Report its findings.
+- **Fresh-context diff review.** Invoke the `auto-task-code-review` skill on the diff (not a hand-rolled `general-purpose`/`code-reviewer` agent — the disciplined skill is the required reviewer) and report its findings. _Suppressed under orchestration — see the Caller note; the orchestrator owns review._
 - If a check fails, fix it and re-verify within the same phase.
 
 ## Output discipline

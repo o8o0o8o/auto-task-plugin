@@ -13,6 +13,8 @@ Execute tasks from `.auto-task/<branch>/PLAN.md` one by one. Supports session re
 
 > **Working directory.** Plan, state, and run history live under the gitignored `.auto-task/<branch>/` root, where `<branch>` is the current git branch (`git branch --show-current`; if detached or not in a repo, fall back to a flat `.auto-task/`). When invoked inside an `/auto-task` run, the orchestrator owns this directory — read and write the exact path it references. **Never commit anything under `.auto-task/`.**
 
+> **Caller note (do not strip):** When invoked from an orchestration protocol (e.g. `/auto-task` Phase 2), the `<!-- COMMIT CHECKPOINT -->` markers are **drift-check points, not commit-or-stop points**. Do NOT pause, do NOT wait for the user, and do NOT commit at a checkpoint — the caller inspects drift and continues the loop itself. Return when all tasks are ticked. When a human runs `/auto-task-implement` directly, keep the checkpoint pause below.
+
 ## Process
 
 ### 1. Load context

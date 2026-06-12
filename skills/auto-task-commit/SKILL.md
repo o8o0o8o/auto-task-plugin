@@ -11,6 +11,8 @@ metadata:
 
 Analyze staged changes and create a conventional commit with user confirmation.
 
+> **Caller note (do not strip):** When invoked from an orchestration protocol (e.g. `/auto-task` Phase 5), the caller owns the single human interaction (the push/PR prompt) and has already staged the intended files. In that mode the **Phase 4 "Commit with this message? Yes / Edit / Cancel" prompt is suppressed** — derive the message from the caller's plan summary and create the commit directly (the pre-commit hook validates gates). Do not stop to confirm, and do not abort. Your output (the commit message + result) is INPUT returned to the caller. When a human runs `/auto-task-commit` directly, keep the confirmation gate below.
+
 ## Process
 
 ### 1. Check state

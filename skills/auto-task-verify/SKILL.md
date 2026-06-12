@@ -13,6 +13,8 @@ Post-implementation verification. Checks that each planned task is actually impl
 
 > **Working directory.** Plan, state, and run history live under the gitignored `.auto-task/<branch>/` root, where `<branch>` is the current git branch (`git branch --show-current`; if detached or not in a repo, fall back to a flat `.auto-task/`). When invoked inside an `/auto-task` run, use the exact path the orchestrator references. **Never commit anything under `.auto-task/`.**
 
+> **Caller note (do not strip):** When invoked from an orchestration protocol (e.g. `/auto-task` Phase 3), the verification report is **INPUT returned to the caller**, not an end-of-turn. Do not address the user or suggest next commands (`/implement`, `/fix`) — the caller routes on the result (pass → advance; fail → fix-loop). When a human runs `/auto-task-verify` directly, the suggestions below are appropriate.
+
 ## Process
 
 ### 1. Load the plan

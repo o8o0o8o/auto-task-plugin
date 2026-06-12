@@ -13,6 +13,8 @@ Create a structured implementation plan from requirements. Produces `.auto-task/
 
 > **Working directory.** Plan, state, and run history live under the gitignored `.auto-task/<branch>/` root, where `<branch>` is the current git branch (`git branch --show-current`; if detached or not in a repo, fall back to a flat `.auto-task/`). When invoked inside an `/auto-task` run, the orchestrator owns this directory — write to the exact path it references. **Never commit anything under `.auto-task/`** (it is added to `.git/info/exclude` per-clone).
 
+> **Caller note (do not strip):** When invoked from an orchestration protocol (e.g. `/auto-task` Phase 1), the caller has already run its own clarifying-questions gate and reconnaissance. Do NOT run a second `AskUserQuestion` round and do NOT present the plan for approval — write `PLAN.md` to the path the caller specifies and return. The caller appends Acceptance Criteria / Critique / AC pre-flight and owns the single approval gate. When a human runs `/auto-task-plan` directly, gather requirements and present the plan as described below.
+
 ## Process
 
 ### 1. Gather context
