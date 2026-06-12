@@ -72,8 +72,8 @@ case "$REMOTE_V" in *[!0-9.a-zA-Z+-]*) emit_silent ;; esac   # not version-shape
 newest="$(printf '%s\n%s\n' "$LOCAL_V" "$REMOTE_V" | sort -V 2>/dev/null | tail -n1)"
 [ "$newest" = "$REMOTE_V" ] || emit_silent   # local >= remote -> nothing to do
 
-msg="auto-task $REMOTE_V is available (you have $LOCAL_V). Update with: /plugin update auto-task"
-ctx="A newer version of the auto-task plugin is available upstream: $REMOTE_V (installed: $LOCAL_V). If relevant, suggest the user run /plugin update auto-task."
+msg="auto-task $REMOTE_V is available (you have $LOCAL_V). Update with: /plugin update auto-task@auto-task-plugin"
+ctx="A newer version of the auto-task plugin is available upstream: $REMOTE_V (installed: $LOCAL_V). If relevant, suggest the user run /plugin update auto-task@auto-task-plugin."
 jq -cn --arg m "$msg" --arg c "$ctx" \
   '{systemMessage:$m, hookSpecificOutput:{hookEventName:"SessionStart", additionalContext:$c}}' 2>/dev/null \
   || printf '%s\n' "$msg"

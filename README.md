@@ -11,7 +11,7 @@ End-to-end autonomous task workflow for Claude Code. Takes a task description fr
   - `block-ai-attribution.sh` (PreToolUse on Bash): refuses commits and PR bodies containing `Co-Authored-By: Claude`, `🤖 Generated`, etc.
   - `enforce-gates.sh` (PreToolUse on Bash): blocks `git commit` during an auto-task run unless `gates.code_review.passed`, `gates.code_review.tool === "skill:auto-task-code-review"`, `gates.code_review.clean_pass_after_last_fix`, and Gate B's gate (or skip reason) are all satisfied. It also enforces **review staleness** — if `git diff <base>` no longer hashes to the recorded `gates.code_review.reviewed_diff_sha`, code changed after the review went clean and the commit is blocked until a re-review. Fails closed: with `jq` missing or `STATE.json` unparseable during an active run, it blocks rather than letting the commit through.
   - `prevent-mid-protocol-stall.sh` (Stop event): blocks turn-ends mid-pipeline by reading `expected_next_action` from STATE.json. The antidote to sub-skill output looking completion-shaped.
-  - `check-version.sh` (SessionStart): best-effort update notice. Once per 24h it compares the installed version against the published `plugin.json` on GitHub and, if you're behind, prints a one-line reminder to run `/plugin update auto-task`. Fails open and silent when current, offline, or unparseable — it never blocks or slows a session.
+  - `check-version.sh` (SessionStart): best-effort update notice. Once per 24h it compares the installed version against the published `plugin.json` on GitHub and, if you're behind, prints a one-line reminder to run `/plugin update auto-task@auto-task-plugin`. Fails open and silent when current, offline, or unparseable — it never blocks or slows a session.
 - **`inject-history-reminder.sh`** (optional, `UserPromptSubmit`): tells non-bundled tools that an `.auto-task/<branch>/` history folder exists for the current branch. **Off by default** (token overhead on every prompt); opt in via the snippet in `settings-fragment.json`.
 - **`settings-fragment.json`** — fallback only. The marketplace install wires the hooks for you; this snippet is for the offline/dev `install.sh` path and for opting into the two optional hooks.
 
@@ -37,7 +37,7 @@ and the siblings as `/auto-task:auto-task-plan`, `/auto-task:auto-task-fix`, etc
 ### Updating
 
 ```
-/plugin update auto-task
+/plugin update auto-task@auto-task-plugin
 ```
 
 The bundled `check-version.sh` SessionStart hook also reminds you (at most once per day) when a newer version has been published, so you don't have to remember to check. Updates ship only when the maintainer bumps `version` in `plugin.json`.

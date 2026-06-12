@@ -2,6 +2,12 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.2]
+
+### Fixed
+
+- **Update command uses the marketplace-qualified plugin name.** The SessionStart notice (`hooks/check-version.sh`) and README now tell users to run `/plugin update auto-task@auto-task-plugin`; the bare `/plugin update auto-task` fails with "Plugin not found" (the `update` resolver requires the `@marketplace` qualifier, even though `install`/`details` accept the bare name).
+
 ## [0.1.1]
 
 First version that is actually installable as a marketplace plugin (the v0.1.0 manifest failed `claude plugin validate` with 4 errors).
@@ -10,7 +16,7 @@ First version that is actually installable as a marketplace plugin (the v0.1.0 m
 
 - **`.claude-plugin/marketplace.json`** — the repo is now its own single-plugin marketplace (`source: "./"`), installable with `/plugin marketplace add o8o0o8o/auto-task-plugin` + `/plugin install auto-task@auto-task-plugin`.
 - **`hooks/hooks.json`** — plugin-native hook wiring (event map nested under the top-level `hooks` key) that auto-wires `block-ai-attribution`, `enforce-gates`, `prevent-mid-protocol-stall`, and the new SessionStart notice via `${CLAUDE_PLUGIN_ROOT}`. No `settings.json` editing required on install.
-- **`hooks/check-version.sh`** — SessionStart update notice. Compares the installed version against the published `plugin.json` on GitHub at most once per 24h (cached in `${CLAUDE_PLUGIN_DATA}`) and prints a one-line `/plugin update auto-task` reminder when behind. Fails open and silent on every error path (no jq/curl, offline, malformed, current/ahead).
+- **`hooks/check-version.sh`** — SessionStart update notice. Compares the installed version against the published `plugin.json` on GitHub at most once per 24h (cached in `${CLAUDE_PLUGIN_DATA}`) and prints a one-line `/plugin update auto-task@auto-task-plugin` reminder when behind. Fails open and silent on every error path (no jq/curl, offline, malformed, current/ahead).
 
 ### Changed
 
