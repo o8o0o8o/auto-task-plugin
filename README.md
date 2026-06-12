@@ -121,4 +121,4 @@ MIT — see `LICENSE`.
 
 ## Status
 
-**v0.1.0 — pre-release.** The install path has been verified in a throwaway directory and all three hooks function correctly. The `task-execution-verifier` agent has a real protocol prompt but has not yet been exercised end-to-end inside a real auto-task run — treat Gate A/B as functional but not yet battle-tested. File issues on GitHub.
+**v0.1.0 — pre-release.** The install path has been verified in a throwaway directory. The enforcement spine (state-machine ↔ hooks) has an automated integration test — `tests/enforcement-spine.test.sh`, 19 assertions covering the full STANDARD + LIGHT lifecycle, gate ordering, review-staleness, and the fail-open/fail-closed edges. What is **not** yet exercised end-to-end is the *model-follows-the-prose* path: the `task-execution-verifier` agent (Gate A/B) and the orchestrator's phase-driving have a real protocol but have not been run inside a live `/auto-task` against a real task — treat those as functional but not yet battle-tested. File issues on GitHub.
