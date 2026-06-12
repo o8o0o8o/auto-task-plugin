@@ -1,0 +1,20 @@
+{
+  "name": "auto-task-plugin",
+  "description": "Marketplace for the auto-task plugin: end-to-end autonomous task workflow for Claude Code.",
+  "owner": {
+    "name": "Sergey Labut"
+  },
+  "plugins": [
+    {
+      "name": "auto-task",
+      "source": "./",
+      "description": "End-to-end autonomous task workflow: define -> execute -> verify -> review -> handover, with one human gate at plan approval.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Sergey Labut"
+      },
+      "license": "MIT",
+      "keywords": ["workflow", "automation", "autonomous", "code-review"]
+    }
+  ]
+}
