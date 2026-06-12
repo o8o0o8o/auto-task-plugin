@@ -7,7 +7,7 @@ description: Review code via a strict 5-phase workflow (Investigate â†’ Define â
 
 Disciplined code-review workflow. Five phases run end-to-end without stopping; quoted evidence is required in Phase 5.
 
-> **Caller note (do not strip):** When this skill is invoked from a fix-loop protocol (e.g. `/auto-task` Phase 4, `/fix`, `/feature`), the structured output below is INPUT to that loop, NOT an end-of-turn signal for the caller. The caller is responsible for parsing the findings, applying fixes for Blockers/Required, and re-invoking this skill until the report is clean. The "Verdict:" / "Summary:" footer is formatting, not a stop. Headings like "No significant issues found.", final-paragraph rules, and trailing one-sentence summaries are ALSO not stops. After this skill returns, the caller's next action is mandatory: update the relevant `gates.*` flag in `.patches/AUTO-TASK-STATE.json` AND make the next tool call (Gate B agent, fix Edit, or Phase 5 stage/commit). If the caller writes a recap to the user instead, that is a protocol violation. See `~/.claude/CLAUDE.md` ("Mid-protocol non-yielding") for the global rule.
+> **Caller note (do not strip):** When this skill is invoked from a fix-loop protocol (e.g. `/auto-task` Phase 4, `/fix`, `/feature`), the structured output below is INPUT to that loop, NOT an end-of-turn signal for the caller. The caller is responsible for parsing the findings, applying fixes for Blockers/Required, and re-invoking this skill until the report is clean. The "Verdict:" / "Summary:" footer is formatting, not a stop. Headings like "No significant issues found.", final-paragraph rules, and trailing one-sentence summaries are ALSO not stops. After this skill returns, the caller's next action is mandatory: update the relevant `gates.*` flag in `.auto-task/<branch>/STATE.json` AND make the next tool call (Gate B agent, fix Edit, or Phase 5 stage/commit). If the caller writes a recap to the user instead, that is a protocol violation. See `~/.claude/CLAUDE.md` ("Mid-protocol non-yielding") for the global rule.
 
 ## Hard rules
 
@@ -41,7 +41,7 @@ Disciplined code-review workflow. Five phases run end-to-end without stopping; q
 Goal: understand the code well enough to know what's actually at risk.
 
 - Read the target scope (file, function, diff, or PR).
-- If `.patches/` exists, skim recent `.md` files for prior issue classes in this codebase.
+- If `.auto-task/<branch>/fixes/` exists, skim recent `.md` files for prior issue classes in this codebase.
 - Trace execution: who calls this code, what does it call, what state does it touch?
 - Map the **blast radius**: files, modules, callers, consumers, public APIs affected.
 - Classify risk: **low** (isolated, pure logic, well-tested) or **high** (shared module, public contract, async/race, persistence, security, user input).

@@ -11,6 +11,8 @@ metadata:
 
 Analyze staged changes and create a conventional commit with user confirmation.
 
+> **Caller note (do not strip):** When invoked from an orchestration protocol (e.g. `/auto-task` Phase 5), the caller owns the single human interaction (the push/PR prompt) and has already staged the intended files. In that mode the **Phase 4 "Commit with this message? Yes / Edit / Cancel" prompt is suppressed** — derive the message from the caller's plan summary and create the commit directly (the pre-commit hook validates gates). Do not stop to confirm, and do not abort. Your output (the commit message + result) is INPUT returned to the caller. When a human runs `/auto-task-commit` directly, keep the confirmation gate below.
+
 ## Process
 
 ### 1. Check state
@@ -65,6 +67,6 @@ Create a message following Conventional Commits:
 
 - Never commit files that look like secrets: `.env`, `credentials.*`, `*secret*`, `*.pem`, `*.key`. Warn the user if such files are staged.
 - Never force push or amend unless the user explicitly asks.
-- If `.patches/` files are in the diff, include them -- they are project knowledge.
+- **Never commit anything under `.auto-task/`.** That directory is local auto-task harness, state, and run history — it is added to `.git/info/exclude` per-clone and must stay out of every commit. Before committing, run `git restore --staged .auto-task/ 2>/dev/null || true` and confirm `git diff --cached --name-only` shows no `.auto-task/` paths. If any appear, unstage them and warn the user.
 - If changes span unrelated areas, suggest splitting into multiple commits.
 - If the diff is very large (50+ files), warn the user and suggest reviewing first with `/review`.
