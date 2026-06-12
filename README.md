@@ -46,7 +46,7 @@ To update later: `git pull` inside the clone. Symlinks pick up changes automatic
 /auto-task <plain-English task description>
 ```
 
-The skill creates a branch, sets up the per-branch history folder at `.auto-task/<branch>/`, runs Phase 1 reconnaissance (read-only — Playwright, Context7, Figma, etc.), asks clarifying questions, builds an Acceptance Criteria table, and presents a plan for your approval.
+The skill creates a branch, sets up the per-branch history folder at `.auto-task/<branch>/`, runs Phase 1 reconnaissance (read-only — Playwright, Context7, Figma, etc.), asks clarifying questions, selects an implementation approach when more than one is viable (generating and scoring candidates, surfacing close calls to you), builds an Acceptance Criteria table, critiques the plan and auto-repairs its structural gaps, and presents a plan for your approval.
 
 After you type `approved` / `proceed` / `yes`, the pipeline runs unattended through:
 

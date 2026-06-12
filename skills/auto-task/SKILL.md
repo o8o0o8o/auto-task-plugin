@@ -4,7 +4,7 @@ description: End-to-end autonomous task workflow — define → execute → veri
 license: MIT
 metadata:
   author: ai-workflow
-  version: "1.5"
+  version: "1.6"
 ---
 
 # Auto-task
@@ -46,7 +46,7 @@ The single exception during Phase 5: pushing to remote and opening a PR are exte
 - **Commit after each phase.** Each phase ends with a `/auto-task-commit` so progress is durable and resumable.
 - **`.auto-task/` is the persistent local history root — gitignored, NEVER committed.** Layout: `.auto-task/<branch-name>/` per run, where `<branch-name>` mirrors the git branch path verbatim (so branch `fix/auth-bug` → `.auto-task/fix/auth-bug/`). Inside each per-run folder:
   - `STATE.json` — the run-state machine ([[state-file-schema]]).
-  - `PLAN.md` — the approved plan + critique + AC pre-flight + recon.
+  - `PLAN.md` — the approved plan + approach decision log + critique + AC pre-flight + recon.
   - `CONTEXT.md` — generated at Phase 5; carries task, human choices, AC results, verification trail, drift events, change diagram, follow-ups. The handover artifact for downstream reviewers (human, `/auto-task-code-review`, `/review`, future `/auto-task` runs touching the same area).
   - `TRACE.md` — append-only log of every operation that touched this branch (auto-task phases AND external tool runs like a later `/auto-task-code-review` session). See the "Persistent history & trace contract" section.
   - `recon/` — Phase 1 reconnaissance outputs (screenshots, fetched docs, change-diagram source).
@@ -339,6 +339,22 @@ When triggered:
 
 Use the recon findings as input to the next step.
 
+**Approach selection (auto, with a conditional fold into the human gate).** Before invoking `auto-task-plan`, decide whether the task admits more than one materially different implementation. The detailed plan breaks down *one* approach — choosing which one is a decision in its own right, and everything downstream only verifies that the chosen approach was built correctly, never whether a better approach existed. This step makes that choice explicit and auditable so a wrong-approach-entirely plan can't sail through to approval looking internally coherent.
+
+1. **Trigger.** Run approach selection when more than one viable approach exists AND the choice changes any of: blast radius, risk/reversibility, dependencies, public API shape, or migration cost (the same test as the clarifying-questions "Approach" category). If the task has a single obvious implementation — a localized bug fix, a copy change, a config tweak — skip it and log `{ phase: "define-approach", result: "skipped", reason: "single viable approach", at: "ISO-8601" }`. Do NOT manufacture alternatives to look thorough; a task with one honest approach is a faster run, not a lazier one.
+
+2. **Generate candidates.** Produce 2–3 *short* approach sketches — NOT full task breakdowns (that work is wasted on the rejected ones). Each sketch has: **Name** (a 2–4 word handle, e.g. `inline-guard`, `extract-middleware`, `schema-migration`); **Description** (one paragraph — what it does and how); **Blast radius** (files/modules/layers touched); **Key risk** (the main thing that can go wrong); **Effort** (rough relative size); **Tradeoff** (the one-line "buys X at the cost of Y"). Scale generation effort to apparent complexity — the real Effort tier is computed later, from the chosen plan, so this is a provisional read:
+   - Apparently simple-but-branching task → draft 2 sketches inline.
+   - Apparently complex / high-blast / high-risk task → spawn 2–3 `general-purpose` Agents in parallel, each asked for ONE approach from a distinct angle (e.g. minimal-diff, idiomatic-to-this-codebase, robustness-first), each returning a sketch in the format above. Independent agents give genuine diversity; inline variants tend to be three flavors of the first idea.
+
+3. **Score and select.** Score each candidate on fixed dimensions: AC-fit (does it deliver every behavior the task promises), blast radius, risk/reversibility, dependency cost, alignment with existing repo patterns, effort. Then:
+   - **Clear winner** (one candidate dominates on the dimensions that matter for this task) → select it yourself.
+   - **Close call OR high-stakes choice** — when no candidate clearly dominates, OR the choice touches a Risk-rubric score-2 dimension (schema/data migration, external/third-party API, auth/payments/data-integrity/multi-tenant) → do NOT self-decide. Present the top approaches to the user via `AskUserQuestion` as part of the Phase 1 human gate — this folds into the clarifying-questions surface, it is NOT a new gate. One question, 2–3 options (candidate name + one-line tradeoff each), lead with your recommended candidate marked `(Recommended)`. The user's pick is binding. Set `expected_next_action: "user-approval"` for the call, as for any Phase 1 `AskUserQuestion`.
+
+4. **Record.** Write an `## Approach` section to `.auto-task/<branch>/PLAN.md`, immediately after `## Recon` (before the plan body): the chosen approach, then each rejected candidate with its scores and a one-line rejection rationale. This decision log lets a reviewer — or a resumed run — see not just what was built but why this path over the others. Log to `state.history`: `{ phase: "define-approach", candidates: ["<names>"], chosen: "<name>", method: "auto|user", at: "ISO-8601" }`.
+
+`auto-task-plan` then breaks down ONLY the chosen approach.
+
 Invoke the `auto-task-plan` skill internally. The plan MUST include an explicit **Acceptance Criteria** section with objectively verifiable items. The `auto-task-plan` skill's default template does NOT produce one — you MUST append it before stopping, or the run cannot proceed.
 
 **Acceptance Criteria contract (NON-NEGOTIABLE).** Phase 1 cannot complete unless `.auto-task/<branch>/PLAN.md` contains an `## Acceptance Criteria` section that satisfies every rule below. If any rule fails, do NOT stop for human approval — fix the AC table first, then stop. The user approval gate verifies these rules are met before accepting "approved".
@@ -422,7 +438,19 @@ Write D, R, and the resulting tier into both `.auto-task/<branch>/PLAN.md` and s
   - **[Rollback]** For schema/data/migration/irreversible changes, is rollback addressed? Mark N/A for pure code.
   Do not propose new work or rewrite the plan — only flag concerns."
 
-Append the agent's output as a `## Critique` section in `.auto-task/<branch>/PLAN.md`, placed immediately after the `Effort:` line and before the plan body. Do NOT auto-amend the plan based on the critique — the user reads both and decides whether to amend, accept as-is, or reject.
+**Critique → re-plan loop.** The critique is not advisory wallpaper that the user has to mine for what matters — its mechanically-fixable findings get fixed *before* the human sees the plan, so the approval gate adjudicates only genuine judgment calls. After the agent returns, classify each finding:
+
+- **Structural-fixable** — a plan defect resolvable without the user: a missing edge case a task should handle, a blast-radius file the plan omitted, a non-falsifiable/unobservable Acceptance Criterion, a missing rollback step for an irreversible change. These are gaps in the plan's own internal completeness.
+- **Judgment-required** — a concern needing a human decision: a scope tradeoff, an approach-worth-the-risk question, anything where the "fix" is a choice rather than a correction.
+
+Then loop, bounded by tier (LIGHT: 1 round; STANDARD/HEAVY: 2 rounds):
+
+1. Amend `.auto-task/<branch>/PLAN.md` to resolve every **structural-fixable** finding (add the edge case to a task, widen Blast Radius, rewrite the weak AC, add the rollback step). Keep each amendment minimal and traceable to the finding that prompted it.
+2. Re-run the critique agent on the amended plan (fresh context, same prompt). Do NOT trust the amend blindly — the re-critique is the safety net, mirroring the global "re-invoke code-review after every fix" rule.
+3. Exit the loop when the critique returns `No issues found.`, only **judgment-required** findings remain, or the round cap is hit.
+4. Log each round to `state.history`: `{ phase: "define-critique", round: <n>, fixed: ["<finding tags>"], remaining: ["<finding tags>"], at: "ISO-8601" }`.
+
+**Record.** Write the final `## Critique` section in `.auto-task/<branch>/PLAN.md`, placed immediately after the `Effort:` line and before the plan body, with two parts: **Auto-fixed** (what the loop resolved — one bullet each, naming the finding and the amendment) and **For your judgment** (the remaining judgment-required findings, verbatim). If the loop closed everything, the second part is `None — all critique findings were structural and auto-fixed.`; if the critique found nothing at all, the whole section is `No issues found.` verbatim. The user reads the plan (now repaired) plus the residual judgment calls, and decides whether to amend further, accept, or reject. The `[Rollback]`-dimension trigger for the risk disclaimer (below) fires on a concern surfaced in *either* part.
 
 **High-risk disclaimer (assembled BEFORE the approval presentation).** The approval gate is the user's last chance to refuse the run before code starts changing. For low-risk tasks the plan + critique is enough — adding a disclaimer just trains the user to ignore them. For high-risk tasks a disclaimer is mandatory and must be specific enough to change the user's behavior, not generic boilerplate.
 
@@ -675,10 +703,15 @@ This is the **only phase that commits**. By the time you reach it, the working t
 
    If no `resolution: "asked"` entries exist (every candidate was Resolved with a cite, or there were no candidates at all), write: `None — every ambiguity was resolved with evidence; see PLAN.md ## Clarifications for the cites.`
 
+   ### Approach decision
+   - Chosen approach: <name from PLAN.md `## Approach`, or "N/A — single viable approach" if selection was skipped>
+   - Selected by: <"auto (clear winner)" | "user (close-call/high-stakes pick)">
+   - Rejected alternatives: <names + one-line rejection rationale each, or "None">
+
    ### Plan approval
    - Approved at: <ISO timestamp when `approved: true` was set>
    - Approval keyword the user typed: <verbatim, if captured; else "approved (exact wording not captured)">
-   - Plan critique surfaced before approval: <bullet list from PLAN.md's `## Critique` section, or "No issues found." verbatim>
+   - Plan critique surfaced before approval: <the `## Critique` section's **Auto-fixed** and **For your judgment** parts, or "No issues found." verbatim>
    - User amendments before approval: <if the user asked for plan edits prior to typing approval, summarize them; else "None — plan accepted as written.">
 
    ### Mid-run user interventions (if any)
@@ -781,7 +814,7 @@ This is the **only phase that commits**. By the time you reach it, the working t
 - **Drift events** — one line per `state.history` entry with `result: "drift"`: summary + files. (Skip `result: "adjacent"` entries — they're noise.)
 - **Loop iterations** — only if `iteration.fix > 1` or `iteration.review > 1`: `Self-verify ran N times; review loop ran M times`.
 - **Verifier findings addressed** — one line per Gate A / Gate B finding that triggered a fix (derive from `state.history` entries from those phases).
-- **Plan critique at approval** — if `.auto-task/<branch>/PLAN.md` `## Critique` section was non-empty (not `No issues found.`), include the critique bullets verbatim under this label so reviewers see what concerns were raised before approval.
+- **Plan critique at approval** — if `.auto-task/<branch>/PLAN.md` `## Critique` section was non-empty (not `No issues found.`), include both its **Auto-fixed** and **For your judgment** parts verbatim under this label so reviewers see what the re-plan loop repaired and what concerns were left for human judgment before approval.
 
 If none of the above produced bullets, write a single line: `Clean run — no escalations, no drift, no loop retries.`
 
@@ -795,7 +828,7 @@ If none of the above produced bullets, write a single line: `Clean run — no es
 .auto-task/
 └── <branch-name>/                # branch path preserved literally (fix/foo → .auto-task/auto-task-fix/foo/)
     ├── STATE.json                # run-state machine
-    ├── PLAN.md                   # approved plan + Critique + AC + Pre-flight + Recon
+    ├── PLAN.md                   # approved plan + Approach + Critique + AC + Pre-flight + Recon
     ├── CONTEXT.md                # Phase 5 handover artifact (regenerated each Phase 5)
     ├── TRACE.md                  # append-only operation log (this section's contract)
     ├── recon/                    # Phase 1 reconnaissance outputs + change-diagram.mmd

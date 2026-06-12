@@ -13,8 +13,11 @@ flowchart TD
     Start([/auto-task &lt;description&gt;]) --> P1Setup[Phase 1 — Branch setup<br/>git switch -c feat|fix|chore/&lt;slug&gt;<br/>append .auto-task/ to .git/info/exclude<br/>init .auto-task/&lt;branch&gt;/STATE.json]
     P1Setup --> Recon{Recon trigger?<br/>UI / runtime / external lib /<br/>Figma / Notion / etc.}
     Recon -- yes --> ReconDo[MCP recon, read-only<br/>any MCP if necessary<br/>playwright / context7 / figma /<br/>notion / drive / slack / ide / ...]
-    Recon -- no --> P1Plan
-    ReconDo --> P1Plan[Invoke skill: auto-task-plan<br/>append Acceptance Criteria table<br/>append Effort: D + R + tier<br/>spawn critique Agent]
+    Recon -- no --> Approach
+    ReconDo --> Approach{Multiple viable<br/>approaches?}
+    Approach -- yes --> ApproachDo[Approach selection<br/>2-3 short candidate sketches<br/>inline or parallel agents by complexity<br/>score + select<br/>close-call/high-stakes → AskUserQuestion<br/>write PLAN.md ## Approach decision log]
+    Approach -- no, single approach --> P1Plan
+    ApproachDo --> P1Plan[Invoke skill: auto-task-plan<br/>break down chosen approach only<br/>append Acceptance Criteria table<br/>append Effort: D + R + tier<br/>critique Agent → re-plan loop<br/>auto-fix structural findings, cap by tier]
     P1Plan --> Preflight[AC pre-flight<br/>dry-run every AC command<br/>pin baselines<br/>sample-verify external-tool lists<br/>FP &gt; 20%? STOP and surface]
     Preflight --> Gate1{{HUMAN GATE<br/>user types: approved / proceed / yes}}
     Gate1 -- approved --> P2[Phase 2 — Execute<br/>skill: auto-task-implement<br/>drift check at each checkpoint<br/>NO COMMIT]
@@ -70,7 +73,7 @@ flowchart TD
 
 | Phase | Tool used | Commits? | Exit condition | Failure routing |
 |---|---|---|---|---|
-| 1 Define | `auto-task-plan` skill + critique Agent | no | user types approval keyword | wait (or reject → stop) |
+| 1 Define | approach selection + `auto-task-plan` skill + critique→re-plan loop | no | user types approval keyword | wait (or reject → stop) |
 | 2 Execute | `auto-task-implement` skill | **no** | all PLAN.md tasks ticked | drift check escalates tier or stops |
 | 3 Self-verify | `auto-task-verify` skill + literal AC commands | **no** | all checks pass + every `self-verify` AC pass | `auto-task-fix` skill → loop, capped by tier |
 | Gate A | `task-execution-verifier` Agent + literal AC commands | **no** | every AC satisfied | findings → back to Phase 2 |
@@ -135,7 +138,7 @@ The pipeline is fully resumable. State is updated at every phase transition and 
 .auto-task/
 └── <branch>/                 # branch path preserved verbatim (fix/foo → .auto-task/fix/foo/)
     ├── STATE.json            # state machine (see above)
-    ├── PLAN.md               # plan + Critique + Acceptance Criteria + Pre-flight + Recon
+    ├── PLAN.md               # plan + Approach + Critique + Acceptance Criteria + Pre-flight + Recon
     ├── CONTEXT.md            # Phase 5 handover artifact (regenerated each Phase 5)
     ├── TRACE.md              # append-only operation log
     ├── recon/                # Phase 1 reconnaissance + change-diagram.mmd
@@ -175,7 +178,7 @@ flowchart LR
     AT --> MCPs[MCPs: Phase 1 recon +<br/>Phase 3 / Gate A / Gate B verification<br/>read-only by default<br/>playwright / context7 / figma /<br/>notion / drive / slack / ide / ...]
 ```
 
-- **`auto-task-plan`** — produces the implementation plan. Auto-task appends Acceptance Criteria + Effort + Critique.
+- **`auto-task-plan`** — produces the implementation plan for the chosen approach. Auto-task runs approach selection first (2–3 candidate sketches scored and selected, close calls folded into the human gate), then appends Acceptance Criteria + Effort + Critique. The critique runs as a bounded re-plan loop: structural-fixable findings are auto-amended and re-critiqued (cap by tier); only judgment-required findings reach the human.
 - **`auto-task-implement`** — ticks off plan tasks; auto-task interprets each `<!-- COMMIT CHECKPOINT -->` as a **drift-check** marker (not a commit marker).
 - **`auto-task-verify`** — runs types/lint/build/tests; auto-task also runs literal AC commands on top.
 - **`auto-task-fix`** — invoked on any failure; modifies the working tree, never commits during a run.
@@ -297,5 +300,5 @@ State is saved. The user gets a short status message: **why stopped** + **what's
 | `~/.claude/CLAUDE.md` | Global rules: commit-message ban, code-review-skill rule, non-yielding, DoD |
 | `~/.claude/settings.json` | Pre-commit hooks (gate enforcement + AI-attribution ban), `git push` deny, `gh pr create` ask |
 | `<project>/.auto-task/<branch>/STATE.json` | Per-run state machine (resumable) |
-| `<project>/.auto-task/<branch>/PLAN.md` | Per-run plan + AC + Effort + Critique |
+| `<project>/.auto-task/<branch>/PLAN.md` | Per-run plan + Approach + AC + Effort + Critique |
 | `<project>/.git/info/exclude` | Per-clone `.auto-task/` exclusion (never modifies repo `.gitignore`) |
