@@ -2,6 +2,12 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.3]
+
+### Changed
+
+- **`hooks/check-version.sh` now compares versions in pure bash** instead of `sort -V`. This fixes two edge cases: (1) hosts whose `sort` lacks `-V` (e.g. BusyBox) no longer silently disable the notice for the wrong reason, and (2) SemVer prerelease/build strings are handled correctly — an upstream `0.2.0-beta` of the same core as your release no longer triggers a spurious "update available" notice, while a real release upgrade over a local prerelease still does. Build metadata (`+...`) is ignored; any parse ambiguity stays silent (fail-safe).
+
 ## [0.1.2]
 
 ### Fixed

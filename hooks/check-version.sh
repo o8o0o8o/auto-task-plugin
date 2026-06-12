@@ -22,6 +22,39 @@ set -u
 
 emit_silent() { exit 0; }
 
+# --- version compare (pure bash; no dependency on `sort -V`) -----------------
+# _ver_parse "X.Y.Z[-pre][+build]" -> echoes "MAJOR MINOR PATCH PREFLAG"
+# (build metadata stripped; PREFLAG=1 when a prerelease suffix is present).
+# Returns nonzero (and echoes nothing) when the core is not numeric-dotted.
+_ver_parse() {
+  local v="${1:-}" core pre="" maj min pat IFS='.'
+  v="${v%%+*}"                                   # drop build metadata
+  core="${v%%-*}"                                # core = part before first '-'
+  case "$v" in *-*) pre="${v#*-}" ;; esac
+  case "$core" in ''|*[!0-9.]*) return 1 ;; esac # core must be digits + dots
+  set -- $core
+  maj="${1:-0}"; min="${2:-0}"; pat="${3:-0}"
+  maj="${maj:-0}"; min="${min:-0}"; pat="${pat:-0}"
+  case "$maj$min$pat" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%d %d %d %d' "$((10#$maj))" "$((10#$min))" "$((10#$pat))" \
+    "$([ -n "$pre" ] && printf 1 || printf 0)"
+}
+
+# _ver_newer REMOTE LOCAL -> true (0) iff REMOTE is STRICTLY newer than LOCAL.
+# Conservative: any parse failure or ambiguity returns false (stay silent).
+_ver_newer() {
+  local ra rb rmaj rmin rpat rpre lmaj lmin lpat lpre
+  ra="$(_ver_parse "${1:-}")" || return 1
+  rb="$(_ver_parse "${2:-}")" || return 1
+  set -- $ra; rmaj="$1"; rmin="$2"; rpat="$3"; rpre="$4"
+  set -- $rb; lmaj="$1"; lmin="$2"; lpat="$3"; lpre="$4"
+  [ "$rmaj" -ne "$lmaj" ] && { [ "$rmaj" -gt "$lmaj" ]; return; }
+  [ "$rmin" -ne "$lmin" ] && { [ "$rmin" -gt "$lmin" ]; return; }
+  [ "$rpat" -ne "$lpat" ] && { [ "$rpat" -gt "$lpat" ]; return; }
+  # cores equal: newer only if LOCAL is a prerelease and REMOTE is a full release
+  [ "$lpre" = "1" ] && [ "$rpre" = "0" ]
+}
+
 # --- locate the plugin root + manifest --------------------------------------
 ROOT="${CLAUDE_PLUGIN_ROOT:-}"
 if [ -z "$ROOT" ]; then
@@ -67,10 +100,8 @@ fi
 [ -n "$REMOTE_V" ] || emit_silent
 case "$REMOTE_V" in *[!0-9.a-zA-Z+-]*) emit_silent ;; esac   # not version-shaped
 
-# --- compare; notify ONLY when strictly behind ------------------------------
-[ "$LOCAL_V" = "$REMOTE_V" ] && emit_silent
-newest="$(printf '%s\n%s\n' "$LOCAL_V" "$REMOTE_V" | sort -V 2>/dev/null | tail -n1)"
-[ "$newest" = "$REMOTE_V" ] || emit_silent   # local >= remote -> nothing to do
+# --- compare; notify ONLY when remote is strictly newer ---------------------
+_ver_newer "$REMOTE_V" "$LOCAL_V" || emit_silent
 
 msg="auto-task $REMOTE_V is available (you have $LOCAL_V). Update with: /plugin update auto-task@auto-task-plugin"
 ctx="A newer version of the auto-task plugin is available upstream: $REMOTE_V (installed: $LOCAL_V). If relevant, suggest the user run /plugin update auto-task@auto-task-plugin."
