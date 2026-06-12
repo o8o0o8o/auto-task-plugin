@@ -18,17 +18,32 @@ set -uo pipefail
 
 input="$(cat)"
 
+# `cmd_is_raw=1` means cmd is the raw JSON payload (jq absent or decode failed),
+# not a decoded shell command. The two need different commit-detection regexes:
+# the decoded command can use shell-boundary anchors, but inside raw JSON the
+# verb is preceded by `"` (not a boundary char), so an anchored regex would miss
+# it — which would skip the fail-closed blocks below and fail OPEN.
+cmd_is_raw=1
 if command -v jq >/dev/null 2>&1; then
   has_jq=1
-  cmd="$(printf '%s' "$input" | jq -r '.tool_input.command // ""' 2>/dev/null || true)"
-  [ -n "$cmd" ] || cmd="$input"
+  decoded="$(printf '%s' "$input" | jq -r '.tool_input.command // ""' 2>/dev/null || true)"
+  if [ -n "$decoded" ]; then cmd="$decoded"; cmd_is_raw=0; else cmd="$input"; fi
 else
   has_jq=0
-  cmd="$input"  # detect the commit verb from the raw payload
+  cmd="$input"
 fi
 
-# Only fire on `git commit` (at line/pipe boundaries; not `git committed-xyz`)
-if ! printf '%s' "$cmd" | LC_ALL=C grep -qE '(^|[;&|`]|\$\()[[:space:]]*git[[:space:]]+commit(\b|$)'; then
+# Only fire on `git commit`. Decoded command: anchor to shell boundaries so we
+# don't match `git committed-xyz` or the verb inside a quoted string. Raw JSON
+# fallback: match loosely (no command-boundary anchor possible), accepting that
+# in this degraded mode a command merely mentioning "git commit" may also reach
+# the gate checks — a fail-closed bias, acceptable since jq is a hard prereq.
+if [ "$cmd_is_raw" -eq 1 ]; then
+  commit_re='git[[:space:]]+commit'
+else
+  commit_re='(^|[;&|`]|\$\()[[:space:]]*git[[:space:]]+commit(\b|$)'
+fi
+if ! printf '%s' "$cmd" | LC_ALL=C grep -qE "$commit_re"; then
   exit 0
 fi
 

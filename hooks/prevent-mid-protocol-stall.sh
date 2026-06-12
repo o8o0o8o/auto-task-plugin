@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # Prevents the model from yielding mid-pipeline during an auto-task run.
 #
-# Registered as a Stop hook. Reads the per-branch STATE.json's
-# `expected_next_action` field:
-#   - "auto-continue"     → block the stop, re-prompt the model to continue
+# Registered as a Stop hook. Once the run is approved and not done, the ONLY
+# values that allow a stop are the two explicit user-gates; everything else
+# (including a missing/null field) blocks. Reads the per-branch STATE.json's
+# `expected_next_action`:
 #   - "user-approval"     → allow (Phase 1 plan gate, Loop-rule surface)
 #   - "user-push-prompt"  → allow (the one Phase 5 push/PR ask)
-#   - null / unset        → allow (pre-approval or terminal state)
+#   - "auto-continue"     → block the stop, re-prompt the model to continue
+#   - null / unset / other → block. A null/unset value is only legitimate while
+#     approved=false or after phase=done, and BOTH are handled by the guards
+#     below before this field is consulted — so a null reached here means the
+#     field was not set, and the safe default is to keep the turn alive.
 #
 # Failure policy: when NO state file exists for the branch, allow freely (no run
 # active — must not brick turn-ends in unrelated repos). But once a state file
