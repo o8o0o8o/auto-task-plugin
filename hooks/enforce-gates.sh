@@ -35,11 +35,15 @@ fi
 
 # Only fire on `git commit`. Decoded command: anchor to shell boundaries so we
 # don't match `git committed-xyz` or the verb inside a quoted string. Raw JSON
-# fallback: match loosely (no command-boundary anchor possible), accepting that
-# in this degraded mode a command merely mentioning "git commit" may also reach
-# the gate checks — a fail-closed bias, acceptable since jq is a hard prereq.
+# fallback: we can't decode, but we can still require `git commit` to sit at a
+# command-ish boundary — start-of-string, a shell separator (`; & |` / backtick
+# / `$(`), or immediately after the JSON value's opening quote. That catches a
+# real commit (`"command":"git commit …"`, `cd x && git commit`) while no longer
+# blocking unrelated commands that merely mention the phrase in prose
+# (`echo see the git commit guidelines`). It keeps the fail-closed bias for the
+# genuinely-ambiguous case (a value literally starting `git commit`).
 if [ "$cmd_is_raw" -eq 1 ]; then
-  commit_re='git[[:space:]]+commit'
+  commit_re='(^|[;&|`]|\$\(|")[[:space:]]*git[[:space:]]+commit(\b|$)'
 else
   commit_re='(^|[;&|`]|\$\()[[:space:]]*git[[:space:]]+commit(\b|$)'
 fi
@@ -106,8 +110,16 @@ fi
 # must NOT proceed without re-review. Backward-compatible: skipped when `base`
 # or `reviewed_diff_sha` is absent (legacy/older runs), so it can only ever add
 # a block, never spuriously allow.
+#
+# The diff flags are PINNED so the hash is stable regardless of the user's git
+# config (and identical across machines that share the branch). Without them,
+# diff.algorithm / diff.renames / diff.noprefix / diff.mnemonicPrefix / color /
+# textconv / external-diff settings can each shift the diff text — and thus the
+# hash — for an unchanged tree, producing a spurious staleness block. The skill
+# records reviewed_diff_sha with this SAME flag set; the two must stay in lockstep.
+DIFF_FLAGS='--no-color --no-ext-diff --no-textconv --no-renames --diff-algorithm=myers --src-prefix=a/ --dst-prefix=b/'
 if [ -n "$base" ] && [ -n "$reviewed_sha" ]; then
-  current_sha="$(cd "$project_dir" && git diff "$base" 2>/dev/null | git hash-object --stdin 2>/dev/null || true)"
+  current_sha="$(cd "$project_dir" && git diff $DIFF_FLAGS "$base" 2>/dev/null | git hash-object --stdin 2>/dev/null || true)"
   if [ -n "$current_sha" ] && [ "$current_sha" != "$reviewed_sha" ]; then
     printf 'Blocked by auto-task-plugin: the working-tree diff changed since the last clean code-review pass.\n  reviewed_diff_sha: %s\n  current diff sha:  %s   (git diff %s)\nCode was modified after gates.code_review went clean, so the review no longer covers what you are about to commit.\nRe-run the auto-task-code-review skill on the current diff, drive it to a clean pass, then refresh gates.code_review.reviewed_diff_sha before committing.\n' "$reviewed_sha" "$current_sha" "$base" >&2
     exit 2

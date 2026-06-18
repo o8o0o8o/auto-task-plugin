@@ -19,6 +19,7 @@ set -uo pipefail
 HOOKS="$(cd "$(dirname "${BASH_SOURCE[0]}")/../hooks" && pwd)"
 GATE="$HOOKS/enforce-gates.sh"
 STOP="$HOOKS/prevent-mid-protocol-stall.sh"
+ATTR="$HOOKS/block-ai-attribution.sh"
 
 for tool in git jq; do
   command -v "$tool" >/dev/null 2>&1 || { echo "SKIP: $tool not installed (required by the hooks under test)"; exit 0; }
@@ -34,8 +35,13 @@ SD=".auto-task/feat/widget"; mkdir -p "$SD"; ST="$SD/STATE.json"
 COMMIT='{"tool_input":{"command":"git commit -m wip"}}'
 
 gate(){ printf '%s' "$COMMIT" | CLAUDE_PROJECT_DIR="$T" bash "$GATE" >/dev/null 2>&1; echo $?; }
+grun(){ printf '%s' "$1" | CLAUDE_PROJECT_DIR="$T" bash "$GATE" >/dev/null 2>&1; echo $?; }
+attr(){ printf '%s' "$1" | bash "$ATTR" >/dev/null 2>&1; echo $?; }
 stop(){ local o; o="$(CLAUDE_PROJECT_DIR="$T" bash "$STOP" 2>/dev/null)"; [ -z "$o" ] && { echo allow; return; }; printf '%s' "$o" | jq -r '.decision // "allow"' 2>/dev/null; }
-sha(){ git diff "$BASE" | git hash-object --stdin; }
+# Must use the SAME pinned flags as enforce-gates.sh, or the recorded sha won't
+# match the hook's recompute under non-default git config.
+DIFF_FLAGS='--no-color --no-ext-diff --no-textconv --no-renames --diff-algorithm=myers --src-prefix=a/ --dst-prefix=b/'
+sha(){ git diff $DIFF_FLAGS "$BASE" | git hash-object --stdin; }
 setstate(){ local tmp; tmp="$(jq "$1" "$ST")"; printf '%s' "$tmp" > "$ST"; }
 expect(){ if [ "$2" = "$3" ]; then PASS=$((PASS+1)); printf '  PASS  %-54s (%s)\n' "$1" "$2"
   else FAIL=$((FAIL+1)); printf '  FAIL  %-54s got=%s want=%s\n' "$1" "$2" "$3"; fi; }
@@ -75,7 +81,7 @@ expect "Done: commit ALLOWED (phase=done)"                "$(gate)" "0"
 
 echo "================ LIGHT-tier run (Gate B skipped) ================"
 git checkout -q -b fix/typo; SD2=".auto-task/fix/typo"; mkdir -p "$SD2"; ST2="$SD2/STATE.json"
-B2="$(git rev-parse HEAD)"; RSHA2="$(git diff "$B2" | git hash-object --stdin)"
+B2="$(git rev-parse HEAD)"; RSHA2="$(git diff $DIFF_FLAGS "$B2" | git hash-object --stdin)"
 gateL(){ printf '%s' "$COMMIT" | CLAUDE_PROJECT_DIR="$T" bash "$GATE" >/dev/null 2>&1; echo $?; }
 cat > "$ST2" <<EOF
 {"approved":true,"phase":"review","expected_next_action":"auto-continue","base":"$B2","effort":{"tier":"light"},
@@ -85,6 +91,43 @@ EOF
 expect "LIGHT: commit ALLOWED (Gate B skipped)"           "$(gateL)" "0"
 tmp="$(jq '.gates.code_review.tool="agent:code-reviewer"' "$ST2")"; printf '%s' "$tmp" > "$ST2"
 expect "LIGHT: wrong review tool BLOCKED"                 "$(gateL)" "2"
+
+echo "================ Raw-mode commit detection (jq decode empty) ================"
+# Payloads with no .tool_input.command force the raw-JSON fallback regex.
+# Restore feat/widget to a fully-blocking state so a *detected* commit blocks.
+git checkout -q feat/widget
+printf 'export const n = 2;\nexport const m = 3;\n' > app.js
+cat > "$ST" <<EOF
+{"approved":true,"phase":"execute","expected_next_action":"auto-continue","base":"$BASE","effort":{"tier":"standard"},
+ "gates":{"code_review":{"passed":false},"gate_b":{"passed":false}}}
+EOF
+# A real commit verb at the value's opening quote → detected → blocked.
+expect "Raw: bare commit payload BLOCKED"                 "$(grun '{"x":"git commit -m wip"}')" "2"
+# Commit after a shell separator → detected → blocked.
+expect "Raw: chained commit (&&) BLOCKED"                 "$(grun '{"x":"cd app && git commit -m wip"}')" "2"
+# Prose mention mid-string (not at a command boundary) → NOT a commit → allowed.
+expect "Raw: prose 'git commit' NOT blocked"              "$(grun '{"x":"please read the git commit guidelines"}')" "0"
+
+echo "================ Stall-breaker (Stop hook soft-lock release) ================"
+# A valid mid-pipeline state blocks every turn-end. With AUTO_TASK_STALL_LIMIT
+# low, repeated stops in the SAME state must eventually RELEASE to avoid a
+# soft-lock; a state change must reset the counter so blocking resumes.
+cat > "$ST" <<EOF
+{"approved":true,"phase":"review","expected_next_action":"auto-continue","base":"$BASE","effort":{"tier":"standard"},
+ "iteration":{"review":0,"fix":0},
+ "gates":{"code_review":{"passed":false},"gate_b":{"passed":false}}}
+EOF
+rm -f "$SD/.stall-block-count"
+stopS(){ local o; o="$(CLAUDE_PROJECT_DIR="$T" AUTO_TASK_STALL_LIMIT=3 bash "$STOP" 2>/dev/null)"; [ -z "$o" ] && { echo allow; return; }; printf '%s' "$o" | jq -r '.decision // "allow"' 2>/dev/null; }
+expect "Stall: block #1 (count<limit)"                    "$(stopS)" "block"
+expect "Stall: block #2 (count<limit)"                    "$(stopS)" "block"
+expect "Stall: release #3 (count>=limit)"                 "$(stopS)" "allow"
+setstate '.iteration.fix=1'   # state advanced → fresh block sequence
+expect "Stall: blocking resumes after a release"         "$(stopS)" "block"
+
+echo "================ AI-attribution block ================"
+expect "Attr: Co-Authored-By Claude BLOCKED"              "$(attr '{"tool_input":{"command":"git commit -m \"x\n\nCo-Authored-By: Claude <x@y>\""}}')" "2"
+expect "Attr: clean commit ALLOWED"                       "$(attr '{"tool_input":{"command":"git commit -m clean"}}')" "0"
 
 echo "================ Fail-open / fail-closed edges ================"
 git checkout -q feat/widget

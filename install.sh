@@ -59,13 +59,20 @@ link_or_copy() {
   fi
 }
 
+# Tracks copy-mode (or foreign) leftovers that uninstall can't safely auto-remove.
+LEFTOVERS=()
+
 unlink_if_ours() {
   local dest="$1" expected_src="$2"
   if [[ -L "$dest" ]] && [[ "$(readlink "$dest")" == "$expected_src" ]]; then
     rm "$dest"
     echo "  rm   $dest"
   elif [[ -e "$dest" ]]; then
-    echo "  skip $dest (not a symlink into this repo — left alone)"
+    # Could be a --copy install (a real file/dir, not a symlink) or a foreign
+    # file the user manages. We never auto-delete real files — they may hold
+    # user edits — but we DO surface them so a copy-mode uninstall isn't silent.
+    echo "  skip $dest (not a symlink into this repo — left in place)"
+    LEFTOVERS+=("$dest")
   fi
 }
 
@@ -104,6 +111,12 @@ uninstall() {
     unlink_if_ours "$AGENTS_DIR/$a" "$REPO_ROOT/agents/$a"
   done
   echo
+  if (( ${#LEFTOVERS[@]} > 0 )); then
+    echo "These were installed with --copy (or are not managed by this installer)"
+    echo "and were NOT removed (they may contain edits). Remove manually if desired:"
+    for p in "${LEFTOVERS[@]}"; do echo "  rm -rf $p"; done
+    echo
+  fi
   echo "Note: hooks and permissions entries in ~/.claude/settings.json were"
   echo "not modified. Remove them manually if you no longer want them."
 }

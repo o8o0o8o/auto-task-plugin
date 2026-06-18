@@ -180,7 +180,7 @@ If you cannot map the current transition to one of these, the default is `"auto-
 
 `gates` is the mechanical contract enforced by the global pre-commit hook (`enforce-gates.sh`). **No commit is permitted during an auto-task run until `gates.code_review.passed === true`, `gates.code_review.clean_pass_after_last_fix === true`, and (for STANDARD/HEAVY tier) `gates.gate_b.passed === true` or `gates.gate_b.skipped_reason` is set.** The hook reads this file at every `git commit`/`git commit --amend` invocation. Setting these flags is a checkable artifact — only set them after the agent actually ran and returned a clean result; never set them speculatively. If a gate fails, leave `passed: false` and surface.
 
-Beyond the booleans, the hook also enforces **review staleness**: when `state.base` and `gates.code_review.reviewed_diff_sha` are both present, it recomputes `git diff <base> | git hash-object --stdin` and blocks the commit if the result differs from `reviewed_diff_sha`. This catches the most common real failure mode — review passes clean, then more code is edited (a "quick" Gate B fix, a stray tweak) and committed without re-review. The flags are self-attested; this binds them to the actual bytes of the diff. The only way past it is to re-review the current diff and refresh the sha, which is exactly the intended behavior.
+Beyond the booleans, the hook also enforces **review staleness**: when `state.base` and `gates.code_review.reviewed_diff_sha` are both present, it recomputes `git diff <pinned-flags> <base> | git hash-object --stdin` (the pinned flags are listed under Phase 4 `reviewed_diff_sha`) and blocks the commit if the result differs from `reviewed_diff_sha`. This catches the most common real failure mode — review passes clean, then more code is edited (a "quick" Gate B fix, a stray tweak) and committed without re-review. The flags are self-attested; this binds them to the actual bytes of the diff. The only way past it is to re-review the current diff and refresh the sha, which is exactly the intended behavior.
 
 ## Pipeline
 
@@ -593,7 +593,7 @@ For each blocker and required fix: invoke `/auto-task-fix` (or `/auto-task-imple
 
 Exit conditions for this phase:
 - Reviewer's latest pass produces only follow-ups → set `gates.code_review = { passed: true, tool: "skill:auto-task-code-review", clean_pass_after_last_fix: true, reviewed_diff_sha: "<sha>", at: <ISO>, evidence: "<reviewer summary; only follow-ups, no blockers/required>" }` → advance to Gate B (skipped at LIGHT tier — set `gates.gate_b.skipped_reason = "tier=light"` and go straight to Phase 5). The `tool` field MUST be the literal string `"skill:auto-task-code-review"` — the pre-commit hook rejects any other value (including agent invocations).
-  - **`reviewed_diff_sha`** pins the exact diff this clean pass covered: compute it as `git diff <base> | git hash-object --stdin` (where `<base>` is `state.base`). The pre-commit hook recomputes the same hash at commit time and **blocks the commit if it differs** — i.e. if any tracked code changed after the review went clean. Recompute and overwrite this field on every subsequent clean pass (e.g. after a Gate B fix forces a re-review). Never copy a stale value forward; set it from a freshly-computed hash only when the review is genuinely clean, exactly like the boolean flags.
+  - **`reviewed_diff_sha`** pins the exact diff this clean pass covered: compute it as `git diff --no-color --no-ext-diff --no-textconv --no-renames --diff-algorithm=myers --src-prefix=a/ --dst-prefix=b/ <base> | git hash-object --stdin` (where `<base>` is `state.base`). The flags MUST match those the `enforce-gates.sh` hook uses verbatim — they pin the diff text against git-config drift so an unchanged tree always hashes the same; omitting them risks a spurious staleness block. The pre-commit hook recomputes the same hash at commit time and **blocks the commit if it differs** — i.e. if any tracked code changed after the review went clean. Recompute and overwrite this field on every subsequent clean pass (e.g. after a Gate B fix forces a re-review). Never copy a stale value forward; set it from a freshly-computed hash only when the review is genuinely clean, exactly like the boolean flags.
 - Loop rule triggers (no progress / out-of-scope / blocker / flakiness) **after** the re-score hook has been given its chance → STOP and surface (do NOT set `gates.code_review.passed`).
 
 ### Gate B — Adversarial verifier (auto, NO COMMIT)
@@ -826,7 +826,7 @@ If none of the above produced bullets, write a single line: `Clean run — no es
 
 ```
 .auto-task/
-└── <branch-name>/                # branch path preserved literally (fix/foo → .auto-task/auto-task-fix/foo/)
+└── <branch-name>/                # branch path preserved literally (fix/foo → .auto-task/fix/foo/)
     ├── STATE.json                # run-state machine
     ├── PLAN.md                   # approved plan + Approach + Critique + AC + Pre-flight + Recon
     ├── CONTEXT.md                # Phase 5 handover artifact (regenerated each Phase 5)

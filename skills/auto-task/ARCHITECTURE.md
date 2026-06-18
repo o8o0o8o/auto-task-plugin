@@ -229,7 +229,7 @@ Then it reads the state file and **blocks the commit** unless ALL of:
 | `gates.code_review.passed` | `true` |
 | `gates.code_review.tool` | `"skill:auto-task-code-review"` (literal — agents/hand-rolled prompts rejected) |
 | `gates.code_review.clean_pass_after_last_fix` | `true` |
-| `gates.code_review.reviewed_diff_sha` | must equal `git diff <base> \| git hash-object --stdin` recomputed at commit time (skipped if `base`/`reviewed_diff_sha` absent) |
+| `gates.code_review.reviewed_diff_sha` | must equal `git diff <pinned-flags> <base> \| git hash-object --stdin` recomputed at commit time, where `<pinned-flags>` = `--no-color --no-ext-diff --no-textconv --no-renames --diff-algorithm=myers --src-prefix=a/ --dst-prefix=b/` (skipped if `base`/`reviewed_diff_sha` absent) |
 | `gates.gate_b.passed` OR `gates.gate_b.skipped_reason` | one of them set, unless `tier === "light"` |
 
 The first four bind to a single code-review pass; the `reviewed_diff_sha` row additionally proves the committed diff is the one that was reviewed — code edited after the gate went clean produces a hash mismatch and is blocked. The hook is the single point of mechanical enforcement that makes the **single-commit rule** real. Bypassing it (e.g., `--no-verify`) is forbidden by global rules.

@@ -2,6 +2,25 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.4]
+
+### Fixed
+
+- **Review-staleness hash is now config-stable.** `enforce-gates.sh` pins the diff flags (`--no-color --no-ext-diff --no-textconv --no-renames --diff-algorithm=myers --src-prefix=a/ --dst-prefix=b/`) when computing `git diff <base> | git hash-object`. Without them, a user's git config (`diff.algorithm`, `diff.renames`, `diff.noprefix`, `color`, textconv, external diff) could shift the diff text and produce a spurious staleness block on an unchanged tree. The skill records `reviewed_diff_sha` with the same flags. Validated by the test suite under a hostile git config.
+- **Raw-mode commit detection no longer over-blocks.** When `jq` can't decode the payload, `enforce-gates.sh` previously treated any Bash command merely *mentioning* "git commit" (e.g. `echo see the git commit guidelines`) as a commit and blocked it during an active run. The raw-JSON regex now requires `git commit` at a command boundary (start, a shell separator, or the JSON value's opening quote), keeping the fail-closed bias only for the genuinely-ambiguous case.
+- **Stop hook can no longer soft-lock a session.** `prevent-mid-protocol-stall.sh` now keeps a consecutive-block counter keyed on the run's progress signature. While the run advances the counter resets and blocking continues as designed; if the run is frozen in the exact same state for `AUTO_TASK_STALL_LIMIT` (default 25) turn-ends, the hook releases the stop with a warning so a genuinely-stuck run stays recoverable.
+- **`check-version.sh` no longer risks a network call on every session.** When `CLAUDE_PLUGIN_DATA` is unset the 24h throttle stamp now falls back to a temp dir (previously the throttle was skipped entirely, re-firing the `curl` each session). Added `--connect-timeout 2` to bound the worst case on an unreachable host.
+
+### Changed
+
+- **`install.sh --uninstall` now reports copy-mode leftovers.** Files installed with `--copy` (real files, not symlinks) are never auto-deleted, but uninstall now lists them with `rm -rf` suggestions instead of silently leaving them.
+
+### Docs
+
+- Fixed an incorrect branch-path example in `skills/auto-task/SKILL.md` (`fix/foo` maps to `.auto-task/fix/foo/`, not `.auto-task/auto-task-fix/foo/`).
+- README Status now reflects the current version.
+- Test suite expanded from 19 to 28 assertions: raw-mode commit detection, the Stop-hook stall-breaker, and the AI-attribution hook are now covered.
+
 ## [0.1.3]
 
 ### Changed

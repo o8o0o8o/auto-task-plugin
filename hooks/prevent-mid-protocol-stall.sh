@@ -14,17 +14,26 @@
 #     field was not set, and the safe default is to keep the turn alive.
 #
 # Failure policy: this hook only BLOCKS when it has positive, readable evidence
-# the model should keep going (a valid STATE.json that says so). Claude Code has
-# NO built-in Stop-hook loop protection and provides no `stop_hook_active`
-# signal, so an unconditional block would soft-lock the session — and a
-# jq-missing block in particular cannot be cleared mid-session. Therefore, when
-# the state cannot be read (jq absent, or STATE.json unparseable), this hook
-# ALLOWS the stop and warns — it fails OPEN. This is the OPPOSITE of the
-# PreToolUse gate hook, which fails closed: blocking one commit cannot loop,
-# but blocking every turn-end can. Commits stay gate-blocked regardless, so
-# allowing a stop here is recoverable (just resume) and cannot cause harm,
-# whereas a wrongful block is not recoverable without user intervention.
+# the model should keep going (a valid STATE.json that says so). When the state
+# cannot be read (jq absent, or STATE.json unparseable), this hook ALLOWS the
+# stop and warns — it fails OPEN. This is the OPPOSITE of the PreToolUse gate
+# hook, which fails closed: blocking one commit cannot loop, but blocking every
+# turn-end can. Commits stay gate-blocked regardless, so allowing a stop here is
+# recoverable (just resume) and cannot cause harm, whereas a wrongful block is
+# not recoverable without user intervention.
 # `set -e` is intentionally omitted so a stray jq error can't crash the script.
+#
+# Soft-lock breaker: a *valid* STATE.json stuck at expected_next_action other
+# than a user-gate is exactly the state that would block every turn-end forever
+# if the model genuinely cannot make progress. To bound that, the block path
+# keeps a consecutive-block counter keyed on a signature of the run's progress
+# fields (phase, expected_next_action, iteration counters, reviewed diff sha).
+# While the run advances, the signature changes and the counter resets, so
+# normal operation blocks indefinitely as designed. If the run is frozen in the
+# EXACT same state for AUTO_TASK_STALL_LIMIT (default 25) consecutive turn-ends,
+# the hook releases with a loud warning so the user can intervene rather than
+# face an unrecoverable session. This is the portable substitute for a
+# `stop_hook_active` signal, which Claude Code does not reliably surface here.
 
 set -uo pipefail
 
@@ -71,6 +80,34 @@ esac
 # not open. Make the unset case explicit in the reason so the model knows to set
 # the field rather than hunt for a phantom gate.
 [ -n "$expected" ] || expected="(unset/null — must be set on every post-approval state write)"
+
+# Soft-lock breaker. Track consecutive blocks in the SAME run state; if the run
+# is frozen (no progress) for AUTO_TASK_STALL_LIMIT turn-ends in a row, release
+# the stop instead of blocking, so the session can't become unrecoverable.
+count_file="$project_dir/.auto-task/$branch/.stall-block-count"
+# `.base` leads the signature so the counter is run-scoped: a fresh run on a
+# reused branch folder forks from a new base, changing the signature and
+# resetting any residual count from a prior run (the file is only removed on a
+# release, not on legitimate yield/done exits). Within a run (incl. resume) base
+# is stable, so the counter accumulates as intended.
+sig="$(jq -r '[(.base // ""), (.phase // ""), (.expected_next_action // ""), ((.iteration.review // 0)|tostring), ((.iteration.fix // 0)|tostring), (.gates.code_review.reviewed_diff_sha // "")] | join("|")' "$state" 2>/dev/null || echo "")"
+prev_count=0; prev_sig=""
+if [ -f "$count_file" ]; then
+  prev_line="$(cat "$count_file" 2>/dev/null || echo "")"
+  prev_count="${prev_line%%$'\n'*}"; prev_count="${prev_count%%|*}"
+  prev_sig="${prev_line#*|}"
+  case "$prev_count" in ''|*[!0-9]*) prev_count=0 ;; esac
+fi
+if [ "$sig" = "$prev_sig" ]; then count=$((prev_count + 1)); else count=1; fi
+printf '%s|%s\n' "$count" "$sig" > "$count_file" 2>/dev/null || true
+
+stall_limit="${AUTO_TASK_STALL_LIMIT:-25}"
+case "$stall_limit" in ''|*[!0-9]*) stall_limit=25 ;; esac
+if [ "$count" -ge "$stall_limit" ]; then
+  echo "auto-task anti-stall: $count consecutive turn-ends blocked in the same state (phase=$phase, expected_next_action=$expected) — the run appears genuinely frozen with no progress. Releasing this stop to avoid an unrecoverable soft-lock. Inspect/repair .auto-task/$branch/STATE.json and resume with /auto-task." >&2
+  rm -f "$count_file" 2>/dev/null || true
+  exit 0
+fi
 
 # Mid-protocol stall. Block.
 jq -n --arg p "$phase" --arg e "$expected" '{

@@ -70,9 +70,13 @@ LOCAL_V="$(jq -r '.version // empty' "$MANIFEST" 2>/dev/null)"
 [ -n "$LOCAL_V" ] || emit_silent
 
 # --- throttle: at most one network check per 24h ----------------------------
+# Prefer the plugin data dir (persists across updates); when the runtime does
+# not export it, fall back to a temp dir so the throttle still works — otherwise
+# the network check would re-fire on EVERY session start, which violates the
+# "never noticeably slow a session" contract.
 DATA_DIR="${CLAUDE_PLUGIN_DATA:-}"
-STAMP=""
-[ -n "$DATA_DIR" ] && STAMP="$DATA_DIR/.last-version-check"
+[ -n "$DATA_DIR" ] || DATA_DIR="${TMPDIR:-/tmp}/auto-task-plugin"
+STAMP="$DATA_DIR/.last-version-check"
 now="$(date +%s 2>/dev/null || echo 0)"
 if [ "${AUTO_TASK_SKIP_THROTTLE:-}" != "1" ] && [ -n "$STAMP" ] && [ -f "$STAMP" ]; then
   last="$(cat "$STAMP" 2>/dev/null || echo 0)"
@@ -87,7 +91,10 @@ REMOTE_V="${AUTO_TASK_REMOTE_VERSION:-}"
 if [ -z "$REMOTE_V" ]; then
   command -v curl >/dev/null 2>&1 || emit_silent
   URL="${AUTO_TASK_VERSION_URL:-https://raw.githubusercontent.com/o8o0o8o/auto-task-plugin/main/.claude-plugin/plugin.json}"
-  body="$(curl -fsS -m 5 "$URL" 2>/dev/null)" || body=""
+  # --connect-timeout bounds the worst case on a black-holed host (a bare -m 5
+  # can still cost the full 5s every session if the throttle stamp can't persist);
+  # -m caps the whole transfer.
+  body="$(curl -fsS --connect-timeout 2 -m 5 "$URL" 2>/dev/null)" || body=""
   REMOTE_V="$(printf '%s' "$body" | jq -r '.version // empty' 2>/dev/null)"
 fi
 
