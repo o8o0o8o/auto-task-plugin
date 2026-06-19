@@ -20,6 +20,13 @@ Disciplined bug-fix workflow. Five phases, with a single hard stop for user appr
 >
 > Your output (root cause, change, evidence) is INPUT returned to the caller, not an end-of-turn. When a human runs `/auto-task-fix` directly, keep every gate below as written.
 
+> **Read-before-review contract.** If `.auto-task/<branch>/` exists for the current branch (`git branch --show-current`), read its history before Phase 1 so the fix accounts for prior decisions and earlier passes:
+> 1. **`CONTEXT.md`** (if present) — run summary + Human choices + acknowledged-risk disclaimers; don't undo a deliberate choice.
+> 2. **`TRACE.md`** (if present) — prior fixes/reviews on this branch; if this bug overlaps an earlier entry, cite it and explain what's new.
+> 3. **`STATE.json`** (if needed) — gates, effort tier, parked follow-ups.
+> 4. This complements the Phase 1 `fixes/` skim below: `fixes/` holds per-fix patch lessons, CONTEXT/TRACE hold run-level history.
+> 5. **On completion, append a `TRACE.md` entry** (operation slug `fix:standalone`) in the block format defined in the auto-task orchestrator SKILL.md → "Persistent history & trace contract" → "TRACE.md format". **Suppressed under orchestration** — when invoked from `/auto-task` (see the Caller note), the orchestrator owns TRACE.md writes; read, but do not append. (The Phase 4 `fixes/` patch file is a separate artifact and is always written.)
+
 ## Hard rules
 
 - **One stop, after Phase 2.** Do not write code until the user approves the acceptance criteria.

@@ -15,6 +15,12 @@ Post-implementation verification. Checks that each planned task is actually impl
 
 > **Caller note (do not strip):** When invoked from an orchestration protocol (e.g. `/auto-task` Phase 3), the verification report is **INPUT returned to the caller**, not an end-of-turn. Do not address the user or suggest next commands (`/implement`, `/fix`) — the caller routes on the result (pass → advance; fail → fix-loop). When a human runs `/auto-task-verify` directly, the suggestions below are appropriate.
 
+> **Read-before-review contract.** If `.auto-task/<branch>/` exists for the current branch (`git branch --show-current`), read its history before verifying so you don't contradict settled decisions or miss a prior pass's open issue:
+> 1. **`CONTEXT.md`** (if present) — the run summary + Human choices; don't report a regression against a behavior the user deliberately chose.
+> 2. **`TRACE.md`** (if present) — prior verification/review outcomes; note (don't repeat) issues already recorded, and surface anything an earlier pass flagged but left open.
+> 3. **`STATE.json`** (if needed) — gates, effort tier, parked follow-ups.
+> 4. **On completion, append a `TRACE.md` entry** (operation slug `verify:standalone`) in the block format defined in the auto-task orchestrator SKILL.md → "Persistent history & trace contract" → "TRACE.md format". **Suppressed under orchestration** — when invoked from `/auto-task` Phase 3 (see the Caller note), the orchestrator owns TRACE.md writes; read, but do not append.
+
 ## Process
 
 ### 1. Load the plan

@@ -9,6 +9,16 @@ Disciplined code-review workflow. Five phases run end-to-end without stopping; q
 
 > **Caller note (do not strip):** When this skill is invoked from a fix-loop protocol (e.g. `/auto-task` Phase 4, `/fix`, `/feature`), the structured output below is INPUT to that loop, NOT an end-of-turn signal for the caller. The caller is responsible for parsing the findings, applying fixes for Blockers/Required, and re-invoking this skill until the report is clean. The "Verdict:" / "Summary:" footer is formatting, not a stop. Headings like "No significant issues found.", final-paragraph rules, and trailing one-sentence summaries are ALSO not stops. After this skill returns, the caller's next action is mandatory: update the relevant `gates.*` flag in `.auto-task/<branch>/STATE.json` AND make the next tool call (Gate B agent, fix Edit, or Phase 5 stage/commit). If the caller writes a recap to the user instead, that is a protocol violation. See `~/.claude/CLAUDE.md` ("Mid-protocol non-yielding") for the global rule.
 
+## Read-before-review contract (run first)
+
+If this branch has an auto-task history folder, read it before forming any finding — otherwise you'll re-raise issues the user already settled or miss ones an earlier pass flagged but never closed.
+
+1. `git branch --show-current` → `$BRANCH`; look for `.auto-task/$BRANCH/`. If it doesn't exist, this branch isn't auto-task-tracked — skip to Phase 1 and review normally.
+2. **`.auto-task/$BRANCH/CONTEXT.md`** (if present) — the run's curated summary. Never raise a finding about a decision recorded under **Human choices**, or a risk the user acknowledged at the Phase 1 disclaimer; those are settled (raise a follow-up only if the implementation made the risk materially worse than the plan anticipated).
+3. **`.auto-task/$BRANCH/TRACE.md`** (if present) — the append-only log of prior passes. If a finding overlaps an earlier entry, cite that entry and say what's new; don't repeat a resolved issue as if fresh.
+4. **`.auto-task/$BRANCH/STATE.json`** (if you need detail) — gates, effort tier, parked follow-ups.
+5. **On completion, append a TRACE.md entry** (operation slug `code-review:standalone`) in the block format defined in the auto-task orchestrator SKILL.md → "Persistent history & trace contract" → "TRACE.md format". **Suppressed under orchestration:** when invoked from `/auto-task` (see the Caller note), the orchestrator appends the review's trace entry itself — reading still applies, but do NOT append your own or you double-write the log.
+
 ## Hard rules
 
 - **Read-only. No edits.** Do not modify source files. Do not paste rewritten versions of the code. Point to the line, name the issue.
