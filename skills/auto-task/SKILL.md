@@ -43,7 +43,7 @@ The single exception during Phase 5: pushing to remote and opening a PR are exte
 
 - **One human gate.** The plan produced in Phase 1 is the contract. After the user approves it, do not stop for confirmation — proceed through Execute → Verify → Review → Handover automatically.
 - **Surface only when the loop rule says to.** See "Loop rule" below. Never invent new stops outside that rule.
-- **Commit after each phase.** Each phase ends with a `/auto-task-commit` so progress is durable and resumable.
+- **Single commit at handover.** Phases 2 through Gate B make NO commits — all changes accumulate as one growing uncommitted diff against the branch base, and only Phase 5 commits, after every required gate has passed (see the "Single-commit rule" below, mechanically enforced by the pre-commit hook). Durability and resumability come from `.auto-task/<branch>/STATE.json` on disk, not from intermediate commits.
 - **`.auto-task/` is the persistent local history root — gitignored, NEVER committed.** Layout: `.auto-task/<branch-name>/` per run, where `<branch-name>` mirrors the git branch path verbatim (so branch `fix/auth-bug` → `.auto-task/fix/auth-bug/`). Inside each per-run folder:
   - `STATE.json` — the run-state machine ([[state-file-schema]]).
   - `PLAN.md` — the approved plan + approach decision log + critique + AC pre-flight + recon.
