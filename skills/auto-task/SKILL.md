@@ -50,6 +50,7 @@ The single exception during Phase 5: pushing to remote and opening a PR are exte
   - `CONTEXT.md` — generated at Phase 5; carries task, human choices, AC results, verification trail, drift events, change diagram, follow-ups. The handover artifact for downstream reviewers (human, `/auto-task-code-review`, `/review`, future `/auto-task` runs touching the same area).
   - `TRACE.md` — append-only log of every operation that touched this branch (auto-task phases AND external tool runs like a later `/auto-task-code-review` session). See the "Persistent history & trace contract" section.
   - `recon/` — Phase 1 reconnaissance outputs (screenshots, fetched docs, change-diagram source).
+  - `fixes/` — per-fix patch notes written by `auto-task-fix` (root cause + lesson per fix), read by later plan / implement / code-review steps to avoid repeating earlier mistakes on this branch.
   - `artifacts/` — proofs of completion (test output logs, screenshots confirming the fix, build logs, diff snapshots, command transcripts). Reviewers verify "the fix actually works" by reading these without needing to re-run the run.
 
   None of this lands in the git index. On branch setup, append `.auto-task/` to `.git/info/exclude` so it's ignored per-clone (do not modify the repo's `.gitignore` — that's a shared file). Before every `git commit` (including the `auto-task-commit` skill), defensively unstage any `.auto-task/` paths: `git restore --staged .auto-task/ 2>/dev/null || true`. If `git status` after staging shows anything under `.auto-task/`, that's a bug — fix it before committing.
@@ -209,7 +210,7 @@ Beyond the booleans, the hook also enforces **review staleness**: when `state.ba
 
 2. **Exclude `.auto-task/` from git.** Append `.auto-task/` (the root, NOT the per-branch sub-path) to `.git/info/exclude` (one-line append, idempotent — check first with `grep -qxF '.auto-task/' .git/info/exclude`). This is per-clone, so it never lands in the repo's `.gitignore`. One exclude entry covers every per-branch folder under `.auto-task/`, including ones from prior runs that should remain readable for history.
 
-3. **Create the per-branch folder.** `mkdir -p .auto-task/<branch>/artifacts .auto-task/<branch>/recon`. Slashes in the branch name are preserved literally (branch `fix/auth-bug` → `.auto-task/fix/auth-bug/`). This MUST match `git branch --show-current` verbatim — the gate and Stop hooks resolve `.auto-task/<branch>/STATE.json` from it, and any divergence (extra prefix, rewritten slug) makes them silently find no state file and fail open.
+3. **Create the per-branch folder.** `mkdir -p .auto-task/<branch>/artifacts .auto-task/<branch>/recon .auto-task/<branch>/fixes`. Slashes in the branch name are preserved literally (branch `fix/auth-bug` → `.auto-task/fix/auth-bug/`). This MUST match `git branch --show-current` verbatim — the gate and Stop hooks resolve `.auto-task/<branch>/STATE.json` from it, and any divergence (extra prefix, rewritten slug) makes them silently find no state file and fail open.
 
 4. **State.** Initialize `.auto-task/<branch>/STATE.json` with `phase: "define"`, `expected_next_action: null`, `approved: false`, `description: "<verbatim task input>"`, `branch: "<resolved name>"`, `base: "<base-commit SHA>"`, and empty containers for the rest (see "State file" schema). Capture `base` as `git rev-parse HEAD` at run start — for a freshly-created branch that is the fork point; for a reused branch it is the branch's current tip. Either way `git diff <base>` is then exactly *this run's* uncommitted work, which is what the change diagram, the verifiers, and the review-staleness gate hook all measure against. `base` must NOT change for the life of the run. **Caveat:** if the working tree already has pre-existing uncommitted changes at run start (see the pre-existing-staged handling below), those are part of `git diff <base>` too — the baseline-exclusion rule keeps them out of *commits*, but reviewers and the staleness hash will see them. When that happens, note it under PLAN.md Unknowns so a reviewer isn't surprised. `expected_next_action` is `null` while `approved` is `false` — the Stop hook allows yields freely until the user has approved the plan.
 
@@ -832,6 +833,7 @@ If none of the above produced bullets, write a single line: `Clean run — no es
     ├── CONTEXT.md                # Phase 5 handover artifact (regenerated each Phase 5)
     ├── TRACE.md                  # append-only operation log (this section's contract)
     ├── recon/                    # Phase 1 reconnaissance outputs + change-diagram.mmd
+    ├── fixes/                    # per-fix patch notes / lessons (written by auto-task-fix)
     └── artifacts/                # proofs of completion (tests, screenshots, diffs, logs)
 ```
 
