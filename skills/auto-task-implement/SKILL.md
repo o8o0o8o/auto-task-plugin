@@ -13,7 +13,7 @@ Execute tasks from `.auto-task/<branch>/PLAN.md` one by one. Supports session re
 
 > **Working directory.** Plan, state, and run history live under the gitignored `.auto-task/<branch>/` root, where `<branch>` is the current git branch (`git branch --show-current`; if detached or not in a repo, fall back to a flat `.auto-task/`). When invoked inside an `/auto-task` run, the orchestrator owns this directory — read and write the exact path it references. **Never commit anything under `.auto-task/`.**
 
-> **Caller note (do not strip):** When invoked from an orchestration protocol (e.g. `/auto-task` Phase 2), the `<!-- COMMIT CHECKPOINT -->` markers are **drift-check points, not commit-or-stop points**. Do NOT pause, do NOT wait for the user, and do NOT commit at a checkpoint — the caller inspects drift and continues the loop itself. Return when all tasks are ticked. When a human runs `/auto-task-implement` directly, keep the checkpoint pause below.
+> **Caller note (do not strip):** When invoked from an orchestration protocol (e.g. `/auto-task` Phase 2), the `<!-- DRIFT CHECKPOINT -->` markers are **drift-check points, not commit-or-stop points**. Do NOT pause, do NOT wait for the user, and do NOT commit at a checkpoint — the caller inspects drift and continues the loop itself. Return when all tasks are ticked. When a human runs `/auto-task-implement` directly, keep the checkpoint pause below.
 
 ## Process
 
@@ -41,12 +41,12 @@ For each unchecked task, in order:
 5. Set the task to `completed` via TaskUpdate.
 6. Move to the next task.
 
-### 4. Commit checkpoints
+### 4. Checkpoints
 
-When you reach a `<!-- COMMIT CHECKPOINT -->` line in the plan:
+When you reach a `<!-- DRIFT CHECKPOINT -->` line in the plan:
 
 - Pause implementation.
-- Tell the user: "Reached a commit checkpoint after task N. You can run `/commit` to save progress, then `/implement` to continue."
+- Tell the user: "Reached a checkpoint after task N. You can run `/commit` to save progress, then `/implement` to continue."
 - Stop and wait for the user.
 
 ### 5. Completion

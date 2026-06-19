@@ -179,7 +179,7 @@ flowchart LR
 ```
 
 - **`auto-task-plan`** — produces the implementation plan for the chosen approach. Auto-task runs approach selection first (2–3 candidate sketches scored and selected, close calls folded into the human gate), then appends Acceptance Criteria + Effort + Critique. The critique runs as a bounded re-plan loop: structural-fixable findings are auto-amended and re-critiqued (cap by tier); only judgment-required findings reach the human.
-- **`auto-task-implement`** — ticks off plan tasks; auto-task interprets each `<!-- COMMIT CHECKPOINT -->` as a **drift-check** marker (not a commit marker).
+- **`auto-task-implement`** — ticks off plan tasks; auto-task interprets each `<!-- DRIFT CHECKPOINT -->` as a **drift-check** marker (not a commit marker).
 - **`auto-task-verify`** — runs types/lint/build/tests; auto-task also runs literal AC commands on top.
 - **`auto-task-fix`** — invoked on any failure; modifies the working tree, never commits during a run.
 - **`auto-task-code-review`** — 5-phase Investigate → Define → Execute → Prevent → Verify. **Hard-required** in Phase 4. Agents/hand-rolled prompts are forbidden and the pre-commit hook rejects any other `gates.code_review.tool` value.

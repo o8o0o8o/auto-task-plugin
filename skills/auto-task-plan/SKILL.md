@@ -57,7 +57,7 @@ Ensure the `.auto-task/<branch>/` directory exists (create it if needed). Write 
   - Files: `path/to/file.js`
   - Details: <what to do and why>
 
-<!-- COMMIT CHECKPOINT -->
+<!-- DRIFT CHECKPOINT -->
 
 - [ ] 3. <Task description>
   ...
@@ -74,7 +74,7 @@ Show the user the plan summary and tell them to run `/implement` when ready to s
 
 - Each task must be a single, atomic unit of work (one logical change).
 - Include the specific files to modify in each task.
-- For plans with 5+ tasks, insert `<!-- COMMIT CHECKPOINT -->` lines at logical boundaries (every 3-5 tasks).
+- For plans with 5+ tasks, insert `<!-- DRIFT CHECKPOINT -->` lines at logical boundaries (every 3-5 tasks).
 - Order tasks by dependency -- things that must happen first come first.
 - Do NOT start implementation. Planning only.
 - If a `.auto-task/<branch>/PLAN.md` already exists, ask the user whether to replace it or work on the existing one.

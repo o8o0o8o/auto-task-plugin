@@ -499,7 +499,7 @@ The global pre-commit hook in `~/.claude/settings.json` enforces this mechanical
 
 ### Phase 2 — Execute (auto, NO COMMIT)
 
-Invoke the `auto-task-implement` skill. It will tick off tasks in `.auto-task/<branch>/PLAN.md`. Treat each `<!-- COMMIT CHECKPOINT -->` marker as a **drift-check checkpoint, NOT a commit checkpoint**.
+Invoke the `auto-task-implement` skill. It will tick off tasks in `.auto-task/<branch>/PLAN.md`. Treat each `<!-- DRIFT CHECKPOINT -->` marker as a **drift check — NOT a commit point** (nothing commits until Phase 5).
 
 At each checkpoint:
 
