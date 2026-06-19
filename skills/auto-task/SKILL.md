@@ -602,7 +602,7 @@ Second `task-execution-verifier` pass with an **adversarial** stance — flip th
 
 Spawn with a fresh-context prompt containing:
 - The Acceptance Criteria from `.auto-task/<branch>/PLAN.md`.
-- The full diff vs. base (`git diff <base>...HEAD`).
+- The full diff vs. base (`git diff <base>` — the uncommitted working-tree diff; per the single-commit rule nothing is committed until Phase 5, so `<base>..HEAD` / `<base>...HEAD` would be empty here and the adversarial verifier would see no code).
 - The list of review findings that were addressed in Phase 4.
 - Explicit ask: "Adversarially review this diff. Your job is to find what's wrong, not confirm what's right. Hunt for:
   - An acceptance criterion only superficially satisfied (the test exists but doesn't exercise the AC's intent).

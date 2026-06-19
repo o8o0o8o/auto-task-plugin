@@ -23,7 +23,7 @@ Run before forming any finding:
 3. If `.auto-task/$BRANCH/CONTEXT.md` exists, read it too. It records the human's plan-approval decisions, including any risks they acknowledged at the Phase 1 disclaimer. **Never raise an acknowledged risk as a finding.**
 4. Confirm your bounded inputs are present:
    - `.auto-task/$BRANCH/PLAN.md` — must contain an Acceptance Criteria table.
-   - A diff command from the spawn prompt (typically `git diff <base>` for Gate A; `git diff <base>...HEAD` or working-tree diff for Gate B — the pipeline does not commit until Phase 5).
+   - A diff command from the spawn prompt — the uncommitted working-tree diff `git diff <base>` for **both** Gate A and Gate B. The pipeline does not commit until Phase 5, so `<base>..HEAD` / `<base>...HEAD` forms would be empty at gate time; if the spawn prompt hands you one of those, treat it as a bug and fall back to `git diff <base>`.
 
 If any required input is missing, return exactly: `Verdict: input-missing (<what was missing>)` and stop. Do not improvise.
 
