@@ -2,6 +2,23 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.5]
+
+Findings from a full read-through evaluation of the pipeline. The enforcement spine (hooks) was already covered by the test suite; these are defects in the model-facing prose that the mechanical tests could not catch.
+
+### Fixed
+
+- **Gate B no longer reviews an empty diff.** The Gate B spawn prompt handed the adversarial `task-execution-verifier` `git diff <base>...HEAD`, but the single-commit rule means nothing is committed until Phase 5 — so at Gate B `HEAD == base` and that diff was **empty**. The adversarial pass (the strongest gate for STANDARD/HEAVY tasks) saw no code and trivially succeeded. It now uses `git diff <base>` (the uncommitted working tree), matching Phase 3 and Gate A; the verifier agent's input doc was corrected to use the working-tree diff for both gates and to treat a `..HEAD`/`...HEAD` form as a bug to fall back from.
+- **Removed a self-contradicting operating principle.** SKILL.md's "Commit after each phase" operating principle contradicted the NON-NEGOTIABLE single-commit rule (only Phase 5 commits) and the `enforce-gates.sh` hook that backs it. It now states the single-commit behavior and attributes durability/resumability to the on-disk `STATE.json`, not to intermediate commits.
+
+### Changed
+
+- **The bundled siblings now implement the read-before-review contract themselves.** `auto-task-code-review`, `auto-task-verify`, and `auto-task-fix` now read `.auto-task/<branch>/` history (CONTEXT.md, TRACE.md, STATE.json) before forming findings — so they don't re-litigate settled Human choices or miss an issue an earlier pass left open — and append a standalone `TRACE.md` entry on completion. The append is **suppressed under `/auto-task` orchestration** (the orchestrator owns TRACE writes; a sibling append would double-write the log), mirroring the existing caller-note pattern. Each references the orchestrator's canonical TRACE.md format rather than duplicating it. Previously this behavior lived only in the orchestrator and the verifier agent.
+
+### Docs
+
+- **`.auto-task/<branch>/fixes/` is now in the canonical layout.** The orchestrator's branch-setup `mkdir` and both of SKILL.md's layout enumerations omitted `fixes/`, which `auto-task-fix` writes patch notes to and `auto-task-plan` / `auto-task-implement` / `auto-task-code-review` read; `ARCHITECTURE.md` already listed it. SKILL.md now creates and documents it, so all four layout enumerations agree.
+
 ## [0.1.4]
 
 ### Fixed
@@ -96,6 +113,6 @@ Initial extraction of the `auto-task` skill from `~/.claude/skills/auto-task/` i
 ### Known issues
 
 - `task-execution-verifier` agent has a real prompt but has not yet been exercised end-to-end inside a real auto-task run — treat Gate A/B as functional but not battle-tested.
-- Plugin manifest field names not verified against the current spec (the canonical install path is `install.sh`, not `/plugin add`, so the manifest is currently informational).
-- Bundled sibling skills now share the orchestrator's `.auto-task/<branch>/` working-directory convention, but their richer read-before-review behaviour (reading CONTEXT.md / TRACE.md, appending trace entries) still lives mostly in the orchestrator and the verifier agent rather than in each sibling.
+- Plugin manifest field names not verified against the current spec (the canonical install path is `install.sh`, not `/plugin add`, so the manifest is currently informational). _Resolved in 0.1.1 — the manifest is now spec-valid and the marketplace install is the primary documented path._
+- Bundled sibling skills now share the orchestrator's `.auto-task/<branch>/` working-directory convention, but their richer read-before-review behaviour (reading CONTEXT.md / TRACE.md, appending trace entries) still lives mostly in the orchestrator and the verifier agent rather than in each sibling. _Resolved in 0.1.5 — the three audit siblings (`auto-task-code-review`, `auto-task-verify`, `auto-task-fix`) now implement the contract directly._
 - `enforce-gates.sh` path resolution: assumes `CLAUDE_PROJECT_DIR` is set to the repo root (or falls back to `$PWD`). Verify this environment variable is provided by the Claude Code hook context.
