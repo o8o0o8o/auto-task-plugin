@@ -51,8 +51,17 @@ if ! printf '%s' "$cmd" | LC_ALL=C grep -qE "$commit_re"; then
   exit 0
 fi
 
-# Resolve the per-branch state file
-project_dir="${CLAUDE_PROJECT_DIR:-$PWD}"
+# Resolve the project root that owns .auto-task/<branch>/. Start from
+# CLAUDE_PROJECT_DIR (the session's project root) or $PWD, then resolve that to
+# its git worktree root, so a commit from a subdirectory still finds
+# .auto-task/<branch>/ at the top. Resolving the toplevel OF the base (not from
+# raw CWD) keeps an explicitly-set CLAUDE_PROJECT_DIR authoritative — a commit
+# from a nested/embedded repo or submodule does not silently retarget a different
+# repo and fail open. Fall back to base when it is not inside a working tree
+# (no repo / bare / inside .git/).
+project_dir_base="${CLAUDE_PROJECT_DIR:-$PWD}"
+project_dir="$(cd "$project_dir_base" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)"
+[ -n "$project_dir" ] || project_dir="$project_dir_base"
 branch="$(cd "$project_dir" && git branch --show-current 2>/dev/null || true)"
 if [ -z "$branch" ]; then
   exit 0  # detached HEAD or not a repo — let git handle it

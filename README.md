@@ -98,6 +98,17 @@ After you type `approved` / `proceed` / `yes`, the pipeline runs unattended thro
 
 (no argument) — reads `.auto-task/<current-branch>/STATE.json` and continues from where it left off. Resume re-enters the phase recorded in `STATE.json` from the top; phases are designed to be re-entrant (re-running self-verify, a gate, or the review loop on the current working tree is idempotent — it recomputes from disk state, it doesn't double-apply). The component preflight (above) re-runs on every resume in case a skill or the verifier agent was uninstalled between sessions.
 
+### Running multiple runs in parallel
+
+Each run is isolated by **branch** and keeps all state under `.auto-task/<branch>/`, so the clean way to run several `/auto-task` runs at once is **one git worktree per run** — not two runs in the same checkout (they would fight over the branch and working tree).
+
+```sh
+git worktree add ../auto-task-feat-x -b feat/x   # one worktree per task
+cd ../auto-task-feat-x && claude                  # then run /auto-task here
+```
+
+Each worktree has its own working tree, branch, and `.auto-task/<branch>/` history, and the gate + Stop hooks resolve state per-worktree (via `git rev-parse --show-toplevel`), so concurrent runs never interfere — even though they share one clone's object store and common-dir exclude file. git itself forbids two worktrees on the same branch, so branch collisions can't happen. Merge or open a PR from each worktree independently.
+
 ### Surfacing protocol
 
 The pipeline stops mid-flight only when the Loop rule fires:
@@ -128,7 +139,7 @@ The plugin does NOT ship memory entries. They are per-user, per-project, opt-in.
 
 ## What does NOT happen
 
-- The plugin never commits anything under `.auto-task/` — that folder is local-only, gitignored via `.git/info/exclude` on branch setup.
+- The plugin never commits anything under `.auto-task/` — that folder is local-only, gitignored via the common-dir exclude (`$(git rev-parse --git-common-dir)/info/exclude`) on branch setup.
 - The plugin never writes to your memory store. Phase 1 reads it; Phase 5 surfaces candidate memories for you to save if you choose. No autonomous writes.
 - The plugin never bypasses hooks. Pre-commit hook block → fix the underlying state, don't `--no-verify`.
 - The plugin never adds `Co-Authored-By: Claude` or `🤖 Generated` markers — both the skill and the hook enforce this.
@@ -140,7 +151,7 @@ The plugin does NOT ship memory entries. They are per-user, per-project, opt-in.
 | `Blocked by auto-task-plugin: auto-task run in progress` | The gate-enforcement hook fired because gates haven't passed. | Read the message — it names which gate is missing. Re-run the relevant skill and update the flag with real evidence. Do NOT speculatively set flags. |
 | `auto-task is mid-pipeline (phase=…)` | The Stop hook fired because `expected_next_action === "auto-continue"`. | This is the anti-stall block working as intended. Make the next tool call instead of trying to end the turn. |
 | `commit messages and PR bodies must NOT contain "Co-Authored-By: Claude"` | The AI-attribution hook fired. | Rewrite the commit message / PR body without the marker. |
-| `.auto-task/` showing up in `git status` as untracked | The `.git/info/exclude` entry didn't land. | Append `.auto-task/` to `.git/info/exclude` manually. |
+| `.auto-task/` showing up in `git status` as untracked | The exclude entry didn't land. | Append `.auto-task/` to `$(git rev-parse --git-common-dir)/info/exclude` (worktree-correct — in a worktree `.git` is a file, so the bare `.git/info/exclude` path fails). |
 | `the working-tree diff changed since the last clean code-review pass` | Code was edited after the code-review gate went clean, so the staleness check fired. | Re-run the `auto-task-code-review` skill on the current diff, drive it to a clean pass, then refresh `gates.code_review.reviewed_diff_sha`. Do not bypass. |
 | `jq is not installed` / `STATE.json is not valid JSON` (hook block) | A hook failed closed because it couldn't verify state during an active run. | Install `jq`, or repair/remove `.auto-task/<branch>/STATE.json` if no run is active. |
 
@@ -154,4 +165,4 @@ MIT — see `LICENSE`.
 
 ## Status
 
-**v0.1.5 — pre-release.** The install path has been verified in a throwaway directory. The enforcement spine (state-machine ↔ hooks) has an automated integration test — `tests/enforcement-spine.test.sh`, 28 assertions covering the full STANDARD + LIGHT lifecycle, gate ordering, review-staleness (including under hostile git config), raw-mode commit detection, the Stop-hook stall-breaker, the AI-attribution block, and the fail-open/fail-closed edges. What is **not** yet exercised end-to-end is the *model-follows-the-prose* path: the `task-execution-verifier` agent (Gate A/B) and the orchestrator's phase-driving have a real protocol but have not been run inside a live `/auto-task` against a real task — treat those as functional but not yet battle-tested. File issues on GitHub.
+**v0.1.5 — pre-release.** The install path has been verified in a throwaway directory. The enforcement spine (state-machine ↔ hooks) has an automated integration test — `tests/enforcement-spine.test.sh`, 32 assertions covering the full STANDARD + LIGHT lifecycle, gate ordering, review-staleness (including under hostile git config), raw-mode commit detection, the Stop-hook stall-breaker, the AI-attribution block, the fail-open/fail-closed edges, and per-worktree / subdirectory / nested-repo state resolution. What is **not** yet exercised end-to-end is the *model-follows-the-prose* path: the `task-execution-verifier` agent (Gate A/B) and the orchestrator's phase-driving have a real protocol but have not been run inside a live `/auto-task` against a real task — treat those as functional but not yet battle-tested. File issues on GitHub.

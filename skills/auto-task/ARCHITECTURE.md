@@ -10,7 +10,7 @@ This document is a map of the moving parts: the pipeline phases, the artifacts o
 
 ```mermaid
 flowchart TD
-    Start([/auto-task &lt;description&gt;]) --> P1Setup[Phase 1 — Branch setup<br/>git switch -c feat|fix|chore/&lt;slug&gt;<br/>append .auto-task/ to .git/info/exclude<br/>init .auto-task/&lt;branch&gt;/STATE.json]
+    Start([/auto-task &lt;description&gt;]) --> P1Setup[Phase 1 — Branch setup<br/>git switch -c feat|fix|chore/&lt;slug&gt;<br/>append .auto-task/ to git-common-dir/info/exclude<br/>init .auto-task/&lt;branch&gt;/STATE.json]
     P1Setup --> Recon{Recon trigger?<br/>UI / runtime / external lib /<br/>Figma / Notion / etc.}
     Recon -- yes --> ReconDo[MCP recon, read-only<br/>any MCP if necessary<br/>playwright / context7 / figma /<br/>notion / drive / slack / ide / ...]
     Recon -- no --> Approach
@@ -130,7 +130,7 @@ The pipeline is fully resumable. State is updated at every phase transition and 
 }
 ```
 
-`.auto-task/` is **never committed**. Its root is added to `.git/info/exclude` (per-clone, never to the repo's `.gitignore`) and pre-stage-cleaned before every commit.
+`.auto-task/` is **never committed**. Its root is added to the common-dir exclude (`$(git rev-parse --git-common-dir)/info/exclude` — that is `.git/info/exclude` in a normal checkout and the shared common dir from any linked worktree; per-clone, never to the repo's `.gitignore`) and pre-stage-cleaned before every commit.
 
 ### `.auto-task/<branch>/` layout during a run
 
@@ -276,13 +276,25 @@ State is saved. The user gets a short status message: **why stopped** + **what's
 ## Invariants (the contract)
 
 - **Single commit.** Only Phase 5 commits — guaranteed by the pre-commit hook + the skill's per-phase "NO COMMIT" rule.
-- **`.auto-task/` never committed.** Excluded via `.git/info/exclude`, pre-stage-cleaned at every commit. A leaked commit means a bug — surface, do not silently rewrite history.
+- **`.auto-task/` never committed.** Excluded via the common-dir exclude (`$(git rev-parse --git-common-dir)/info/exclude`), pre-stage-cleaned at every commit. A leaked commit means a bug — surface, do not silently rewrite history.
 - **One human gate** between approval and PR. Plus one allowed prompt in Phase 5 (push/PR/hold).
 - **Acceptance Criteria are load-bearing.** No gate can pass without literal execution of its bound AC rows.
 - **The reviewed diff is the committed diff.** The code-review gate records a hash of `git diff <base>`; the commit is blocked unless the diff still hashes identically, so post-review edits can't sneak in uncommitted-by-review.
 - **Effort can only escalate.** Manual de-escalation requires editing `Effort:` in `.auto-task/<branch>/PLAN.md`.
 - **Fresh-context agents.** Both `task-execution-verifier` spawns receive only `{ diff, AC }` — never conversation history.
 - **Pre-existing user work is preserved.** Pre-staged files at run start are recorded as baseline and excluded from every auto-task commit.
+
+---
+
+## Parallel runs (one worktree per run)
+
+Run state is keyed by branch under `.auto-task/<branch>/`, and the gate + Stop hooks resolve their project dir from `git rev-parse --show-toplevel` (the working tree the command actually runs in), so each linked git worktree is a fully isolated run:
+
+- One worktree per run: `git worktree add ../wt-x -b feat/x`, then invoke `/auto-task` inside it.
+- State, gates, and the Stop-hook yield enforcement are per-worktree; concurrent runs never cross-talk, even though they share one clone's object store and common-dir exclude file.
+- git forbids two worktrees on the same branch, so branch collisions can't happen.
+
+Running two runs in the *same* checkout is unsupported — the second `git switch -c` would move the branch out from under the first.
 
 ---
 
@@ -301,4 +313,4 @@ State is saved. The user gets a short status message: **why stopped** + **what's
 | `~/.claude/settings.json` | Pre-commit hooks (gate enforcement + AI-attribution ban), `git push` deny, `gh pr create` ask |
 | `<project>/.auto-task/<branch>/STATE.json` | Per-run state machine (resumable) |
 | `<project>/.auto-task/<branch>/PLAN.md` | Per-run plan + Approach + AC + Effort + Critique |
-| `<project>/.git/info/exclude` | Per-clone `.auto-task/` exclusion (never modifies repo `.gitignore`) |
+| `<git-common-dir>/info/exclude` | Per-clone `.auto-task/` exclusion — `.git/info/exclude` in a normal checkout, the shared common dir from any worktree (never modifies repo `.gitignore`) |

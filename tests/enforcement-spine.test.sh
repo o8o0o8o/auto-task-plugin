@@ -135,6 +135,52 @@ echo '{bad json' > "$ST"
 expect "Malformed STATE.json: stop ALLOWS (no soft-lock)" "$(stop)" "allow"
 printf '%s' "$COMMIT" | CLAUDE_PROJECT_DIR="$T" bash "$GATE" >/dev/null 2>&1; expect "Malformed STATE.json: commit BLOCKED (fail closed)" "$?" "2"
 
+echo "================ Worktree / subdir / nested-repo resolution ================"
+# Each assertion sets its OWN state and discriminates the fix from a revert — no
+# reliance on state leaked from earlier blocks. CWD and CLAUDE_PROJECT_DIR are
+# controlled per case.
+git checkout -q feat/widget
+# Give MAIN a VALID ungated mid-pipeline state (used by the nested-repo case below) —
+# set explicitly, not the malformed leftover from the Fail-open block above.
+cat > "$ST" <<EOF
+{"approved":true,"phase":"execute","expected_next_action":"auto-continue","effort":{"tier":"standard"},
+ "gates":{"code_review":{"passed":false},"gate_b":{"passed":false}}}
+EOF
+# Linked worktree on its own branch, with a nested subdirectory.
+WT="$T/wt"; git worktree add -q "$WT" -b wt-feature >/dev/null 2>&1
+SUB="$WT/pkg/sub"; mkdir -p "$SUB"
+SDW="$WT/.auto-task/wt-feature"; mkdir -p "$SDW"
+# Helpers: run a hook from an explicit CWD ($1) with CLAUDE_PROJECT_DIR UNSET.
+gateAt(){ printf '%s' "$COMMIT" | ( cd "$1" && unset CLAUDE_PROJECT_DIR && bash "$GATE" ) >/dev/null 2>&1; echo $?; }
+stopAt(){ local o; o="$( cd "$1" && unset CLAUDE_PROJECT_DIR && bash "$STOP" 2>/dev/null )"; [ -z "$o" ] && { echo allow; return; }; printf '%s' "$o" | jq -r '.decision // "allow"' 2>/dev/null; }
+# (1) WT-subdir-gate: ungated worktree state; CWD = worktree SUBDIR; CPD unset -> BLOCK.
+#     Discriminates the fix: old `$PWD`=subdir resolution finds no state and fail-opens (0);
+#     resolving the toplevel of the base finds the worktree root and blocks (2).
+cat > "$SDW/STATE.json" <<EOF
+{"approved":true,"phase":"execute","expected_next_action":"auto-continue","effort":{"tier":"standard"},
+ "gates":{"code_review":{"passed":false},"gate_b":{"passed":false}}}
+EOF
+expect "WT-subdir-gate: ungated commit BLOCKED from worktree subdir (CPD unset)" "$(gateAt "$SUB")" "2"
+# (2) WT-subdir-stall: same location + state, mid-pipeline turn-end -> BLOCK.
+expect "WT-subdir-stall: mid-pipeline turn-end BLOCKED from worktree subdir" "$(stopAt "$SUB")" "block"
+# (3) WT-subdir-allow (sanity control): gates-met worktree state (LIGHT, no base/sha so the
+#     staleness check is skipped); CWD = worktree subdir; CPD unset -> ALLOWED.
+cat > "$SDW/STATE.json" <<EOF
+{"approved":true,"phase":"review","expected_next_action":"auto-continue","effort":{"tier":"light"},
+ "gates":{"code_review":{"passed":true,"tool":"skill:auto-task-code-review","clean_pass_after_last_fix":true},
+          "gate_b":{"passed":false,"skipped_reason":"tier=light"}}}
+EOF
+expect "WT-subdir-allow: gates-met commit ALLOWED from worktree subdir (CPD unset)" "$(gateAt "$SUB")" "0"
+# (4) WT-nested-gate: a nested git repo embedded under MAIN; commit from inside it with
+#     CLAUDE_PROJECT_DIR=main(=$T). Resolution must HONOR CPD ($T, ungated) and BLOCK — not
+#     retarget the nested repo and fail open. Discriminates against show-toplevel-from-CWD,
+#     which would resolve the nested repo, find no state, and allow (0) — the Gate B finding.
+NESTED="$T/vendor/embedded"; mkdir -p "$NESTED"
+( cd "$NESTED" && git init -q && git config user.email t@t.t && git config user.name t && printf 'y\n' > g && git add g && git commit -qm n ) >/dev/null 2>&1
+gateNested(){ printf '%s' "$COMMIT" | ( cd "$NESTED" && CLAUDE_PROJECT_DIR="$T" bash "$GATE" ) >/dev/null 2>&1; echo $?; }
+expect "WT-nested-gate: commit from nested repo honors CLAUDE_PROJECT_DIR, BLOCKED (no fail-open)" "$(gateNested)" "2"
+git worktree remove --force "$WT" >/dev/null 2>&1 || true
+
 echo
 echo "================ SUMMARY: $PASS passed, $FAIL failed ================"
 [ "$FAIL" -eq 0 ]

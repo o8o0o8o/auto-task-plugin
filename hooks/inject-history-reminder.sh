@@ -12,7 +12,16 @@
 
 set -uo pipefail
 
-project_dir="${CLAUDE_PROJECT_DIR:-$PWD}"
+# Resolve the project root that owns .auto-task/<branch>/. Start from
+# CLAUDE_PROJECT_DIR (the session's project root) or $PWD, then resolve that to
+# its git worktree root, so the reminder fires from a subdirectory too. Resolving
+# the toplevel OF the base (not from raw CWD) keeps an explicitly-set
+# CLAUDE_PROJECT_DIR authoritative — being inside a nested/embedded repo or
+# submodule does not silently retarget a different repo. Fall back to base when
+# it is not inside a working tree (no repo / bare / inside .git/).
+project_dir_base="${CLAUDE_PROJECT_DIR:-$PWD}"
+project_dir="$(cd "$project_dir_base" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)"
+[ -n "$project_dir" ] || project_dir="$project_dir_base"
 branch="$(cd "$project_dir" && git branch --show-current 2>/dev/null || true)"
 [ -n "$branch" ] || exit 0
 
