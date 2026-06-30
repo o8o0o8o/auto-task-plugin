@@ -69,6 +69,8 @@ flowchart TD
 
 ---
 
+On a NEW run, before branch setup, Phase 1 also runs a best-effort **per-run version check** (`check-version.sh --plain`, throttle bypassed, bounded, fail-open) and asks once if a newer plugin version is published — separate from, and not affecting, the cached SessionStart update notice (the per-run check never writes the SessionStart throttle stamp). Skipped on resume.
+
 ## Phases at a glance
 
 | Phase | Tool used | Commits? | Exit condition | Failure routing |

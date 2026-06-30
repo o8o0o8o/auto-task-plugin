@@ -17,10 +17,19 @@
 #   AUTO_TASK_VERSION_URL     override the fetch URL (point at an unreachable
 #                             host to exercise the real curl-failure branch)
 #   AUTO_TASK_SKIP_THROTTLE=1 bypass the 24h cache
+#   --plain | AUTO_TASK_OUTPUT=plain  emit the bare one-line notice instead of the
+#                             SessionStart JSON (used by the per-run Phase-1 check)
 
 set -u
 
 emit_silent() { exit 0; }
+
+# Output mode: default = SessionStart JSON; plain = the bare one-line notice.
+# Parsed with safe expansion (script runs under set -u; the default SessionStart
+# invocation passes zero positional args, so a bare $1 would fault).
+PLAIN=0
+case "${1:-}" in --plain) PLAIN=1 ;; esac
+[ "${AUTO_TASK_OUTPUT:-}" = "plain" ] && PLAIN=1
 
 # --- version compare (pure bash; no dependency on `sort -V`) -----------------
 # _ver_parse "X.Y.Z[-pre][+build]" -> echoes "MAJOR MINOR PATCH PREFLAG"
@@ -98,8 +107,11 @@ if [ -z "$REMOTE_V" ]; then
   REMOTE_V="$(printf '%s' "$body" | jq -r '.version // empty' 2>/dev/null)"
 fi
 
-# record the attempt (success OR failure) so we don't re-hit the network for 24h
-if [ -n "$STAMP" ] && [ "$now" -gt 0 ]; then
+# record the attempt (success OR failure) so we don't re-hit the network for 24h.
+# Skip the stamp write when the throttle is bypassed: the per-run Phase-1 check runs
+# with AUTO_TASK_SKIP_THROTTLE=1, and it must NOT overwrite the SessionStart throttle
+# stamp — doing so would suppress the next SessionStart notice for up to 24h.
+if [ "${AUTO_TASK_SKIP_THROTTLE:-}" != "1" ] && [ -n "$STAMP" ] && [ "$now" -gt 0 ]; then
   mkdir -p "$DATA_DIR" 2>/dev/null && printf '%s\n' "$now" > "$STAMP" 2>/dev/null || true
 fi
 
@@ -111,6 +123,11 @@ case "$REMOTE_V" in *[!0-9.a-zA-Z+-]*) emit_silent ;; esac   # not version-shape
 _ver_newer "$REMOTE_V" "$LOCAL_V" || emit_silent
 
 msg="auto-task $REMOTE_V is available (you have $LOCAL_V). Update with: /plugin update auto-task@auto-task-plugin"
+# Plain mode (the per-run Phase-1 check): emit just the one-line notice, no JSON.
+if [ "$PLAIN" = "1" ]; then
+  printf '%s\n' "$msg"
+  exit 0
+fi
 ctx="A newer version of the auto-task plugin is available upstream: $REMOTE_V (installed: $LOCAL_V). If relevant, suggest the user run /plugin update auto-task@auto-task-plugin."
 jq -cn --arg m "$msg" --arg c "$ctx" \
   '{systemMessage:$m, hookSpecificOutput:{hookEventName:"SessionStart", additionalContext:$c}}' 2>/dev/null \

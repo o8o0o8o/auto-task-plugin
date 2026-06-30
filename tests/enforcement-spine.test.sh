@@ -181,6 +181,25 @@ gateNested(){ printf '%s' "$COMMIT" | ( cd "$NESTED" && CLAUDE_PROJECT_DIR="$T" 
 expect "WT-nested-gate: commit from nested repo honors CLAUDE_PROJECT_DIR, BLOCKED (no fail-open)" "$(gateNested)" "2"
 git worktree remove --force "$WT" >/dev/null 2>&1 || true
 
+echo "================ check-version.sh --plain (per-run version check) ================"
+CV="$HOOKS/check-version.sh"
+PR="$(mktemp -d)"; mkdir -p "$PR/.claude-plugin" "$PR/data"; printf '{"version":"0.1.6"}' > "$PR/.claude-plugin/plugin.json"
+# cvr <remote-version> [plain]: run check-version.sh against a known local 0.1.6, throttle bypassed.
+# Env is set INSIDE the function body (not as a prefix to the function) so it reliably reaches the
+# child bash; the optional second arg selects plain mode without clobbering the no-arg default path.
+cvr(){ CLAUDE_PLUGIN_ROOT="$PR" CLAUDE_PLUGIN_DATA="$PR/data" AUTO_TASK_SKIP_THROTTLE=1 AUTO_TASK_REMOTE_VERSION="$1" bash "$CV" ${2:+--plain}; }
+o="$(cvr 9.9.9 plain)"; m=other; case "$o" in *'is available'*) m=plain ;; esac; case "$o" in *hookSpecificOutput*|*'{'*) m=json ;; esac
+expect "CV-plain-behind: bare line, not JSON"               "$m" "plain"
+expect "CV-plain-current: silent"                           "$(cvr 0.1.6 plain)" ""
+expect "CV-plain-ahead: silent"                             "$(cvr 0.0.1 plain)" ""
+ou="$(CLAUDE_PLUGIN_ROOT="$PR" CLAUDE_PLUGIN_DATA="$PR/data" AUTO_TASK_SKIP_THROTTLE=1 AUTO_TASK_VERSION_URL=http://127.0.0.1:9/x bash "$CV" --plain)"; eu=$?
+expect "CV-plain-unreachable: silent + exit 0"              "$ou:$eu" ":0"
+od="$(cvr 9.9.9)"; d=other; case "$od" in *hookSpecificOutput*) d=json ;; esac
+expect "CV-default-json: SessionStart JSON intact"          "$d" "json"
+rm -f "$PR/data/.last-version-check"; cvr 9.9.9 plain >/dev/null; [ -f "$PR/data/.last-version-check" ] && s=present || s=absent
+expect "CV-stamp-untouched: skip-throttle writes no stamp"  "$s" "absent"
+rm -rf "$PR"
+
 echo
 echo "================ SUMMARY: $PASS passed, $FAIL failed ================"
 [ "$FAIL" -eq 0 ]
