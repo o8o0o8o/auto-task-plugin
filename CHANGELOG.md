@@ -2,6 +2,12 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.7]
+
+### Added
+
+- **Pre-run version check.** Before each NEW `/auto-task` run, Phase 1 now does a fresh, best-effort version check — the SessionStart `check-version.sh` gains a `--plain` output mode (a bare one-line notice instead of the SessionStart JSON), and the Phase-1 step runs it with the 24h throttle bypassed and, if the installed plugin is strictly behind upstream, **asks once** whether to update first or proceed. Fully fail-open (no `${CLAUDE_PLUGIN_ROOT}` / script missing / offline / no jq / current-or-ahead → silent proceed); bounded by the script's existing `--connect-timeout 2 -m 5`; **skipped on resume** (`/auto-task` with no args, where swapping the plugin under a mid-flight run would be wrong). The per-run check does **not** write the SessionStart throttle stamp (so it can't suppress the next SessionStart notice), and the default SessionStart JSON output is unchanged. `tests/enforcement-spine.test.sh` grows 32 → 38 (six `CV-*` assertions covering plain-vs-JSON, silent-when-current/ahead/unreachable, and stamp-untouched); README and `ARCHITECTURE.md` document it.
+
 ## [0.1.6]
 
 Worktree safety: `/auto-task` is now safe to run inside a linked git worktree, so several runs can execute in parallel (one worktree per run). Also folds in the unreleased `DRIFT CHECKPOINT` rename.
