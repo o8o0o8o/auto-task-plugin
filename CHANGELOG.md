@@ -2,6 +2,27 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.6]
+
+Worktree safety: `/auto-task` is now safe to run inside a linked git worktree, so several runs can execute in parallel (one worktree per run). Also folds in the unreleased `DRIFT CHECKPOINT` rename.
+
+### Fixed
+
+- **`.auto-task/` exclusion now works in a linked worktree.** Phase-1 branch setup resolved the literal `.git/info/exclude`, which errors in a worktree (there `.git` is a *file*, not a directory), so `.auto-task/` was never excluded and could leak into `git status`. It now resolves `$(git rev-parse --git-common-dir)/info/exclude` — `.git/info/exclude` in a normal checkout, the shared common-dir exclude from any worktree (one write covers every worktree of the clone). Exclude prose aligned across `skills/auto-task/SKILL.md`, `ARCHITECTURE.md`, `auto-task-plan`, `auto-task-commit`, and `README`.
+- **Gate / Stop / history hooks resolve the run's worktree, not a stale dir.** `enforce-gates.sh`, `prevent-mid-protocol-stall.sh`, and `inject-history-reminder.sh` now resolve `project_dir` as the git worktree root **of** `${CLAUDE_PROJECT_DIR:-$PWD}` (toplevel-of-base), so a commit / turn-end from a subdirectory still finds `.auto-task/<branch>/` at the top — closing a latent fail-open — while keeping an explicitly-set `CLAUDE_PROJECT_DIR` authoritative (a commit from a nested/embedded repo or submodule is not silently retargeted). Byte-identical to the old resolution on the normal-checkout happy path; only the subdir-with-`CLAUDE_PROJECT_DIR`-unset case changes (was fail-open, now enforces).
+
+### Changed
+
+- **`COMMIT CHECKPOINT` → `DRIFT CHECKPOINT`.** The `auto-task-implement` checkpoint markers were renamed to reflect that they are drift-check points, not commit points (only Phase 5 commits).
+
+### Docs
+
+- **"Running multiple runs in parallel"** added to `README` and `ARCHITECTURE.md`: one git worktree per run; state and gate/Stop enforcement are isolated per worktree.
+
+### Tests
+
+- `tests/enforcement-spine.test.sh` expanded 28 → 32 assertions — per-worktree / subdirectory / nested-repo state resolution for the gate and Stop hooks, each proven to discriminate the fix from a revert.
+
 ## [0.1.5]
 
 Findings from a full read-through evaluation of the pipeline. The enforcement spine (hooks) was already covered by the test suite; these are defects in the model-facing prose that the mechanical tests could not catch.
@@ -115,4 +136,4 @@ Initial extraction of the `auto-task` skill from `~/.claude/skills/auto-task/` i
 - `task-execution-verifier` agent has a real prompt but has not yet been exercised end-to-end inside a real auto-task run — treat Gate A/B as functional but not battle-tested.
 - Plugin manifest field names not verified against the current spec (the canonical install path is `install.sh`, not `/plugin add`, so the manifest is currently informational). _Resolved in 0.1.1 — the manifest is now spec-valid and the marketplace install is the primary documented path._
 - Bundled sibling skills now share the orchestrator's `.auto-task/<branch>/` working-directory convention, but their richer read-before-review behaviour (reading CONTEXT.md / TRACE.md, appending trace entries) still lives mostly in the orchestrator and the verifier agent rather than in each sibling. _Resolved in 0.1.5 — the three audit siblings (`auto-task-code-review`, `auto-task-verify`, `auto-task-fix`) now implement the contract directly._
-- `enforce-gates.sh` path resolution: assumes `CLAUDE_PROJECT_DIR` is set to the repo root (or falls back to `$PWD`). Verify this environment variable is provided by the Claude Code hook context.
+- `enforce-gates.sh` path resolution: assumes `CLAUDE_PROJECT_DIR` is set to the repo root (or falls back to `$PWD`). Verify this environment variable is provided by the Claude Code hook context. _Resolved in 0.1.6 — all three hooks now resolve `project_dir` as the git worktree root of `${CLAUDE_PROJECT_DIR:-$PWD}`, robust to an unset/misset `CLAUDE_PROJECT_DIR`, subdirectories, and linked worktrees._
