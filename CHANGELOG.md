@@ -2,7 +2,7 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.1.8]
 
 Automatic worktree isolation for parallel runs + a checkout-drift guard. Same-repo parallel `/auto-task` is now fully automatic instead of requiring you to hand-create a worktree first.
 
