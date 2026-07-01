@@ -67,7 +67,40 @@ if [ -z "$branch" ]; then
   exit 0  # detached HEAD or not a repo — let git handle it
 fi
 state="$project_dir/.auto-task/$branch/STATE.json"
-[ -f "$state" ] || exit 0
+if [ ! -f "$state" ]; then
+  # No state for the CURRENT branch. Normally this means no auto-task run is
+  # active here, so the commit is none of our business — allow it. BUT guard the
+  # checkout-drift case: if the working tree moved off an in-place run's branch
+  # (an active run exists for ANOTHER branch, not this one), committing here
+  # would land on the wrong branch and bypass the gates of that run. This closes
+  # what was previously a silent fail-open (the old `[ -f "$state" ] || exit 0`).
+  # Requires jq to read states; without jq we cannot PROVE drift, so we do NOT
+  # manufacture a block (the current-branch fail-closed rules below are
+  # unaffected). Scope is the current working tree only — .auto-task/ is
+  # per-worktree, so a parallel run in another worktree can never trigger this.
+  autotask_dir="$project_dir/.auto-task"
+  if [ "$has_jq" -eq 1 ] && [ -d "$autotask_dir" ]; then
+    cur_active=0; others=""
+    while IFS= read -r sf; do
+      [ -n "$sf" ] || continue
+      [ -f "$sf" ] || continue
+      jq empty "$sf" 2>/dev/null || continue
+      [ "$(jq -r '.approved // false' "$sf" 2>/dev/null || echo false)" = "true" ] || continue
+      [ "$(jq -r '.phase // ""' "$sf" 2>/dev/null || echo "")" = "done" ] && continue
+      rel="${sf#"$autotask_dir"/}"; br="${rel%/STATE.json}"
+      [ "$br" != "$rel" ] || continue   # stray top-level STATE.json (no <branch>/ segment)
+      [ -n "$br" ] || continue
+      if [ "$br" = "$branch" ]; then cur_active=1; continue; fi
+      case " $others " in *" $br "*) ;; *) others="$others $br" ;; esac
+    done <<< "$(find "$autotask_dir" -name STATE.json 2>/dev/null)"
+    if [ "$cur_active" -eq 0 ] && [ -n "$others" ]; then
+      drifted="${others# }"
+      printf 'Blocked by auto-task-plugin: the checkout moved underneath an active auto-task run.\nAn active run exists on branch(es) [%s], but the working tree is on "%s" (no run state here).\nCommitting now would land on the wrong branch and bypass the gates of that run.\nSwitch back (git switch %s) and resume, OR remove .auto-task/%s/ if that run is abandoned — then retry the commit.\n' "$drifted" "$branch" "$drifted" "$drifted" >&2
+      exit 2
+    fi
+  fi
+  exit 0
+fi
 
 # From here: a commit is being attempted AND an auto-task state file exists for
 # this branch. We MUST be able to read it to decide. Fail closed otherwise.

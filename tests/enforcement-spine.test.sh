@@ -181,6 +181,53 @@ gateNested(){ printf '%s' "$COMMIT" | ( cd "$NESTED" && CLAUDE_PROJECT_DIR="$T" 
 expect "WT-nested-gate: commit from nested repo honors CLAUDE_PROJECT_DIR, BLOCKED (no fail-open)" "$(gateNested)" "2"
 git worktree remove --force "$WT" >/dev/null 2>&1 || true
 
+echo "================ Checkout-drift guard (enforce-gates block + warn hook) ================"
+# Runs in its OWN isolated checkout ($DT) — NOT the shared $T, whose .auto-task/
+# holds sibling active STATE dirs (feat/widget etc.) that would otherwise register
+# as spurious drift for the silent-case assertions.
+WARN="$HOOKS/warn-checkout-drift.sh"
+DT="$(mktemp -d)"
+(
+  cd "$DT"
+  git init -q; git config user.email t@t.t; git config user.name t
+  git checkout -q -b feat/active
+  printf 'x\n' > a.js; git add a.js; git commit -qm init
+  git checkout -q -b chore/unrelated   # the "drifted" branch: no state of its own
+  git checkout -q feat/active
+  mkdir -p .auto-task/feat/active
+  # feat/active carries an ACTIVE, gates-MET (LIGHT, no base/sha → staleness skipped)
+  # run: "active" so it triggers drift from another branch, "gates-met" so the
+  # no-drift control asserts an ALLOW (0), not a normal-gate block.
+  cat > .auto-task/feat/active/STATE.json <<EOF
+{"approved":true,"phase":"review","expected_next_action":"auto-continue","branch":"feat/active","effort":{"tier":"light"},
+ "gates":{"code_review":{"passed":true,"tool":"skill:auto-task-code-review","clean_pass_after_last_fix":true},
+          "gate_b":{"passed":false,"skipped_reason":"tier=light"}}}
+EOF
+) >/dev/null 2>&1
+# git shim with NO jq, so the jq-absent path is exercised while git still works.
+JQLESS="$(mktemp -d)"; ln -s "$(command -v git)" "$JQLESS/git" 2>/dev/null || true
+dgate(){ printf '%s' "$COMMIT" | ( cd "$DT" && CLAUDE_PROJECT_DIR="$DT" bash "$GATE" ) >/dev/null 2>&1; echo $?; }
+dwarn(){ local o ec; o="$( cd "$DT" && CLAUDE_PROJECT_DIR="$DT" bash "$WARN" 2>&1 )"; ec=$?; if [ -n "$o" ]; then printf 'warn:%s\n' "$ec"; else printf 'silent:%s\n' "$ec"; fi; }
+dwarnNoJq(){ local o ec; o="$( cd "$DT" && PATH="$JQLESS" CLAUDE_PROJECT_DIR="$DT" /bin/bash "$WARN" 2>&1 )"; ec=$?; if [ -n "$o" ]; then printf 'warn:%s\n' "$ec"; else printf 'silent:%s\n' "$ec"; fi; }
+
+git -C "$DT" checkout -q chore/unrelated   # drifted: on a branch with no run, feat/active active
+expect "Drift: commit BLOCKED on drifted checkout"        "$(dgate)"      "2"
+expect "Drift: warn hook fires, exit 0"                   "$(dwarn)"      "warn:0"
+expect "Drift: warn SILENT + exit 0 when jq absent"       "$(dwarnNoJq)"  "silent:0"
+git -C "$DT" checkout -q feat/active        # current branch owns the active (gates-met) run
+expect "No-drift: gates-met commit ALLOWED (not drift-blocked)" "$(dgate)" "0"
+expect "No-drift: warn SILENT on the active branch"       "$(dwarn)"      "silent:0"
+# Malformed sibling state must not crash the warn hook (it is skipped → silent).
+echo '{bad json' > "$DT/.auto-task/feat/active/STATE.json"
+git -C "$DT" checkout -q chore/unrelated
+expect "Malformed sibling state: warn exits 0 (no crash)" "$(dwarn)"      "silent:0"
+# A repo with no .auto-task/ at all → warn stays silent (non-auto-task session).
+DT2="$(mktemp -d)"
+( cd "$DT2" && git init -q && git config user.email t@t.t && git config user.name t && git checkout -q -b solo && printf 'y\n' > f && git add f && git commit -qm i ) >/dev/null 2>&1
+dwarn2(){ local o ec; o="$( cd "$DT2" && CLAUDE_PROJECT_DIR="$DT2" bash "$WARN" 2>&1 )"; ec=$?; if [ -n "$o" ]; then printf 'warn:%s\n' "$ec"; else printf 'silent:%s\n' "$ec"; fi; }
+expect "No .auto-task/: warn SILENT (non-auto-task repo)"  "$(dwarn2)"     "silent:0"
+rm -rf "$DT" "$DT2" "$JQLESS"
+
 echo "================ check-version.sh --plain (per-run version check) ================"
 CV="$HOOKS/check-version.sh"
 PR="$(mktemp -d)"; mkdir -p "$PR/.claude-plugin" "$PR/data"; printf '{"version":"0.1.6"}' > "$PR/.claude-plugin/plugin.json"
