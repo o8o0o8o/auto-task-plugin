@@ -9,7 +9,8 @@ End-to-end autonomous task workflow for Claude Code. Takes a task description fr
 - **`task-execution-verifier` agent** — read-only verifier spawned at Gate A (completeness) and Gate B (adversarial). Fresh context per spawn.
 - **Four hooks**, all wired automatically by the plugin install (`hooks/hooks.json`) —
   - `block-ai-attribution.sh` (PreToolUse on Bash): refuses commits and PR bodies containing `Co-Authored-By: Claude`, `🤖 Generated`, etc.
-  - `enforce-gates.sh` (PreToolUse on Bash): blocks `git commit` during an auto-task run unless `gates.code_review.passed`, `gates.code_review.tool === "skill:auto-task-code-review"`, `gates.code_review.clean_pass_after_last_fix`, and Gate B's gate (or skip reason) are all satisfied. It also enforces **review staleness** — if `git diff <base>` no longer hashes to the recorded `gates.code_review.reviewed_diff_sha`, code changed after the review went clean and the commit is blocked until a re-review. Fails closed: with `jq` missing or `STATE.json` unparseable during an active run, it blocks rather than letting the commit through.
+  - `enforce-gates.sh` (PreToolUse on Bash): blocks `git commit` during an auto-task run unless `gates.code_review.passed`, `gates.code_review.tool === "skill:auto-task-code-review"`, `gates.code_review.clean_pass_after_last_fix`, and Gate B's gate (or skip reason) are all satisfied. It also enforces **review staleness** — if `git diff <base>` no longer hashes to the recorded `gates.code_review.reviewed_diff_sha`, code changed after the review went clean and the commit is blocked until a re-review. It also carries the **checkout-drift block** — a `git commit` while the working tree sits on a branch other than an active in-place run's branch is blocked (previously a silent fail-open). Fails closed: with `jq` missing or `STATE.json` unparseable during an active run, it blocks rather than letting the commit through.
+  - `warn-checkout-drift.sh` (PreToolUse on Bash): informational, NEVER blocks. Warns on every command when an active run exists on a branch other than the one checked out (the proactive half of the checkout-drift guard; the enforce-gates block is the mechanical half). Silent and near-free in non-auto-task repos.
   - `prevent-mid-protocol-stall.sh` (Stop event): blocks turn-ends mid-pipeline by reading `expected_next_action` from STATE.json. The antidote to sub-skill output looking completion-shaped.
   - `check-version.sh` (SessionStart): best-effort update notice. Once per 24h it compares the installed version against the published `plugin.json` on GitHub and, if you're behind, prints a one-line reminder to run `/plugin update auto-task@auto-task-plugin`. Fails open and silent when current, offline, or unparseable — this cached SessionStart notice never blocks or slows a session. **Per-run version check:** on top of that notice, `/auto-task` Phase 1 runs a fresh **per-run version check** (the same script via `--plain`, throttle bypassed) at the start of every NEW run and, if you're behind, asks once whether to update first or proceed. It is separately bounded (`--connect-timeout 2 -m 5`) and fully fail-open — it never blocks the run and never touches the SessionStart throttle stamp. Skipped on resume.
 - **`inject-history-reminder.sh`** (optional, `UserPromptSubmit`): tells non-bundled tools that an `.auto-task/<branch>/` history folder exists for the current branch. **Off by default** (token overhead on every prompt); opt in via the snippet in `settings-fragment.json`.
@@ -24,7 +25,7 @@ This repo is its own plugin marketplace. From inside Claude Code:
 /plugin install auto-task@auto-task-plugin
 ```
 
-That copies the plugin into your plugin cache and **auto-wires everything** — the seven skills, the `task-execution-verifier` agent, and all four hooks (`hooks/hooks.json`). No `settings.json` editing, no symlinks, no `install.sh`.
+That copies the plugin into your plugin cache and **auto-wires everything** — the seven skills, the `task-execution-verifier` agent, and all five core hooks (`hooks/hooks.json`). No `settings.json` editing, no symlinks, no `install.sh`.
 
 Plugin skills are namespaced under the plugin name, so you invoke the orchestrator as:
 
@@ -100,14 +101,19 @@ After you type `approved` / `proceed` / `yes`, the pipeline runs unattended thro
 
 ### Running multiple runs in parallel
 
-Each run is isolated by **branch** and keeps all state under `.auto-task/<branch>/`, so the clean way to run several `/auto-task` runs at once is **one git worktree per run** — not two runs in the same checkout (they would fight over the branch and working tree).
+Each run is isolated by **branch** and keeps all state under `.auto-task/<branch>/`. Parallel runs in the same repo are now **automatic** — no manual setup:
 
-```sh
-git worktree add ../auto-task-feat-x -b feat/x   # one worktree per task
-cd ../auto-task-feat-x && claude                  # then run /auto-task here
-```
+- **Start from `main`/`master` and it just works.** Phase 1 gives each new-branch run its OWN git worktree (`git worktree add .claude/worktrees/<type>-<slug> -b <branch> HEAD`, then it relocates the session in via the `EnterWorktree` tool). Your original checkout is left untouched and free for other work, and a second `/auto-task` started elsewhere gets its own worktree too — git forbids two worktrees on one branch, so they can never collide. The worktree is kept on disk after the run; prune it with `git worktree remove .claude/worktrees/<type>-<slug>` when done.
+- **Manual worktrees still work** if you prefer to set them up yourself:
 
-Each worktree has its own working tree, branch, and `.auto-task/<branch>/` history, and the gate + Stop hooks resolve state per-worktree (via `git rev-parse --show-toplevel`), so concurrent runs never interfere — even though they share one clone's object store and common-dir exclude file. git itself forbids two worktrees on the same branch, so branch collisions can't happen. Merge or open a PR from each worktree independently.
+  ```sh
+  git worktree add ../auto-task-feat-x -b feat/x   # one worktree per task
+  cd ../auto-task-feat-x && claude                  # then run /auto-task here
+  ```
+
+- **In-place runs are guarded.** If you launch a run on a prepared feature branch (not `main`/`master`), it runs in the current checkout — and the **checkout-drift guard** catches the case where that checkout is switched off the run's branch from another terminal: `warn-checkout-drift.sh` warns on every command and `enforce-gates.sh` hard-blocks any commit until you switch back (or clear an abandoned run). Previously this failed open silently.
+
+Each worktree has its own working tree, branch, and `.auto-task/<branch>/` history, and the gate + Stop hooks resolve state per-worktree (via `git rev-parse --show-toplevel`), so concurrent runs never interfere — even though they share one clone's object store and common-dir exclude file. Merge or open a PR from each worktree independently.
 
 ### Surfacing protocol
 
@@ -165,4 +171,4 @@ MIT — see `LICENSE`.
 
 ## Status
 
-**v0.1.7 — pre-release.** The install path has been verified in a throwaway directory. The enforcement spine (state-machine ↔ hooks) has an automated integration test — `tests/enforcement-spine.test.sh`, 38 assertions covering the full STANDARD + LIGHT lifecycle, gate ordering, review-staleness (including under hostile git config), raw-mode commit detection, the Stop-hook stall-breaker, the AI-attribution block, the fail-open/fail-closed edges, per-worktree / subdirectory / nested-repo state resolution, and the `check-version.sh --plain` per-run-check behavior. What is **not** yet exercised end-to-end is the *model-follows-the-prose* path: the `task-execution-verifier` agent (Gate A/B) and the orchestrator's phase-driving have a real protocol but have not been run inside a live `/auto-task` against a real task — treat those as functional but not yet battle-tested. File issues on GitHub.
+**v0.1.8 — pre-release.** The install path has been verified in a throwaway directory. The enforcement spine (state-machine ↔ hooks) has an automated integration test — `tests/enforcement-spine.test.sh`, 45 assertions covering the full STANDARD + LIGHT lifecycle, gate ordering, review-staleness (including under hostile git config), raw-mode commit detection, the Stop-hook stall-breaker, the AI-attribution block, the fail-open/fail-closed edges, per-worktree / subdirectory / nested-repo state resolution, the checkout-drift block + warning (`enforce-gates.sh` + `warn-checkout-drift.sh`), and the `check-version.sh --plain` per-run-check behavior. What is **not** yet exercised end-to-end is the *model-follows-the-prose* path: the `task-execution-verifier` agent (Gate A/B) and the orchestrator's phase-driving have a real protocol but have not been run inside a live `/auto-task` against a real task — treat those as functional but not yet battle-tested. File issues on GitHub.

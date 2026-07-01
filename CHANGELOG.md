@@ -2,6 +2,27 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.8]
+
+Automatic worktree isolation for parallel runs + a checkout-drift guard. Same-repo parallel `/auto-task` is now fully automatic instead of requiring you to hand-create a worktree first.
+
+### Added
+
+- **Automatic worktree isolation (new-branch runs).** Phase 1 branch setup no longer `git switch -c`s the shared checkout when you start on `main`/`master`. It now creates the run its own git worktree — `git worktree add .claude/worktrees/<type>-<slug> -b <branch> HEAD` (base pinned to the local HEAD so the `base = git rev-parse HEAD` contract holds regardless of the user's `worktree.baseRef` git config) — and relocates the session into it with the harness `EnterWorktree` tool. Parallel runs in one repo are now safe out of the box: each new-branch run gets its own working tree, the original checkout stays free, and git forbids two worktrees on one branch so they can't collide. If the current branch is anything other than `main`/`master`, the prepared checkout is respected and the run stays in place (auto-worktree only on the new-branch path). Ordered fallback with orphan-cleanup when `EnterWorktree`/`git worktree add` is unavailable or fails: undo any half-created worktree, then `git switch -c` in place. The auto-created worktree is KEPT on disk after the run (Phase 5 never removes it); prune manually with `git worktree remove`. Also excludes `.claude/worktrees/` via the common-dir exclude so an in-repo worktree never shows as untracked in — or is staged from — the parent checkout.
+- **Checkout-drift guard (protects in-place runs).** New `warn-checkout-drift.sh` (PreToolUse/Bash, informational, NEVER blocks) warns on every command when an active run exists on a branch other than the one checked out; and `enforce-gates.sh` gains a fail-closed **drift block** that stops a `git commit` in that same situation. Together they close the previous silent fail-open where the working tree was switched off an in-place run's branch (e.g. from another terminal): the branch-keyed hooks found no state for the new branch and let an ungated commit land on the wrong branch. Both are scoped to the current working tree (`.auto-task/` is per-worktree), so a parallel run in another worktree can never trigger a false positive; the warn hook stays silent and near-free in non-auto-task repos and when `jq` is absent.
+
+### Changed
+
+- **Hook wiring.** `warn-checkout-drift.sh` is registered as a third `PreToolUse`/Bash hook in `hooks/hooks.json`, `install.sh`, and `settings-fragment.json` (the plugin now wires five core hooks).
+
+### Docs
+
+- `skills/auto-task/SKILL.md` (Phase 1 branch setup + a checkout-drift-guard/worktree-lifecycle note), `ARCHITECTURE.md` (Phase 1 diagram box, new Hook 3, drift-block note on Hook 2, and the "Parallel runs" section rewritten from *one-worktree-per-run-you-set-up* to *automatic*), and `README.md` (hook list, five-core-hooks count, "Running multiple runs in parallel") all updated.
+
+### Tests
+
+- `tests/enforcement-spine.test.sh` expanded 38 → 45 assertions — seven new drift assertions in an isolated fixture: the enforce-gates drift block, a no-drift control, and the warn hook's behavior on drift / matching-branch / jq-absent / malformed-state / no-`.auto-task/` cases.
+
 ## [0.1.7]
 
 ### Added

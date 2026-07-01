@@ -10,7 +10,7 @@ This document is a map of the moving parts: the pipeline phases, the artifacts o
 
 ```mermaid
 flowchart TD
-    Start([/auto-task &lt;description&gt;]) --> P1Setup[Phase 1 — Branch setup<br/>git switch -c feat|fix|chore/&lt;slug&gt;<br/>append .auto-task/ to git-common-dir/info/exclude<br/>init .auto-task/&lt;branch&gt;/STATE.json]
+    Start([/auto-task &lt;description&gt;]) --> P1Setup[Phase 1 — Branch setup<br/>on main/master: git worktree add + EnterWorktree feat|fix|chore/&lt;slug&gt;<br/>else in place; fallback git switch -c<br/>append .auto-task/ to git-common-dir/info/exclude<br/>init .auto-task/&lt;branch&gt;/STATE.json]
     P1Setup --> Recon{Recon trigger?<br/>UI / runtime / external lib /<br/>Figma / Notion / etc.}
     Recon -- yes --> ReconDo[MCP recon, read-only<br/>any MCP if necessary<br/>playwright / context7 / figma /<br/>notion / drive / slack / ide / ...]
     Recon -- no --> Approach
@@ -203,7 +203,7 @@ These rules are enforced project-wide and the pipeline depends on them:
 
 ## Global settings — `~/.claude/settings.json`
 
-Two `PreToolUse` Bash hooks back the contract:
+Three `PreToolUse` Bash hooks back the contract:
 
 ### Hook 1 — block AI-attribution in commit messages
 
@@ -235,6 +235,12 @@ Then it reads the state file and **blocks the commit** unless ALL of:
 | `gates.gate_b.passed` OR `gates.gate_b.skipped_reason` | one of them set, unless `tier === "light"` |
 
 The first four bind to a single code-review pass; the `reviewed_diff_sha` row additionally proves the committed diff is the one that was reviewed — code edited after the gate went clean produces a hash mismatch and is blocked. The hook is the single point of mechanical enforcement that makes the **single-commit rule** real. Bypassing it (e.g., `--no-verify`) is forbidden by global rules.
+
+This hook also carries the **checkout-drift block**: when the command is a `git commit` but there is NO state for the current branch, it scans this working tree's `.auto-task/` and — if an active run (`approved && phase !== "done"`) exists on a *different* branch — blocks with `exit 2` (switch back or clear the abandoned run). This closes the previous silent fail-open where a checkout moved off an in-place run's branch and let an ungated commit land on the wrong branch. Requires `jq` (without it, drift cannot be proven, so no block is manufactured); scope is the current working tree only, so a parallel run in another worktree can never trigger it.
+
+### Hook 3 — warn on checkout drift
+
+The informational, never-blocking counterpart to the drift block above. Fires on every Bash command; when the current branch owns no active run yet another branch in this working tree does, it warns (via PreToolUse `additionalContext` + stderr) that the checkout drifted and that commits are hard-blocked until the user switches back or clears the abandoned run. Cheap early exits (not a repo / no `.auto-task/` dir / `jq` absent) keep non-auto-task sessions silent and near-free. Mirrors `inject-history-reminder`'s "informational, always `exit 0`" contract — only the enforce-gates commit gate blocks.
 
 ### Recommended permissions (NOT shipped by the plugin — opt-in)
 
@@ -288,15 +294,14 @@ State is saved. The user gets a short status message: **why stopped** + **what's
 
 ---
 
-## Parallel runs (one worktree per run)
+## Parallel runs (automatic worktree isolation)
 
 Run state is keyed by branch under `.auto-task/<branch>/`, and the gate + Stop hooks resolve their project dir from `git rev-parse --show-toplevel` (the working tree the command actually runs in), so each linked git worktree is a fully isolated run:
 
-- One worktree per run: `git worktree add ../wt-x -b feat/x`, then invoke `/auto-task` inside it.
-- State, gates, and the Stop-hook yield enforcement are per-worktree; concurrent runs never cross-talk, even though they share one clone's object store and common-dir exclude file.
-- git forbids two worktrees on the same branch, so branch collisions can't happen.
-
-Running two runs in the *same* checkout is unsupported — the second `git switch -c` would move the branch out from under the first.
+- **Automatic on new-branch runs.** When you start a run from `main`/`master`, Phase 1 no longer `git switch -c`s the shared checkout — it does `git worktree add .claude/worktrees/<type>-<slug> -b <branch> HEAD` and relocates the session in via the `EnterWorktree` tool (base pinned to the local HEAD, independent of `worktree.baseRef`). Nothing to set up: launch `/auto-task` from a clean `main` and parallel runs are safe out of the box. The worktree is kept on disk after the run (prune manually with `git worktree remove`).
+- **Manual is still fine.** `git worktree add ../wt-x -b feat/x` then invoke `/auto-task` inside it works exactly as before.
+- State, gates, and the Stop-hook yield enforcement are per-worktree; concurrent runs never cross-talk, even though they share one clone's object store and common-dir exclude file. git forbids two worktrees on the same branch, so branch collisions can't happen.
+- **In-place runs are guarded.** If you start a run on a prepared feature branch (anything other than `main`/`master`), it runs in the current checkout — and the checkout-drift guard (enforce-gates block + `warn-checkout-drift.sh`) catches the case where the working tree is switched off the run's branch underneath it, instead of silently failing open as before. Running two runs in the *same* checkout is still unsupported (they would fight over the one working tree) — but now it is caught and surfaced, not silent.
 
 ---
 
