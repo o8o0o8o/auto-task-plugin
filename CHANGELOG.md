@@ -2,6 +2,30 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.9]
+
+Worktree isolation is now **unconditional** and based on a **fresh default branch** — the last gap that let same-repo parallel runs interfere is closed, with zero user action.
+
+### Changed
+
+- **Every new-description run isolates, from any branch.** Previously auto-worktree only kicked in on `main`/`master` starts; a run launched on a prepared feature branch ran in the shared checkout and relied on the checkout-drift lock. Now Phase 1 forks a fresh `<type>/<slug>` branch for **every** run regardless of the current branch, and always in its own git worktree. Two parallel runs can no longer fight over one working tree.
+- **Runs fork from the repo's default branch (`main`/`master`), not the current HEAD.** The default branch is resolved (`git symbolic-ref refs/remotes/origin/HEAD`, else local `main`/`master`), best-effort fetched (`git fetch origin <default>`, fail-open when offline), and the worktree is created from that ref (`git worktree add … -b <branch> <default-ref>`). Every run therefore starts from a clean, current base and never inherits the current checkout's branch identity or uncommitted WIP. Consequence: a run started on a feature branch forks fresh from the default rather than continuing that branch — to base a run on specific work, prepare a worktree by hand and run `/auto-task` inside it.
+- **`marketplace.json` version corrected.** It was stuck at `0.1.5` while `plugin.json` advanced; both are now `0.1.9` and kept in lockstep.
+
+### Added
+
+- **Already-inside-a-worktree detection.** When the session is already in a linked worktree (`git rev-parse --git-dir` ≠ `--git-common-dir`), the run stays in place instead of nesting a second worktree — preserving the hand-made-worktree workflow.
+- **Collision-safe naming.** Branch name AND worktree directory are both disambiguated (`-2`/`-3`…) before creation, so two runs with the same-slugified description never collide back onto a shared branch/checkout.
+- **Resume never forks.** A resume (`/auto-task` no args) re-enters its existing worktree keyed by `state.branch`; isolation is a new-run action only.
+
+### Docs
+
+- `skills/auto-task/SKILL.md` (Phase 1 branch-setup rewritten), `ARCHITECTURE.md` (Phase 1 diagram box + "Parallel runs" section), and `README.md` ("Running multiple runs in parallel") all updated from *automatic-on-main/master* to *unconditional, from a fresh default branch*.
+
+### Fixed
+
+- The checkout-drift guard is now correctly framed as protecting only the in-place fallback path (the sole remaining shared-checkout case), not "prepared feature branch" runs (which now isolate).
+
 ## [0.1.8]
 
 Automatic worktree isolation for parallel runs + a checkout-drift guard. Same-repo parallel `/auto-task` is now fully automatic instead of requiring you to hand-create a worktree first.
