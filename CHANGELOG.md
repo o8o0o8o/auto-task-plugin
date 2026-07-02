@@ -2,6 +2,14 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.11]
+
+Adds **decision weighting** to the Phase-1 Clarifications gate, so the consequential calls auto-task makes on the user's behalf surface at approval instead of hiding in a flat list.
+
+### Added
+
+- **Decision weighting + Decision watchlist.** Every *Resolved* clarification (a decision auto-task made itself, backed by a cite) is now scored on two 0–2 axes: **Confidence (C)** — strength of the evidence — and **Cost-if-wrong (K)** — reversibility × blast radius, judged per-decision using the same dimensions as the Difficulty/Risk rubric. Decisions where `K == 2`, or where `K == 1` and `C <= 1`, are promoted into a new **Decision watchlist** rendered in `PLAN.md`'s `## Clarifications` and surfaced at the approval gate beside the risk disclaimer, each carrying *If wrong* / *Unwind* lines. This makes a thinly-cited or hard-to-unwind call visible for veto even though it had a cite — while cheap, well-cited, reversible decisions stay silent (no added burden). The watchlist is a **view over Resolved**, not a new bucket: the cite-or-ask binary and the "no third bucket" invariant are unchanged. Truly irreversible or external-write decisions still route to **Asked** (the user overrides before they happen) and never appear on the watchlist. The `define-clarify` state entry now records `weight: {c,k}` and a `watchlisted` flag.
+
 ## [0.1.10]
 
 Fixes the per-run version check, which silently skipped on **every** run.

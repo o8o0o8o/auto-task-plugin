@@ -4,7 +4,7 @@ description: End-to-end autonomous task workflow — define → execute → veri
 license: MIT
 metadata:
   author: ai-workflow
-  version: "1.7"
+  version: "1.8"
 ---
 
 # Auto-task
@@ -323,9 +323,18 @@ Process (mandatory six-stage gate — do them in order, do not skip stages):
 3. **Triage each candidate into one of two buckets.**
 
    - **Resolved** — verifiable answer found with a cite. Record under `## Clarifications` as `Q: <question> / A: <answer> / Source: <cite — file:line, doc URL, MCP source, memory entry, or quoted phrase from the task description>`. If you cannot produce a cite in this format, the candidate is NOT resolved — push it to Asked.
-   - **Asked** — no verifiable answer found, OR the question is high-stakes enough that even strong evidence isn't sufficient (writes to external systems, irreversible operations, anything in CLAUDE.md's "Executing actions with care" territory — for these, always ask even if you have a cite, because the user has standing to override).
+   - **Asked** — no verifiable answer found, OR the decision is high-stakes in a way even strong evidence cannot settle: a **write to an external system** or a **truly irreversible operation** (schema/data migration, deletion, anything in CLAUDE.md's "Executing actions with care" territory). For these, always ask even if you have a cite — the user has standing to override *before* the action happens, so they never land on the watchlist below (which records calls already made on the user's behalf). This is distinct from a merely *costly-but-reversible* decision: that stays Resolved and is surfaced on the Decision watchlist instead (see the weighting step next, and the render in stage 5).
 
    There is no third bucket. Do not invent "Defaulted", "Assumed", "Probably-X". Either you have a cite and resolve, or you don't and you ask.
+
+   **Weight each Resolved decision — this is a *view* over Resolved, not a third bucket.** The bucketing above stays binary (cite → Resolved, no cite → Asked). But not every Resolved decision is equally safe to have made silently: a thinly-cited or hard-to-unwind call deserves the user's eyes even though it carried a cite. So score each **Resolved** decision on two independent 0–2 axes:
+
+   - **Confidence (C)** — strength of the evidence behind the resolution. `2` = an explicit cite or ≥3 concordant occurrences with zero counter-examples; `1` = inferred from a single example or a soft signal; `0` = no real cite — in which case it was never Resolved and belongs in Asked.
+   - **Cost-if-wrong (K)** — reversibility × blast radius, using the same two dimensions as the Difficulty (D) / Risk (R) rubric's reversibility and production-blast rows (defined later in Phase 1), but judged for this one decision. `2` = shapes a public API or a widely-consumed function signature, or is otherwise **expensive-but-possible to unwind** (reversible in principle); `1` = localized but non-trivial to change later; `0` = cosmetic or trivially reversible.
+
+   **Reversible-vs-irreversible boundary.** `K == 2` covers only decisions that are yours to make but *costly to reverse*. A **truly irreversible** decision — one that fails the "reversible in principle" test (migrations, deletions, external writes) — is not a `K == 2` Resolved item at all; it routes to **Asked** per the override above. The two never overlap: irreversible → Asked; costly-but-reversible → Resolved + watchlisted.
+
+   Scoring is inline with this triage — no separate pass — and applies at every effort tier (it is cheap prose, not a phase); when the Resolved bucket is empty there is nothing to score. The promotion rule that turns these two scores into the surfaced Decision watchlist lives in stage 5.
 
 4. **Ask only the Asked bucket** via `AskUserQuestion`. Present 1–4 questions per call (the tool's cap). If you genuinely have more than 4 items in the Asked bucket, prioritize the highest-impact and fold the rest into PLAN.md's Unknowns. Each question MUST:
    - Be answerable with a short selection (offer 2–4 concrete options; avoid open-ended phrasing).
@@ -335,7 +344,7 @@ Process (mandatory six-stage gate — do them in order, do not skip stages):
 
    If the Asked bucket is empty after stages 1–3, skip this step entirely — do NOT invent questions to "look thorough". A run where every ambiguity was resolved with evidence is a *better* run, not a lazier one.
 
-5. **Record everything.** Write a `## Clarifications` section at the very top of `.auto-task/<branch>/PLAN.md` (above Feasibility). The section contains both buckets in this order:
+5. **Record everything.** Write a `## Clarifications` section at the very top of `.auto-task/<branch>/PLAN.md` (above Feasibility). The section contains the two buckets, followed by the Decision watchlist view (a subset of Resolved — see the promotion rule below), in this order:
 
    ```
    ## Clarifications
@@ -350,11 +359,21 @@ Process (mandatory six-stage gate — do them in order, do not skip stages):
    - **Q:** <question>
      **A:** <user's answer>
    - ...
+
+   ### Decision watchlist (resolved by me, but consequential)
+   - **Decision:** <the call I made>
+     **Source:** <cite — same as this decision's Resolved entry>
+     **Confidence:** <0-2>   **Cost-if-wrong:** <0-2>
+     **If wrong:** <what breaks downstream if this call was wrong>
+     **Unwind:** <how we'd back it out, or "hard to reverse — see risk disclaimer">
+   - ...
    ```
 
-   Omit any subsection whose bucket is empty. If both buckets are empty (no ambiguity at all), write `## Clarifications\n\nNone — task description was unambiguous against current repo state.\n` and skip the rest.
+   **Promotion rule (the Decision watchlist is a view over Resolved, not a new bucket).** After scoring in stage 3, copy a Resolved decision into the `### Decision watchlist` section when **`K == 2`**, OR when **`K == 1` and `C <= 1`**; every other Resolved decision stays silently in the Resolved subsection. A watchlisted item *also* remains in its Resolved entry — the watchlist is a view over Resolved that lifts the consequential calls to where the user will see them at approval, beside the risk disclaimer. It never surfaces a decision that isn't already Resolved, so the "no third bucket" rule holds: this is presentation, not a new classification.
 
-   Log to `state.history`: one entry per candidate question, in either bucket: `{ phase: "define-clarify", question: "...", answer: "...", resolution: "resolved|asked", source: "<cite for resolved; \"user\" for asked>", at: "ISO-8601" }`. Treat answers from both buckets as binding inputs to recon, plan body, AC table, and tier scoring.
+   Omit any subsection whose content is empty. For the two buckets, an empty subsection is simply dropped. For the **Decision watchlist**, when nothing is promoted, drop the `### Decision watchlist` heading entirely — no "None." placeholder, since it is a derived view rather than a bucket the user must confirm is empty. If both *buckets* are empty (no ambiguity at all), write `## Clarifications\n\nNone — task description was unambiguous against current repo state.\n` and skip the rest.
+
+   Log to `state.history`: one entry per candidate question, in either bucket: `{ phase: "define-clarify", question: "...", answer: "...", resolution: "resolved|asked", source: "<cite for resolved; \"user\" for asked>", weight: { c: <0-2>, k: <0-2> }, watchlisted: <true|false>, at: "ISO-8601" }`. The `weight` object and `watchlisted` flag are set for **Resolved** entries (score `c`/`k` per stage 3; `watchlisted` true iff the promotion rule fired); for **Asked** entries set `weight: null` and `watchlisted: false`. Treat answers from both buckets as binding inputs to recon, plan body, AC table, and tier scoring.
 
 6. **No mid-pipeline re-asking.** After this step, Phase 2–5 must not stop to ask clarifying questions. If a genuine new ambiguity surfaces later (typically because the codebase contradicts a Phase 1 assumption), that's a Loop-rule clause 3 ("external blocker") trigger — STOP and surface per the Surfacing protocol; do not silently ask. This is what forces stages 1–5 to be exhaustive *here*.
 
@@ -556,6 +575,8 @@ If the user proceeds with approval despite a disclaimer, that's a binding choice
 Before presenting the plan, set `expected_next_action: "user-approval"` in STATE.json — the Stop hook will allow the yield. Then present the plan summary (with the Critique section visible AND, if assembled above, the Risk disclaimer block) and **STOP**. Wait for explicit user approval (keywords: `approved`, `looks good`, `continue`, `proceed`, `yes`, `go ahead`).
 
 When presenting, surface the `## Clarifications` section so the user can audit your evidence. For every Resolved entry, the cite is visible inline — the user can spot a wrong resolution by checking the cite. The Asked entries are the user's own answers from stage 4, replayed for verification.
+
+Surface the **Decision watchlist** subsection prominently too, since it and the disclaimer both answer "what could bite later." **Present it exactly once** — it is a physical subsection of the `## Clarifications` block you surface just above, so decide its single slot and don't render it twice: when a risk disclaimer was assembled, lift the watchlist out and render it right beside the disclaimer (the highest-attention slot), and do NOT also leave a copy in the `## Clarifications` block you present. When no disclaimer fired (a `K == 2` decision does not necessarily trip the plan-level disclaimer thresholds), render it within the `## Clarifications` block as its own called-out subsection — it must not be buried. Either way the user sees it once. These are the consequential calls resolved without asking; the user should be able to veto or amend any of them at approval even though each carried a cite. **De-dup against the disclaimer:** if a watchlist item names the same risk a triggered disclaimer bullet already spells out (e.g. a `K == 2` external-integration decision that also fired the disclaimer's external-integration bullet), cross-reference it in one line rather than printing the risk twice — the disclaimer owns the plan-level risk, the watchlist owns the specific decision. If the watchlist is empty (nothing was promoted), say nothing about it — its absence is the signal that no self-made call was consequential enough to flag.
 
 On approval: write `approved: true` AND `expected_next_action: "auto-continue"` to state, then advance to Phase 2. From this point on, the Stop hook will block any attempt to end the turn until you reach a legitimate yield point or `phase: "done"`. **Do not commit on approval** — `.auto-task/<branch>/PLAN.md` stays out of git, and per the single-commit rule below, no code commit happens until Phase 5.
 
@@ -764,7 +785,7 @@ This is the **only phase that commits**. By the time you reach it, the working t
    The user's explicit decisions during this run. Load-bearing — they constrain what was built and why. Future reviewers should not re-litigate them unless they disagree with the choice itself, not its consequences.
 
    ### Clarifying Q&A (Phase 1, before plan)
-   This section reflects ONLY entries where the user actually weighed in. The Resolved bucket from PLAN.md's `## Clarifications` is auditable in PLAN.md itself and does not belong in CONTEXT.md's `Human choices` — those were not user choices.
+   This section reflects ONLY entries where the user actually weighed in. The Resolved bucket from PLAN.md's `## Clarifications` — and the Decision watchlist view derived from it — are auditable in PLAN.md itself and do not belong in CONTEXT.md's `Human choices`: both record calls *I* made (the watchlist merely flags the consequential ones), not user choices. If the user vetoed or amended a watchlisted decision at approval, THAT is a user choice and belongs here (record it under Plan approval → user amendments).
 
    For each state.history entry with `phase: "define-clarify"` AND `resolution: "asked"`:
    - **Q:** <question text as presented via AskUserQuestion>
