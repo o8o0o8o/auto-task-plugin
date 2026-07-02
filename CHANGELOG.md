@@ -2,6 +2,14 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.12]
+
+Fixes a false-positive that blocked commits from a worktree-isolated run — the exact failure mode the unconditional-worktree-isolation feature (0.1.9) made the default path.
+
+### Fixed
+
+- **Worktree-isolated runs are no longer misjudged by the enforcement-spine hooks.** All four hooks that resolve per-branch `.auto-task/` state (`enforce-gates.sh`, `warn-checkout-drift.sh`, `prevent-mid-protocol-stall.sh`, `inject-history-reminder.sh`) derived the project root from `CLAUDE_PROJECT_DIR`, which the harness keeps pinned to the **main checkout** even when the session runs inside a linked worktree. A `git commit` in the worktree therefore lands on the worktree's branch, but the hooks inspected the main checkout's branch + `.auto-task/`. When main sat on a branch with no active run while *other* branches had active runs, `enforce-gates.sh` fired a bogus **checkout-drift block** and refused the commit; `warn-checkout-drift.sh` spammed a false drift warning on every command; `prevent-mid-protocol-stall.sh` failed open, **silently disabling the anti-stall backstop** for the whole run; and `inject-history-reminder.sh` reported the wrong branch's (or no) read-before-review reminder. Each hook now detects when the operation's real cwd (from the payload's `.cwd`, falling back to `$PWD`) is a **linked worktree of the same repo** and retargets to it. Same-repo worktrees are distinguished from nested/embedded repos by the git common-dir (a linked worktree *shares* it; a nested repo has its own), normalised with `cd`-into + `pwd -P` so a relative `.git`, an absolute worktree path, and the macOS `/var`→`/private/var` symlink all compare correctly. Nested/embedded repos are never retargeted, preserving the no-fail-open guarantee for them.
+
 ## [0.1.11]
 
 Adds **decision weighting** to the Phase-1 Clarifications gate, so the consequential calls auto-task makes on the user's behalf surface at approval instead of hiding in a flat list.

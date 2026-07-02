@@ -181,6 +181,90 @@ gateNested(){ printf '%s' "$COMMIT" | ( cd "$NESTED" && CLAUDE_PROJECT_DIR="$T" 
 expect "WT-nested-gate: commit from nested repo honors CLAUDE_PROJECT_DIR, BLOCKED (no fail-open)" "$(gateNested)" "2"
 git worktree remove --force "$WT" >/dev/null 2>&1 || true
 
+echo "================ Worktree-isolated run, CLAUDE_PROJECT_DIR pinned to MAIN (the reported false positive) ================"
+# auto-task isolates every run in a linked worktree, but the harness keeps
+# CLAUDE_PROJECT_DIR pinned to the MAIN checkout. MAIN sits on a branch with no
+# active run while ANOTHER branch has an active run (leftover state) — so the old
+# resolution inspected MAIN and fired a bogus checkout-drift block. The fix
+# retargets to the worktree (same repo: shared git common-dir, different
+# toplevel), so the worktree's OWN gates govern. Its own isolated repo so MAIN's
+# sibling state is exactly the drift trigger and nothing else interferes.
+WARN="$HOOKS/warn-checkout-drift.sh"
+INJECT="$HOOKS/inject-history-reminder.sh"
+WI="$(mktemp -d)"
+(
+  cd "$WI"
+  git init -q; git config user.email t@t.t; git config user.name t; git checkout -q -b main
+  printf 'x\n' > a.js; git add a.js; git commit -qm init
+  # An ACTIVE run on ANOTHER branch recorded in MAIN's .auto-task/ — the drift trigger.
+  mkdir -p .auto-task/feat/sibling
+  cat > .auto-task/feat/sibling/STATE.json <<JSON
+{"approved":true,"phase":"execute","expected_next_action":"auto-continue","branch":"feat/sibling","effort":{"tier":"standard"},
+ "gates":{"code_review":{"passed":false},"gate_b":{"passed":false}}}
+JSON
+  git worktree add -q wt -b feat/iso >/dev/null 2>&1
+) >/dev/null 2>&1
+WIWT="$WI/wt"; WISD="$WIWT/.auto-task/feat/iso"; mkdir -p "$WISD"
+WIB="$(git -C "$WIWT" rev-parse HEAD)"
+RWISHA="$(git -C "$WIWT" diff $DIFF_FLAGS "$WIB" | git hash-object --stdin)"
+# gate from the worktree; CPD pinned to MAIN; payload carries NO .cwd → op_cwd
+# falls back to $PWD=worktree (exercises the $PWD signal path).
+wigate(){ printf '%s' "$COMMIT" | ( cd "$WIWT" && CLAUDE_PROJECT_DIR="$WI" bash "$GATE" ) >/dev/null 2>&1; echo $?; }
+# (A) gates-met worktree run → ALLOWED. Pre-fix: BLOCKED (2) by the bogus drift guard.
+cat > "$WISD/STATE.json" <<JSON
+{"approved":true,"phase":"gate-b","expected_next_action":"auto-continue","branch":"feat/iso","base":"$WIB","effort":{"tier":"standard"},
+ "gates":{"code_review":{"passed":true,"tool":"skill:auto-task-code-review","clean_pass_after_last_fix":true,"reviewed_diff_sha":"$RWISHA"},
+          "gate_b":{"passed":true}}}
+JSON
+expect "WT-iso-allow: gates-met commit ALLOWED (CPD=main, active sibling run)"  "$(wigate)" "0"
+# (B) ungated worktree run → BLOCKED: gate enforcement survives the retarget.
+cat > "$WISD/STATE.json" <<JSON
+{"approved":true,"phase":"execute","expected_next_action":"auto-continue","branch":"feat/iso","base":"$WIB","effort":{"tier":"standard"},
+ "gates":{"code_review":{"passed":false},"gate_b":{"passed":false}}}
+JSON
+expect "WT-iso-gate: ungated commit BLOCKED (retargeted, gates enforced)"       "$(wigate)" "2"
+# (C) AC#8: retarget driven by the JSON .cwd field while the hook $PWD is neutral
+# (a dir inside MAIN, which by itself resolves to MAIN → no retarget). Only .cwd
+# points at the worktree, so an ALLOW here proves the .cwd signal path works.
+NEUTRAL="$WI/neutral"; mkdir -p "$NEUTRAL"
+CWDPAY="$(jq -nc --arg c "$WIWT" '{tool_input:{command:"git commit -m wip"}, cwd:$c}')"
+wigateCwd(){ printf '%s' "$CWDPAY" | ( cd "$NEUTRAL" && CLAUDE_PROJECT_DIR="$WI" bash "$GATE" ) >/dev/null 2>&1; echo $?; }
+cat > "$WISD/STATE.json" <<JSON
+{"approved":true,"phase":"gate-b","expected_next_action":"auto-continue","branch":"feat/iso","base":"$WIB","effort":{"tier":"standard"},
+ "gates":{"code_review":{"passed":true,"tool":"skill:auto-task-code-review","clean_pass_after_last_fix":true,"reviewed_diff_sha":"$RWISHA"},
+          "gate_b":{"passed":true}}}
+JSON
+expect "WT-iso-cwd-allow: .cwd retarget ALLOWS gates-met (hook \$PWD neutral)"   "$(wigateCwd)" "0"
+cat > "$WISD/STATE.json" <<JSON
+{"approved":true,"phase":"execute","expected_next_action":"auto-continue","branch":"feat/iso","base":"$WIB","effort":{"tier":"standard"},
+ "gates":{"code_review":{"passed":false},"gate_b":{"passed":false}}}
+JSON
+expect "WT-iso-cwd-gate: .cwd retarget BLOCKS ungated (hook \$PWD neutral)"      "$(wigateCwd)" "2"
+# (D) warn/stop/inject on an ACTIVE worktree run (approved, not done). State from (C) is active.
+wiwarn(){ local o; o="$( cd "$WIWT" && CLAUDE_PROJECT_DIR="$WI" bash "$WARN" </dev/null 2>&1 )"; [ -n "$o" ] && echo warn || echo silent; }
+wistop(){ local o; o="$( cd "$WIWT" && CLAUDE_PROJECT_DIR="$WI" bash "$STOP" </dev/null 2>/dev/null )"; [ -z "$o" ] && { echo allow; return; }; printf '%s' "$o" | jq -r '.decision // "allow"' 2>/dev/null; }
+wiinject(){ ( cd "$WIWT" && CLAUDE_PROJECT_DIR="$WI" bash "$INJECT" </dev/null 2>/dev/null ); }
+# AC#5: no bogus drift warning — the worktree branch owns the active run.
+expect "WT-iso-warn: SILENT (no false drift warning)"                           "$(wiwarn)" "silent"
+# AC#6: anti-stall restored — a mid-pipeline turn-end BLOCKS.
+expect "WT-iso-stop: mid-pipeline turn-end BLOCKED (anti-stall restored)"        "$(wistop)" "block"
+# AC#9: read-before-review reminder names the WORKTREE branch, not silent/main.
+wiinj="$(wiinject)"; case "$wiinj" in *"feat/iso"*) wiinjr=ok ;; *) wiinjr="silent-or-wrong" ;; esac
+expect "WT-iso-inject: history reminder names the worktree branch"              "$wiinjr" "ok"
+# Nested-repo protection still holds from a MAIN-neutral cwd (different common-dir → no retarget).
+NEST2="$WI/vendor/embedded"; mkdir -p "$NEST2"
+( cd "$NEST2" && git init -q && git config user.email t@t.t && git config user.name t && printf 'z\n'>g && git add g && git commit -qm n ) >/dev/null 2>&1
+# MAIN itself carries an ungated active run so honoring CPD (no retarget) BLOCKS.
+mkdir -p "$WI/.auto-task/main"
+cat > "$WI/.auto-task/main/STATE.json" <<JSON
+{"approved":true,"phase":"execute","expected_next_action":"auto-continue","branch":"main","effort":{"tier":"standard"},
+ "gates":{"code_review":{"passed":false},"gate_b":{"passed":false}}}
+JSON
+wigateNest(){ printf '%s' "$COMMIT" | ( cd "$NEST2" && CLAUDE_PROJECT_DIR="$WI" bash "$GATE" ) >/dev/null 2>&1; echo $?; }
+expect "WT-iso-nested: nested repo honors CPD, NOT retargeted, BLOCKED"          "$(wigateNest)" "2"
+git -C "$WI" worktree remove --force "$WIWT" >/dev/null 2>&1 || true
+rm -rf "$WI"
+
 echo "================ Checkout-drift guard (enforce-gates block + warn hook) ================"
 # Runs in its OWN isolated checkout ($DT) — NOT the shared $T, whose .auto-task/
 # holds sibling active STATE dirs (feat/widget etc.) that would otherwise register

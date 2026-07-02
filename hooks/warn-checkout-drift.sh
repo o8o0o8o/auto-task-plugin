@@ -31,10 +31,38 @@ set -uo pipefail
 # Resolve the project root that owns .auto-task/<branch>/, identically to the
 # sibling hooks: start from CLAUDE_PROJECT_DIR (or $PWD), resolve to the git
 # worktree root so a command from a subdirectory still finds .auto-task/ at the
-# top, and keep an explicitly-set CLAUDE_PROJECT_DIR authoritative.
+# top, keeping an explicitly-set CLAUDE_PROJECT_DIR authoritative for the common
+# case — then retarget to a linked worktree of the same repo when the command
+# actually runs in one (see the sibling enforce-gates.sh for the full rationale;
+# without it, a worktree-isolated run gets a bogus drift warning every command
+# because CLAUDE_PROJECT_DIR points at the main checkout, not the worktree).
 project_dir_base="${CLAUDE_PROJECT_DIR:-$PWD}"
 project_dir="$(cd "$project_dir_base" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)"
 [ -n "$project_dir" ] || project_dir="$project_dir_base"
+
+# The operation's real cwd: prefer the payload's .cwd (authoritative session cwd),
+# fall back to $PWD. Guarded stdin read so an interactive invocation never blocks
+# on cat; the harness always pipes JSON here, so it reads promptly and closes.
+_input=""
+[ -t 0 ] || _input="$(cat 2>/dev/null || true)"
+op_cwd=""
+if [ -n "$_input" ] && command -v jq >/dev/null 2>&1; then
+  op_cwd="$(printf '%s' "$_input" | jq -r '.cwd // ""' 2>/dev/null || true)"
+fi
+[ -n "$op_cwd" ] || op_cwd="$PWD"
+# Retarget only for a same-repo linked worktree (shared git common-dir, different
+# toplevel; common-dirs normalised via cd-into + `pwd -P`). Nested/embedded repos
+# have their own common-dir and are left alone.
+if [ -d "$op_cwd" ]; then
+  cwd_top="$(cd "$op_cwd" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -n "$cwd_top" ] && [ "$cwd_top" != "$project_dir" ]; then
+    cwd_common="$(cd "$op_cwd" 2>/dev/null && cd "$(git rev-parse --git-common-dir 2>/dev/null || echo .)" 2>/dev/null && pwd -P || true)"
+    base_common="$(cd "$project_dir" 2>/dev/null && cd "$(git rev-parse --git-common-dir 2>/dev/null || echo .)" 2>/dev/null && pwd -P || true)"
+    if [ -n "$cwd_common" ] && [ "$cwd_common" = "$base_common" ]; then
+      project_dir="$cwd_top"
+    fi
+  fi
+fi
 branch="$(cd "$project_dir" && git branch --show-current 2>/dev/null || true)"
 [ -n "$branch" ] || exit 0   # detached HEAD or not a repo — nothing to guard
 

@@ -14,14 +14,39 @@ set -uo pipefail
 
 # Resolve the project root that owns .auto-task/<branch>/. Start from
 # CLAUDE_PROJECT_DIR (the session's project root) or $PWD, then resolve that to
-# its git worktree root, so the reminder fires from a subdirectory too. Resolving
-# the toplevel OF the base (not from raw CWD) keeps an explicitly-set
-# CLAUDE_PROJECT_DIR authoritative — being inside a nested/embedded repo or
-# submodule does not silently retarget a different repo. Fall back to base when
-# it is not inside a working tree (no repo / bare / inside .git/).
+# its git worktree root, so the reminder fires from a subdirectory too. Keep an
+# explicitly-set CLAUDE_PROJECT_DIR authoritative for the common case — then
+# retarget to a linked worktree of the same repo when the session runs in one
+# (see enforce-gates.sh for the full rationale). Without the retarget, a
+# worktree-isolated run resolves to the main checkout's branch and injects the
+# wrong branch's — or no — read-before-review reminder.
 project_dir_base="${CLAUDE_PROJECT_DIR:-$PWD}"
 project_dir="$(cd "$project_dir_base" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)"
 [ -n "$project_dir" ] || project_dir="$project_dir_base"
+
+# The prompt's real cwd: prefer the payload's .cwd (authoritative session cwd),
+# fall back to $PWD. Guarded stdin read so an interactive invocation never blocks
+# on cat; the harness always pipes JSON here, so it reads promptly and closes.
+_input=""
+[ -t 0 ] || _input="$(cat 2>/dev/null || true)"
+op_cwd=""
+if [ -n "$_input" ] && command -v jq >/dev/null 2>&1; then
+  op_cwd="$(printf '%s' "$_input" | jq -r '.cwd // ""' 2>/dev/null || true)"
+fi
+[ -n "$op_cwd" ] || op_cwd="$PWD"
+# Retarget only for a same-repo linked worktree (shared git common-dir, different
+# toplevel; common-dirs normalised via cd-into + `pwd -P`). Nested/embedded repos
+# have their own common-dir and are left alone.
+if [ -d "$op_cwd" ]; then
+  cwd_top="$(cd "$op_cwd" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -n "$cwd_top" ] && [ "$cwd_top" != "$project_dir" ]; then
+    cwd_common="$(cd "$op_cwd" 2>/dev/null && cd "$(git rev-parse --git-common-dir 2>/dev/null || echo .)" 2>/dev/null && pwd -P || true)"
+    base_common="$(cd "$project_dir" 2>/dev/null && cd "$(git rev-parse --git-common-dir 2>/dev/null || echo .)" 2>/dev/null && pwd -P || true)"
+    if [ -n "$cwd_common" ] && [ "$cwd_common" = "$base_common" ]; then
+      project_dir="$cwd_top"
+    fi
+  fi
+fi
 branch="$(cd "$project_dir" && git branch --show-current 2>/dev/null || true)"
 [ -n "$branch" ] || exit 0
 

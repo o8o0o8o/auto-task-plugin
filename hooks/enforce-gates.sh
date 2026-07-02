@@ -54,14 +54,43 @@ fi
 # Resolve the project root that owns .auto-task/<branch>/. Start from
 # CLAUDE_PROJECT_DIR (the session's project root) or $PWD, then resolve that to
 # its git worktree root, so a commit from a subdirectory still finds
-# .auto-task/<branch>/ at the top. Resolving the toplevel OF the base (not from
-# raw CWD) keeps an explicitly-set CLAUDE_PROJECT_DIR authoritative — a commit
-# from a nested/embedded repo or submodule does not silently retarget a different
-# repo and fail open. Fall back to base when it is not inside a working tree
-# (no repo / bare / inside .git/).
+# .auto-task/<branch>/ at the top. Resolving the toplevel OF the base keeps an
+# explicitly-set CLAUDE_PROJECT_DIR authoritative for the common case. Fall back
+# to base when it is not inside a working tree (no repo / bare / inside .git/).
 project_dir_base="${CLAUDE_PROJECT_DIR:-$PWD}"
 project_dir="$(cd "$project_dir_base" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)"
 [ -n "$project_dir" ] || project_dir="$project_dir_base"
+
+# Worktree retarget. auto-task isolates every run in a linked git worktree, but
+# the harness keeps CLAUDE_PROJECT_DIR pinned to the MAIN checkout. A `git commit`
+# actually runs in the worktree (the session's cwd), so it lands on the worktree's
+# branch — yet the base resolution above points at the main checkout. Left
+# uncorrected, this hook then inspects main's branch + .auto-task/ instead of the
+# worktree's, and (when main has no active run but other branches do) fires a
+# bogus checkout-drift block. Fix: when the operation's real cwd is a linked
+# worktree OF THE SAME REPO, retarget project_dir to it. Same-repo worktree vs
+# nested/embedded repo is discriminated by the git common-dir: a linked worktree
+# SHARES the main repo's common-dir (different toplevel), while a nested/embedded
+# repo has its OWN — so nested repos never retarget and the no-fail-open guarantee
+# for them is preserved. Common-dirs are compared after `cd`-into + `pwd -P` so a
+# relative `.git` (returned from a toplevel) vs an absolute path (from a worktree)
+# and the macOS /var->/private/var symlink both normalise. The real cwd comes from
+# the payload's .cwd (the authoritative session cwd), falling back to $PWD.
+op_cwd=""
+if [ "$has_jq" -eq 1 ]; then
+  op_cwd="$(printf '%s' "$input" | jq -r '.cwd // ""' 2>/dev/null || true)"
+fi
+[ -n "$op_cwd" ] || op_cwd="$PWD"
+if [ -d "$op_cwd" ]; then
+  cwd_top="$(cd "$op_cwd" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -n "$cwd_top" ] && [ "$cwd_top" != "$project_dir" ]; then
+    cwd_common="$(cd "$op_cwd" 2>/dev/null && cd "$(git rev-parse --git-common-dir 2>/dev/null || echo .)" 2>/dev/null && pwd -P || true)"
+    base_common="$(cd "$project_dir" 2>/dev/null && cd "$(git rev-parse --git-common-dir 2>/dev/null || echo .)" 2>/dev/null && pwd -P || true)"
+    if [ -n "$cwd_common" ] && [ "$cwd_common" = "$base_common" ]; then
+      project_dir="$cwd_top"   # same repo, linked worktree → the real commit target
+    fi
+  fi
+fi
 branch="$(cd "$project_dir" && git branch --show-current 2>/dev/null || true)"
 if [ -z "$branch" ]; then
   exit 0  # detached HEAD or not a repo — let git handle it
