@@ -149,12 +149,19 @@ Paths below are absolute and point at this clone ($REPO_ROOT).
           { "type": "command", "command": "$REPO_ROOT/hooks/prevent-mid-protocol-stall.sh" }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "$REPO_ROOT/hooks/check-version.sh" }
+        ]
+      }
     ]
   }
 }
 
-If you already have entries under "hooks.PreToolUse" or "hooks.Stop",
-append to the existing arrays rather than overwriting them.
+If you already have entries under "hooks.PreToolUse", "hooks.Stop", or
+"hooks.SessionStart", append to the existing arrays rather than overwriting them.
 EOF
 }
 

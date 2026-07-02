@@ -4,7 +4,7 @@ description: End-to-end autonomous task workflow — define → execute → veri
 license: MIT
 metadata:
   author: ai-workflow
-  version: "1.6"
+  version: "1.7"
 ---
 
 # Auto-task
@@ -190,7 +190,35 @@ Beyond the booleans, the hook also enforces **review staleness**: when `state.ba
 
 **Version check (best-effort, fail-open — NEW runs only, before everything else).** On a new run (`/auto-task <description>`), before the component preflight, do a fresh **per-run version check** and offer to update if the plugin is behind. This is best-effort and MUST NOT block, slow (beyond the bounded fetch), or error the run — any failure means proceed silently. **Skip it entirely on resume** (`/auto-task` with no args): a resume continues an already-approved, mid-flight run, where swapping the plugin under the running pipeline would be wrong.
 
-1. **Locate** the checker: `cv="${CLAUDE_PLUGIN_ROOT:-}/hooks/check-version.sh"`. If `CLAUDE_PLUGIN_ROOT` is unset or `$cv` is not a file (e.g. an `install.sh` symlink layout without the env var), **skip silently** and go straight to Component preflight.
+1. **Locate** the checker. `CLAUDE_PLUGIN_ROOT` is exported only to *hooks*, **not** into this Bash-tool environment, so it is normally empty here — do not rely on it alone (that was the original bug: `${CLAUDE_PLUGIN_ROOT}/hooks/check-version.sh` resolved to a bare `/hooks/...` path that never existed, so the check silently skipped on every run). Discover the script across both install layouts:
+
+   ```bash
+   cv=""
+   # a) hook env, on the off chance it is exported into this shell
+   [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "$CLAUDE_PLUGIN_ROOT/hooks/check-version.sh" ] \
+     && cv="$CLAUDE_PLUGIN_ROOT/hooks/check-version.sh"
+   # b) marketplace install: newest installed version dir that carries the hook
+   if [ -z "$cv" ]; then
+     cache="$HOME/.claude/plugins/cache/auto-task-plugin/auto-task"
+     if [ -d "$cache" ]; then
+       d="$(ls -1 "$cache" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+' \
+            | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)"
+       [ -n "$d" ] && [ -f "$cache/$d/hooks/check-version.sh" ] \
+         && cv="$cache/$d/hooks/check-version.sh"
+     fi
+   fi
+   # c) install.sh symlink layout: resolve the installed skill symlink to the repo root
+   if [ -z "$cv" ]; then
+     sk="$HOME/.claude/skills/auto-task"
+     if [ -L "$sk" ]; then
+       tgt="$(readlink "$sk")"; case "$tgt" in /*) ;; *) tgt="$(dirname "$sk")/$tgt" ;; esac
+       root="$(cd "$(dirname "$tgt")/.." 2>/dev/null && pwd)"
+       [ -n "$root" ] && [ -f "$root/hooks/check-version.sh" ] && cv="$root/hooks/check-version.sh"
+     fi
+   fi
+   ```
+
+   If `$cv` is still empty after all three probes, **skip silently** and go straight to Component preflight (fail-open — a version notice is never worth blocking a run).
 2. **Run it fresh + plain:** `out="$(AUTO_TASK_SKIP_THROTTLE=1 bash "$cv" --plain 2>/dev/null || true)"`. This bypasses the 24h throttle (a true per-run check) WITHOUT touching the SessionStart throttle stamp, bounds the network call (the script's own `--connect-timeout 2 -m 5`), and prints the one-line notice ONLY when the installed version is strictly behind — empty on current / ahead / offline / no-jq / malformed.
 3. **Decide:** if `$out` is **non-empty** (a newer version exists), ask ONCE via `AskUserQuestion`: present `$out` and two options — **"Proceed on current (Recommended)"** and **"I'll update first"**. On *proceed* → continue into Component preflight. On *update first* → STOP and tell the user to run `/plugin update auto-task@auto-task-plugin` and re-invoke `/auto-task`. If `$out` is **empty** → say nothing, continue into Component preflight.
 

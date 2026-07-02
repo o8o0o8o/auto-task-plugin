@@ -2,6 +2,18 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.10]
+
+Fixes the per-run version check, which silently skipped on **every** run.
+
+### Fixed
+
+- **Per-run version check now actually runs.** Phase 1 located the checker only via `${CLAUDE_PLUGIN_ROOT}/hooks/check-version.sh`, but `CLAUDE_PLUGIN_ROOT` is exported only to *hooks* — it is empty in the Bash-tool environment where the skill's per-run check executes. The path resolved to a bare `/hooks/check-version.sh` that never existed, so the check hit its fail-open "not at the expected path → skip silently" branch on every run and no update notice ever appeared. The locate step now discovers `check-version.sh` without relying on that env var: it probes the marketplace cache (newest installed version dir) and the `install.sh` symlink layout (resolving `~/.claude/skills/auto-task` back to the repo root), still failing open if none are found. The `check-version.sh` script itself was correct and is unchanged.
+
+### Added
+
+- **`install.sh` and `settings-fragment.json` now wire the `SessionStart` version-check hook.** The offline/symlink install path previously emitted only the `PreToolUse` and `Stop` hooks, so `install.sh` users never got the session-start "newer version available" notice (marketplace installs got it via `hooks/hooks.json`). Both now include the `SessionStart` → `check-version.sh` entry.
+
 ## [0.1.9]
 
 Worktree isolation is now **unconditional** and based on a **fresh default branch** — the last gap that let same-repo parallel runs interfere is closed, with zero user action.

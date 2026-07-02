@@ -19,6 +19,13 @@
           { "type": "command", "command": "/ABSOLUTE/PATH/TO/auto-task-plugin/hooks/prevent-mid-protocol-stall.sh" }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "/ABSOLUTE/PATH/TO/auto-task-plugin/hooks/check-version.sh" }
+        ]
+      }
     ]
   },
 
