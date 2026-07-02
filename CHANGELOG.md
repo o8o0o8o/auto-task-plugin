@@ -2,6 +2,19 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.13]
+
+Makes updating the plugin a one-choice, no-typed-command action — there is always an option to update, and it applies itself.
+
+### Added
+
+- **`hooks/apply-update.sh` — non-interactive, fail-safe updater.** It self-detects the install layout and applies the update without any typed command: a **marketplace** install (plugin root under a `plugins/cache/` dir) runs `claude plugin update auto-task@auto-task-plugin --scope <scope>` (scope resolved from `claude plugin list`, default `user`); an **install.sh / dev** install (a git work tree) runs `git -C <root> fetch && git -C <root> pull --ff-only`; a **copy** install or any other layout gets a clear "unsupported — re-run install.sh" message. Layout detection is *positive* (never "not git ⇒ marketplace"), so a `--copy` install can't be misrouted to the marketplace path. Git updates are fast-forward only — never forced, never a branch switch — and a dirty/diverged/no-upstream tree fails cleanly instead of clobbering local work. An already-up-to-date git tree reports a no-op (not a false "applied") so the update offer can't loop. Success/failure is the exit code (not stdout text); `AUTO_TASK_UPDATE_DRYRUN=1` prints the planned command and mutates nothing. Covered by `tests/apply-update.test.sh` across every layout (git no-op vs fast-forward, marketplace scope resolution, copy/unknown, cwd-independent self-location) plus the never-force guarantee.
+
+### Changed
+
+- **Phase-1 "update" is now auto-apply, not a manual instruction.** When the per-run version check finds a newer version, the option is relabeled **"Update it for me (auto-apply)"**; choosing it runs `apply-update.sh` and then asks you to **restart** the session (a restart is required — hooks load at session start and a marketplace update only *stages* the new version, so a same-session re-invoke would reload nothing and re-offer the update in a loop). The branch is fail-open: if the updater can't be located or exits nonzero, it falls back to printing the manual `/plugin update …` command, exactly as before.
+- **Version-notice text advertises auto-apply.** `check-version.sh` (both the SessionStart JSON and the `--plain` per-run modes) now says the next run can auto-apply the update, keeping the explicit `/plugin update …` command as a fallback. Detection logic is unchanged; the `--plain` contract (one line when behind, empty otherwise) is preserved.
+
 ## [0.1.12]
 
 Fixes a false-positive that blocked commits from a worktree-isolated run — the exact failure mode the unconditional-worktree-isolation feature (0.1.9) made the default path.

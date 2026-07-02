@@ -122,13 +122,13 @@ case "$REMOTE_V" in *[!0-9.a-zA-Z+-]*) emit_silent ;; esac   # not version-shape
 # --- compare; notify ONLY when remote is strictly newer ---------------------
 _ver_newer "$REMOTE_V" "$LOCAL_V" || emit_silent
 
-msg="auto-task $REMOTE_V is available (you have $LOCAL_V). Update with: /plugin update auto-task@auto-task-plugin"
+msg="auto-task $REMOTE_V is available (you have $LOCAL_V). Your next /auto-task run can auto-apply it (choose \"Update it for me\") — or update manually with: /plugin update auto-task@auto-task-plugin"
 # Plain mode (the per-run Phase-1 check): emit just the one-line notice, no JSON.
 if [ "$PLAIN" = "1" ]; then
   printf '%s\n' "$msg"
   exit 0
 fi
-ctx="A newer version of the auto-task plugin is available upstream: $REMOTE_V (installed: $LOCAL_V). If relevant, suggest the user run /plugin update auto-task@auto-task-plugin."
+ctx="A newer version of the auto-task plugin is available upstream: $REMOTE_V (installed: $LOCAL_V). The next /auto-task run can auto-apply the update on opt-in; otherwise suggest the user run /plugin update auto-task@auto-task-plugin manually."
 jq -cn --arg m "$msg" --arg c "$ctx" \
   '{systemMessage:$m, hookSpecificOutput:{hookEventName:"SessionStart", additionalContext:$c}}' 2>/dev/null \
   || printf '%s\n' "$msg"

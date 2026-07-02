@@ -220,7 +220,15 @@ Beyond the booleans, the hook also enforces **review staleness**: when `state.ba
 
    If `$cv` is still empty after all three probes, **skip silently** and go straight to Component preflight (fail-open — a version notice is never worth blocking a run).
 2. **Run it fresh + plain:** `out="$(AUTO_TASK_SKIP_THROTTLE=1 bash "$cv" --plain 2>/dev/null || true)"`. This bypasses the 24h throttle (a true per-run check) WITHOUT touching the SessionStart throttle stamp, bounds the network call (the script's own `--connect-timeout 2 -m 5`), and prints the one-line notice ONLY when the installed version is strictly behind — empty on current / ahead / offline / no-jq / malformed.
-3. **Decide:** if `$out` is **non-empty** (a newer version exists), ask ONCE via `AskUserQuestion`: present `$out` and two options — **"Proceed on current (Recommended)"** and **"I'll update first"**. On *proceed* → continue into Component preflight. On *update first* → STOP and tell the user to run `/plugin update auto-task@auto-task-plugin` and re-invoke `/auto-task`. If `$out` is **empty** → say nothing, continue into Component preflight.
+3. **Decide:** if `$out` is **non-empty** (a newer version exists), ask ONCE via `AskUserQuestion`: present `$out` and two options — **"Proceed on current (Recommended)"** and **"Update it for me (auto-apply)"**. On *proceed* → continue into Component preflight. On *update* → **auto-apply the update, no manual command**:
+
+   a. Locate the bundled updater with the SAME three probes used above for `$cv`, but resolving `hooks/apply-update.sh` instead of `hooks/check-version.sh` (reuse the exact `cv` block, substituting the filename into an `au` variable — the `CLAUDE_PLUGIN_ROOT`, marketplace-cache-newest-dir, and `install.sh`-symlink→repo-root probes are identical).
+
+   b. If `$au` resolved: run `bash "$au"` (it self-detects the install layout — `claude plugin update …` for a marketplace install, `git pull --ff-only` for an install.sh/dev clone — and applies the update without any typed command). Report its one-line `apply-update: …` result to the user, then **STOP** and tell them to **restart the Claude Code session** (a restart is required — hooks load at SessionStart and a marketplace update only *stages* the new version, so re-invoking in the same session would reload nothing and re-trigger this offer in a loop) and then re-run `/auto-task`.
+
+   c. **Fail-open:** if `$au` did not resolve, or `bash "$au"` exits nonzero (unsupported/copy layout, dirty git tree, missing `claude` CLI, offline, etc.), fall back to the manual path — STOP and tell the user to run `/plugin update auto-task@auto-task-plugin` (or `git pull` in their clone) and re-run `/auto-task`. The branch never dead-ends.
+
+   If `$out` is **empty** → say nothing, continue into Component preflight.
 
 This ask is part of the existing Phase-1 human surface — it runs while `approved: false`, so the Stop hook's `approved !== true → allow` guard already permits the yield (`expected_next_action` stays `null` while `approved:false`). It is NOT a new mid-pipeline yield, and it never runs after approval.
 
