@@ -188,8 +188,29 @@ fi
 # textconv / external-diff settings can each shift the diff text — and thus the
 # hash — for an unchanged tree, producing a spurious staleness block. The skill
 # records reviewed_diff_sha with this SAME flag set; the two must stay in lockstep.
+#
+# MERGE_HEAD exemption: this SAME staleness check would wrongly block the
+# Phase-5 handover main-sync. After the single reviewed commit, auto-task merges
+# origin/<default> into the branch so the PR is conflict-free; on a resolved
+# conflict that merge is finalized with `git commit`, which re-enters this hook.
+# But the merge legitimately changes `git diff <base>` by pulling in upstream
+# main — which is NOT un-reviewed authored work — so the hash no longer matches
+# reviewed_diff_sha and the staleness rule would fire spuriously. When a merge is
+# IN PROGRESS (MERGE_HEAD present) we therefore skip ONLY this hash comparison.
+# This is deliberately narrow: every boolean gate — review passed / correct tool /
+# clean-after-fix (checked above) and gate_b (checked below) — is OUTSIDE this
+# merge guard, so all of them still run and still hold during a merge; a merge
+# cannot be used to slip past an unpassed review. The skill compensates for the skipped
+# staleness by requiring a full re-review of any conflict resolution before push.
+# The guard is source-agnostic (it does not verify the merge is origin/<default>);
+# that is intentional — knowing the source robustly here is fragile, and the
+# re-review requirement, not this hook, is what bounds authored edits.
 DIFF_FLAGS='--no-color --no-ext-diff --no-textconv --no-renames --diff-algorithm=myers --src-prefix=a/ --dst-prefix=b/'
-if [ -n "$base" ] && [ -n "$reviewed_sha" ]; then
+merge_in_progress=0
+if git -C "$project_dir" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+  merge_in_progress=1
+fi
+if [ "$merge_in_progress" -eq 0 ] && [ -n "$base" ] && [ -n "$reviewed_sha" ]; then
   current_sha="$(cd "$project_dir" && git diff $DIFF_FLAGS "$base" 2>/dev/null | git hash-object --stdin 2>/dev/null || true)"
   if [ -n "$current_sha" ] && [ "$current_sha" != "$reviewed_sha" ]; then
     printf 'Blocked by auto-task-plugin: the working-tree diff changed since the last clean code-review pass.\n  reviewed_diff_sha: %s\n  current diff sha:  %s   (git diff %s)\nCode was modified after gates.code_review went clean, so the review no longer covers what you are about to commit.\nRe-run the auto-task-code-review skill on the current diff, drive it to a clean pass, then refresh gates.code_review.reviewed_diff_sha before committing.\n' "$reviewed_sha" "$current_sha" "$base" >&2

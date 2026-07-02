@@ -2,6 +2,20 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.14]
+
+Keeps auto-task branches conflict-free with the default branch by pulling `main` at both ends of a run — when the branch is created and again right before the handover commit — and always resolving any conflicts before the PR.
+
+### Added
+
+- **Phase-5 pre-commit main-sync.** Right before the handover commit, auto-task now pulls `origin/<default>` (`git fetch`, best-effort/fail-open — offline skips the whole sync), makes the single authored commit, then **merges `origin/<default>` into the branch** so the PR merges cleanly even when `main` advanced during a long run. Conflicts follow a **hybrid policy**: mechanical / non-overlapping conflicts are auto-resolved (reconcile-only, "when in doubt surface") and the merge is finalized with `git commit --no-edit`; conflicts needing judgment STOP and surface via the Surfacing protocol. `/auto-task-verify` re-runs after **every** merge (a clean merge can still pull in a behavior-breaking upstream change), and any *resolved* conflict additionally re-invokes the `auto-task-code-review` skill and refreshes `reviewed_diff_sha` before push — so authored resolution logic is never shipped un-reviewed. Post-merge re-checks are scoped to the run's own delta over the new `main`, not the upstream churn the merge pulled in.
+
+### Changed
+
+- **Phase-1 branch setup states the pull-main contract explicitly.** The existing best-effort `git fetch origin <default>` + fork-from-`origin/<default>` is now documented as the first half of "pull main so there are no conflicts": a brand-new branch is conflict-free with `main` by construction (nothing to merge at creation), with the Phase-5 re-sync as the second half. Behavior is unchanged (still fail-open for offline runs).
+- **`enforce-gates.sh` — `MERGE_HEAD` staleness exemption.** The review-staleness hash check now skips **only** the hash comparison while a merge is in progress (`MERGE_HEAD` present), because the handover main-sync legitimately changes `git diff <base>` by pulling in upstream `main` (not un-reviewed authored work). Every boolean gate (review passed / correct tool / clean-after-fix / Gate B) still holds during the merge, so a merge cannot slip past an unpassed review; the skill compensates for the skipped staleness by re-reviewing any conflict resolution before push. Covered by new assertions in `tests/enforcement-spine.test.sh` (stale diff allowed during a merge, booleans still enforced during a merge, stale diff blocks again once the merge concludes).
+- **Single-commit rule reconciled.** The NON-NEGOTIABLE single-commit rule now explicitly permits the Phase-5 main-sync **merge** commit as integration (not authored work), keeping the invariant that all of a run's authored changes are one reviewed commit.
+
 ## [0.1.13]
 
 Makes updating the plugin a one-choice, no-typed-command action — there is always an option to update, and it applies itself.

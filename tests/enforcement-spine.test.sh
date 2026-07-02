@@ -73,6 +73,25 @@ printf 'export const n = 2;\nexport const m = 3;\nexport const STRAY = 9;\n' > a
 expect "Staleness: post-review edit BLOCKS commit"        "$(gate)" "2"
 printf 'export const n = 2;\nexport const m = 3;\n' > app.js
 expect "Staleness: revert to reviewed diff ALLOWS"        "$(gate)" "0"
+
+# ---- MERGE_HEAD staleness exemption (Phase-5 main-sync merge) ----------------
+# A post-reviewed-commit merge of origin/<default> changes `git diff <base>`, so
+# finalizing a conflicted merge with `git commit` at phase=handover would hit the
+# staleness block. The exemption skips ONLY the hash check while a merge is in
+# progress, and ONLY that — every boolean gate must still hold.
+printf 'export const n = 2;\nexport const m = 3;\nexport const UPSTREAM = 7;\n' > app.js
+expect "MergeExempt: stale diff BLOCKS with no merge"     "$(gate)" "2"
+git rev-parse HEAD > .git/MERGE_HEAD   # simulate an in-progress merge
+expect "MergeExempt: stale diff ALLOWED during merge"     "$(gate)" "0"
+setstate '.gates.code_review.passed=false'
+expect "MergeExempt: booleans still enforced in merge"    "$(gate)" "2"
+setstate '.gates.code_review.passed=true'
+rm -f .git/MERGE_HEAD                   # merge concluded
+expect "MergeExempt: stale diff BLOCKS again post-merge"  "$(gate)" "2"
+printf 'export const n = 2;\nexport const m = 3;\n' > app.js   # back to reviewed diff
+expect "MergeExempt: reviewed diff ALLOWED after merge"   "$(gate)" "0"
+# ------------------------------------------------------------------------------
+
 setstate '.phase="handover"|.expected_next_action="user-push-prompt"'
 expect "P5 push prompt: stop ALLOWED"                     "$(stop)" "allow"
 setstate '.phase="done"|.expected_next_action=null'
