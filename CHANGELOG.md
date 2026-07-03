@@ -2,6 +2,18 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.15]
+
+Closes a verified fail-open in the `enforce-gates.sh` commit-detection regex — the core safety hook now catches the `git commit` invocations that previously slipped past it. Also re-syncs `marketplace.json` to the plugin version (it had drifted to 0.1.13).
+
+### Fixed
+
+- **`enforce-gates.sh` — commit-detection fail-open.** The PreToolUse commit gate required `git` to be **immediately** followed by `commit`, so several real invocations bypassed a hook that is designed to fail **closed** and let an ungated commit through: global options between verb and subcommand (`git -C <path> commit`, `git -c user.name=x commit`, `git --no-pager commit`), leading environment assignments (`GIT_AUTHOR_NAME=x git commit`), command wrappers (`sudo`/`command`/`env`/`nice`/`doas`/`time`/`xargs`), path-qualified binaries (`/usr/bin/git commit`, `./git commit`), and option/env **values containing quoted whitespace** (`git -c user.name='A B' commit`). Both `commit_re` regexes (decoded-command and raw-JSON-fallback) are now assembled from shared, quote-aware sub-patterns tolerating all of the above; the trailing `commit(\b|$)` anchor is unchanged, so existing detection is a **strict superset** (no regression) and prose / non-commit subcommands (`git status`, `git log --grep=commit`) still pass. The fix was validated against `/usr/bin/grep` (the binary the hook resolves at runtime). Covered by a new 24-assertion `Bypass-form commit detection` section in `tests/enforcement-spine.test.sh` (decoded + raw bypass forms plus over-match guards). Known residuals are documented in the hook comment and deferred (wrapper-*options* like `sudo -u bob`, non-allowlisted wrappers, git aliases, raw-mode backslash-escaped quoted values, bare subshell/brace-group prefixes `(git commit)` / `{ git commit; }`, and the pre-existing fail-safe `git commit-graph`/`commit-tree` over-block).
+
+### Changed
+
+- **`marketplace.json` version re-synced.** Bumped from a stale `0.1.13` to match `plugin.json` (`0.1.15`); the two version fields must move together on every release.
+
 ## [0.1.14]
 
 Keeps auto-task branches conflict-free with the default branch by pulling `main` at both ends of a run — when the branch is created and again right before the handover commit — and always resolving any conflicts before the PR.
