@@ -33,19 +33,55 @@ else
   cmd="$input"
 fi
 
-# Only fire on `git commit`. Decoded command: anchor to shell boundaries so we
-# don't match `git committed-xyz` or the verb inside a quoted string. Raw JSON
-# fallback: we can't decode, but we can still require `git commit` to sit at a
-# command-ish boundary — start-of-string, a shell separator (`; & |` / backtick
-# / `$(`), or immediately after the JSON value's opening quote. That catches a
-# real commit (`"command":"git commit …"`, `cd x && git commit`) while no longer
-# blocking unrelated commands that merely mention the phrase in prose
-# (`echo see the git commit guidelines`). It keeps the fail-closed bias for the
-# genuinely-ambiguous case (a value literally starting `git commit`).
+# Only fire on `git commit`. We must catch every real invocation of the commit
+# subcommand while NOT matching the verb in prose (`echo see the git commit
+# guidelines`) or inside a longer token (`git committed-xyz`, `mygit`). A real
+# commit can be reached through several forms a naive `git[[:space:]]+commit`
+# misses — each of which would silently FAIL OPEN (skip the fail-closed gate
+# below), the exact defect this guards:
+#   - global options between git and the subcommand: `git -C <path> commit`,
+#     `git -c user.name=x commit`, `git --no-pager commit`
+#   - leading environment assignments: `GIT_AUTHOR_NAME=x git commit`
+#   - a command wrapper: `sudo git commit`, `command git commit`, `env A=b git commit`
+#   - a path-qualified binary: `/usr/bin/git commit`, `./git commit`
+#   - values containing quoted whitespace: `git -c user.name='A B' commit`
+# The regex is assembled from shared sub-patterns so the decoded-command and
+# raw-JSON-fallback variants stay in lockstep — they differ ONLY in the leading
+# boundary alternation (the raw variant also allows the JSON value's opening `"`,
+# since inside raw JSON the verb is preceded by `"` rather than a shell boundary).
+# `git` is anchored to a command boundary (start / shell separator `; & |` /
+# backtick / `$(` / — raw only — `"`), so prose mentions never match. The trailing
+# `commit(\b|$)` is intentionally UNCHANGED.
+#
+# Deliberately NOT covered (documented, lower-realism, deferred — NOT a silent
+# gap): wrapper OPTIONS (`sudo -u bob git commit`), wrappers outside the fixed
+# allowlist, git aliases / shell functions shadowing `git`, and — on the raw
+# jq-absent path only — quoted values whose inner quotes arrive backslash-escaped.
+# `jq` is a hard prerequisite (the gate fails closed when it is absent and a state
+# file exists), so raw mode is a degraded fallback. A fully evasion-proof detector
+# would need shell parsing, out of scope for a PreToolUse regex on the Bash hot path.
+# (Also pre-existing and untouched: the trailing `\b` over-blocks `git commit-graph`
+# / `git commit-tree` — a fail-SAFE false positive, deferred separately.)
+sq="'"
+# A shell "value" token: a double-quoted span, a single-quoted span, or a run of
+# non-space chars — so a quoted value containing spaces does not break the walk.
+val="(\"[^\"]*\"|${sq}[^${sq}]*${sq}|[^[:space:]])+"
+# Optional leading command wrappers (bounded allowlist — these reserved words only,
+# so they engage only at a command boundary, never as prose words mid-sentence).
+wrap="((sudo|command|env|nice|doas|time|xargs)[[:space:]]+)*"
+# Optional leading environment assignments (value may be quoted-with-spaces).
+envp="([A-Za-z_][A-Za-z0-9_]*=${val}?[[:space:]]+)*"
+# git, optionally path-qualified (`/usr/bin/git`, `./git`).
+gitq="([^[:space:]]*/)?git"
+# git global options before the subcommand: each a -token, optionally followed by
+# one value arg (covers `-C <path>`, `-c <k=v>`, quoted values). grep matching is
+# existential, so a flag directly before `commit` still leaves `commit` to match.
+opts="([[:space:]]+-[^[:space:]]+([[:space:]]+${val})?)*"
+mid="${wrap}${envp}${gitq}${opts}[[:space:]]+commit(\\b|\$)"
 if [ "$cmd_is_raw" -eq 1 ]; then
-  commit_re='(^|[;&|`]|\$\(|")[[:space:]]*git[[:space:]]+commit(\b|$)'
+  commit_re="(^|[;&|\`]|\\\$\\(|\")[[:space:]]*${mid}"
 else
-  commit_re='(^|[;&|`]|\$\()[[:space:]]*git[[:space:]]+commit(\b|$)'
+  commit_re="(^|[;&|\`]|\\\$\\()[[:space:]]*${mid}"
 fi
 if ! printf '%s' "$cmd" | LC_ALL=C grep -qE "$commit_re"; then
   exit 0

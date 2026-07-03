@@ -127,6 +127,40 @@ expect "Raw: chained commit (&&) BLOCKED"                 "$(grun '{"x":"cd app 
 # Prose mention mid-string (not at a command boundary) → NOT a commit → allowed.
 expect "Raw: prose 'git commit' NOT blocked"              "$(grun '{"x":"please read the git commit guidelines"}')" "0"
 
+echo "================ Bypass-form commit detection (fail-open regression) ================"
+# feat/widget is still on the blocking state set just above (approved, phase=execute,
+# gates false, no base/sha → staleness skipped), so any *detected* commit → exit 2 and
+# any *undetected* one → exit 0. These lock in the fix for commit invocations that the
+# old `git[[:space:]]+commit` regex missed and silently FAILED OPEN on. Labels are
+# prefixed "Bypass:" so a skip-guard can count the PASS lines.
+# ---- decoded payloads that MUST be detected (blocked, exit 2) ----
+expect "Bypass: decoded git -C <path> commit"             "$(grun '{"tool_input":{"command":"git -C /x commit -m y"}}')" "2"
+expect "Bypass: decoded git -c k=v commit"                "$(grun '{"tool_input":{"command":"git -c a.b=c commit -m y"}}')" "2"
+expect "Bypass: decoded ENV=val git commit"               "$(grun '{"tool_input":{"command":"GIT_AUTHOR_NAME=x git commit -m y"}}')" "2"
+expect "Bypass: decoded git -c quoted-value commit"       "$(grun "{\"tool_input\":{\"command\":\"git -c user.name='A B' commit\"}}")" "2"
+expect "Bypass: decoded quoted-env-value git commit"      "$(grun "{\"tool_input\":{\"command\":\"GIT_AUTHOR_NAME='A B' git commit\"}}")" "2"
+expect "Bypass: decoded git -p commit (flag before verb)" "$(grun '{"tool_input":{"command":"git -p commit"}}')" "2"
+expect "Bypass: decoded git --no-pager commit"            "$(grun '{"tool_input":{"command":"git --no-pager commit"}}')" "2"
+expect "Bypass: decoded sudo git commit"                  "$(grun '{"tool_input":{"command":"sudo git commit"}}')" "2"
+expect "Bypass: decoded command git commit"               "$(grun '{"tool_input":{"command":"command git commit"}}')" "2"
+expect "Bypass: decoded env FOO=x git commit"             "$(grun '{"tool_input":{"command":"env FOO=x git commit"}}')" "2"
+expect "Bypass: decoded nice git commit"                  "$(grun '{"tool_input":{"command":"nice git commit -m z"}}')" "2"
+expect "Bypass: decoded /usr/bin/git commit"              "$(grun '{"tool_input":{"command":"/usr/bin/git commit"}}')" "2"
+expect "Bypass: decoded ./git commit"                     "$(grun '{"tool_input":{"command":"./git commit"}}')" "2"
+expect "Bypass: decoded sudo git -C /x commit (combo)"    "$(grun '{"tool_input":{"command":"sudo git -C /x commit"}}')" "2"
+# ---- raw payloads (no .tool_input.command → raw regex) that MUST be detected ----
+expect "Bypass: raw git -C <path> commit"                 "$(grun '{"x":"git -C /x commit -m y"}')" "2"
+expect "Bypass: raw ENV=val git commit"                   "$(grun '{"x":"GIT_AUTHOR_NAME=x git commit"}')" "2"
+expect "Bypass: raw sudo git commit"                      "$(grun '{"x":"sudo git commit"}')" "2"
+expect "Bypass: raw /usr/bin/git commit"                  "$(grun '{"x":"/usr/bin/git commit"}')" "2"
+# ---- forms that MUST NOT be treated as a commit (allowed, exit 0) ----
+expect "Bypass: decoded prose NOT blocked"                "$(grun '{"tool_input":{"command":"echo see the git commit guidelines"}}')" "0"
+expect "Bypass: decoded git log --grep=commit NOT blocked" "$(grun '{"tool_input":{"command":"git log --grep=commit"}}')" "0"
+expect "Bypass: decoded git status NOT blocked"           "$(grun '{"tool_input":{"command":"git status"}}')" "0"
+expect "Bypass: decoded sudo git status NOT blocked"      "$(grun '{"tool_input":{"command":"sudo git status"}}')" "0"
+expect "Bypass: decoded mid-sentence 'command' NOT blocked" "$(grun '{"tool_input":{"command":"echo run the command git commit to save"}}')" "0"
+expect "Bypass: raw prose NOT blocked"                    "$(grun '{"x":"read the git commit docs first"}')" "0"
+
 echo "================ Stall-breaker (Stop hook soft-lock release) ================"
 # A valid mid-pipeline state blocks every turn-end. With AUTO_TASK_STALL_LIMIT
 # low, repeated stops in the SAME state must eventually RELEASE to avoid a
