@@ -2,6 +2,25 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.16]
+
+Adds opt-in, local run-outcome telemetry so maintainers can measure the pipeline's own completion rate and find where runs stall. Purely additive — no network, no new PII, no change to the orchestrator's runtime behavior.
+
+### Added
+
+- **`record-outcome.sh` — opt-in run-outcome archiver (Stop hook).** When the ledger `.auto-task/outcomes.jsonl` exists (opt in with `touch .auto-task/outcomes.jsonl`), a run reaching `phase: done` appends **one** JSON row derived entirely from `STATE.json` (tier, initial tier, effort escalations, fix/review iterations, Gate B outcome, follow-up count, duration). A **base-keyed sentinel** (`.auto-task/<branch>/.outcome-recorded`) makes it write exactly once per run — a fresh run reusing a branch folder (new `base`) is recorded again, and a `base`-less/legacy state falls back to presence-based dedup so it can never spam duplicate rows. Fail-open and non-blocking: it **always** exits 0 and emits no Stop-block decision, so telemetry can never interfere with a session or with the anti-stall hook. Silent no-op unless opted in; cheap early-exits keep non-auto-task repos free. Mirrors `prevent-mid-protocol-stall.sh`'s worktree-retarget + fail-open conventions.
+- **`auto-task-stats.sh` + `auto-task-stats` skill — read-only telemetry reporter.** Merges the archived ledger with every live `.auto-task/*/STATE.json` on disk (so in-flight and stalled runs, which never reach the ledger, are still counted), de-duplicating on **branch+base**. Reports overall completion rate, where stalled runs died (phase + last-history summary), a per-tier table (count / median fix / median review / % escalated), **Gate B coverage** (how many STANDARD/HEAVY runs ran the adversarial gate to a pass vs. were skipped), effort mis-scoring rate, and average parked follow-ups. Reads every field with a `jq // default` for forward-compat across ledger-schema changes, and guards the empty/just-opted-in ledger (no divide-by-zero). Invoke as `/auto-task:auto-task-stats [stale-days]` (marketplace) or `/auto-task-stats` (install.sh fallback).
+- **`tests/record-outcome.test.sh`** — 41 assertions covering the archiver (opt-out silence, non-done silence, write-once, run-scoped and empty-base sentinel behavior, field-correctness, never-blocks) and the reader (classification, branch+base dedup, empty-ledger guard, all output sections).
+
+### Changed
+
+- **`hooks/hooks.json`** — registers `record-outcome.sh` in the `Stop` array after `prevent-mid-protocol-stall.sh` (the blocking anti-stall hook runs first; the telemetry hook never blocks).
+- **`install.sh`** — adds `auto-task-stats` to the `SKILLS` array so the offline/dev install links the new skill (marketplace installs auto-discover it).
+
+### Notes
+
+- A per-run "Gate B caught a bug" count is intentionally **not** reported: the orchestrator records a Gate B bounce only as a review-loop iteration, not a distinct `STATE.json` signal, so it can't be reconstructed after the fact without changing pipeline behavior. The honest, derivable "Gate B coverage" (ran-to-pass vs. skipped) is reported instead.
+
 ## [0.1.15]
 
 Closes a verified fail-open in the `enforce-gates.sh` commit-detection regex — the core safety hook now catches the `git commit` invocations that previously slipped past it. Also re-syncs `marketplace.json` to the plugin version (it had drifted to 0.1.13).
