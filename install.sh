@@ -17,7 +17,7 @@ CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
 SKILLS_DIR="$CLAUDE_DIR/skills"
 AGENTS_DIR="$CLAUDE_DIR/agents"
 
-SKILLS=(auto-task auto-task-plan auto-task-implement auto-task-verify auto-task-code-review auto-task-commit auto-task-fix)
+SKILLS=(auto-task auto-task-plan auto-task-implement auto-task-verify auto-task-code-review auto-task-commit auto-task-fix auto-task-stats)
 AGENTS=(task-execution-verifier.md)
 
 MODE="link"
