@@ -213,9 +213,28 @@ By tier
 Gate B coverage        ran on 2/2 standard+heavy runs (0 skipped)
 Effort mis-scoring     33% of completed runs escalated tier mid-run
 Follow-up debt         1.3 parked follow-ups per completed run (avg)
+
+Run metrics (estimate vs actual, quality signals)
+Estimate accuracy      tokens: actual/est median 1.15x (n=3)
+                       time:   actual/est median 0.9x (n=3)
+Late-defect rate       33% of completed runs had a late (Gate-B) defect
+Flakiness rate         0% of completed runs hit a flaky test
+Tests-added rate       100% of completed runs touched a test file
 ```
 
 A live, approved, non-`done` run whose newest history entry is older than the stale threshold is reported as **stalled**; newer than it, **in-flight**. "Gate B coverage" is how many STANDARD/HEAVY runs actually ran the adversarial gate to a pass (vs. were skipped) — derived from the recorded `gate_b` outcome. (A per-run "did Gate B catch a bug" count isn't reported: the orchestrator doesn't record a Gate B bounce as a distinct `STATE.json` signal, only as a review-loop iteration, so it can't be reconstructed after the fact without changing pipeline behavior.)
+
+## Run metrics — estimate vs actual, quality signals
+
+Every run now measures itself and reports it in the final summary (and, if telemetry is opted in, as cross-run trends above).
+
+- **Estimate before execution.** At the Phase-1 approval gate the plan carries an `## Estimate` of wall-clock time and token usage, computed by `hooks/estimate.sh` from the scored tier/difficulty/risk, the Acceptance-Criteria count, and the blast-radius file count. It's a deliberately simple **static heuristic** (no calibration on run #1) — the value is the estimate-vs-actual *trend* over many runs, not any single number.
+- **Actual measurement.** At handover, `hooks/token-usage.sh` sums `message.usage` from the session transcript(s) under `~/.claude/projects/<slug>/`, **run-scoped** by `--since <run-start>` (it sums across multiple transcripts, so a resumed / new-session / post-compaction run isn't undercounted). Wall-clock comes from the run's history timestamps. Caveat: token accounting is approximate for sub-agent sidechains and any concurrent unrelated work in the same session. A failed measurement is recorded as `null` (never a fabricated `0`).
+- **Estimate vs actual.** The CONTEXT.md and PR carry an `## Estimate vs actual` table (estimated · actual · Δ · ratio) for both time and tokens.
+- **Checks manifest.** `## Checks performed` enumerates *every* verification the run executed — typecheck, lint, build, unit, e2e/playwright, each AC bound-check, the universal `hooks/checks.sh` hygiene checks (secret-scan, conflict-markers, debug-artifacts, large-files, diff-size, tests-added), and the Gate A/B findings — each with a pass/fail/warn result. `checks.sh` runs in self-verify; a real secret or leftover conflict marker outside test/fixture paths fails the run.
+- **Quality signals — not a score.** `## Quality signals` is a panel (defects caught early vs. late, delivery reliability = estimate accuracy + loop count, scope discipline, completeness, and a maintainability read **reused from the code-review verdict**), with an explicit note of what a single run *cannot* measure (business impact, collaboration, long-term maintainability). There is deliberately **no composite 0–100 score**: a single number invites optimizing to the metric and hides those blind spots. Quality is best read as *signals plus trends over time* — which is what the telemetry section above provides.
+
+The measurement helpers are pure, deterministic, fail-open (they never break a run), and each has a focused test under `tests/`.
 
 ## Pruning history
 

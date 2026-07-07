@@ -83,6 +83,15 @@ expect "row.review_iterations" "$(printf '%s' "$ROW" | jq -r '.review_iterations
 expect "row.gate_b"            "$(printf '%s' "$ROW" | jq -r '.gate_b')"           "passed"
 expect "row.followups"         "$(printf '%s' "$ROW" | jq -r '.followups')"        "2"
 expect "row.duration_min"      "$(printf '%s' "$ROW" | jq -r '.duration_min')"     "27"
+# Forward-compat: a legacy STATE without estimate/actuals/quality/checks still
+# yields a valid row with the new metric fields defaulted (null / 0 / false).
+expect "row.est_tokens default null"   "$(printf '%s' "$ROW" | jq -r '.est_tokens')"    "null"
+expect "row.act_tokens default null"   "$(printf '%s' "$ROW" | jq -r '.act_tokens')"    "null"
+expect "row.est_duration_min null"     "$(printf '%s' "$ROW" | jq -r '.est_duration_min')" "null"
+expect "row.act_duration_min = dur"    "$(printf '%s' "$ROW" | jq -r '.act_duration_min')" "27"
+expect "row.checks_run default 0"      "$(printf '%s' "$ROW" | jq -r '.checks_run')"    "0"
+expect "row.defects_late default 0"    "$(printf '%s' "$ROW" | jq -r '.defects_late')"  "0"
+expect "row.flaky default false"       "$(printf '%s' "$ROW" | jq -r '.flaky')"         "false"
 
 # (b) second run, SAME base → sentinel dedups, still one row.
 expect "same-run rerun: hook exits 0"                "$(rec "$T")"                  "0"
@@ -169,6 +178,23 @@ mkdir -p "$T3/.auto-task"; : > "$T3/.auto-task/outcomes.jsonl"
 OUTE="$(CLAUDE_PROJECT_DIR="$T3" bash "$STATS"; echo "EXIT=$?")"
 expect_has "empty ledger: friendly no-runs message"  "$OUTE" "No runs recorded yet"
 expect_has "empty ledger: exit 0"                    "$OUTE" "EXIT=0"
+
+echo "================ Lockstep: metric fields present in BOTH DERIVE blocks ================"
+# record-outcome.sh (archiver) and auto-task-stats.sh (reader) must derive the
+# SAME metric fields, or archived rows and live-done rows disagree. Assert every
+# metric field name appears in both scripts' derivations.
+REC_SH="$HOOKS/record-outcome.sh"; STATS_SH="$HOOKS/auto-task-stats.sh"
+for k in est_duration_min est_tokens act_duration_min act_tokens \
+         defects_early defects_late flaky tests_added diff_loc first_pass_ac \
+         checks_run checks_failed; do
+  ir="$(grep -c "${k}:" "$REC_SH" 2>/dev/null || echo 0)"
+  is="$(grep -c "${k}:" "$STATS_SH" 2>/dev/null || echo 0)"
+  if [ "$ir" -ge 1 ] && [ "$is" -ge 1 ]; then
+    PASS=$((PASS+1)); printf '  PASS  %-52s (both)\n' "lockstep: $k"
+  else
+    FAIL=$((FAIL+1)); printf '  FAIL  %-52s rec=%s stats=%s\n' "lockstep: $k" "$ir" "$is"
+  fi
+done
 
 echo ""
 echo "================ SUMMARY: $PASS passed, $FAIL failed ================"

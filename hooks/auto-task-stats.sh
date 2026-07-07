@@ -50,12 +50,18 @@ fi
 
 # The archiver-equivalent derivation: normalize a done STATE.json into a row so
 # live-but-unarchived done runs are counted identically to archived ones. Kept in
-# lockstep with record-outcome.sh's jq derivation.
+# lockstep with record-outcome.sh's jq derivation — the metric fields (est_*/act_*
+# + quality-signal trend fields) MUST match that block VERBATIM (a regression test
+# asserts the two field sets are identical). est_*/act_* are `null` when unmeasured
+# so the accuracy ratio below can exclude them.
 DERIVE='
   (.history // []) as $h
   | ($h | map(.at // empty)) as $ats
   | ($ats | first) as $t0
   | ($ats | last) as $t1
+  | (if ($t0 != null and $t1 != null)
+       then (((($t1 | fromdateiso8601?) // 0) - (($t0 | fromdateiso8601?) // 0)) / 60 | floor)
+       else 0 end) as $dur
   | {
       at: ($t1 // ""),
       branch: (.branch // ""),
@@ -67,7 +73,20 @@ DERIVE='
       fix_iterations: (.iteration.fix // 0),
       review_iterations: (.iteration.review // 0),
       gate_b: (if (.gates.gate_b.passed // false) then "passed" else ((.gates.gate_b.skipped_reason // "") | .[0:120]) end),
-      followups: ((.followups // []) | length)
+      followups: ((.followups // []) | length),
+      duration_min: $dur,
+      est_duration_min: (.estimate.duration_min // null),
+      est_tokens: (.estimate.tokens_total // null),
+      act_duration_min: (.actuals.duration_min // $dur),
+      act_tokens: (.actuals.tokens_total // null),
+      defects_early: (.quality.defects.early // 0),
+      defects_late: (.quality.defects.late // 0),
+      flaky: (.quality.flaky // false),
+      tests_added: (.quality.tests_added // false),
+      diff_loc: (((.quality.diff.loc_added // 0) + (.quality.diff.loc_removed // 0))),
+      first_pass_ac: (.quality.planning.first_pass_ac // null),
+      checks_run: ((.checks // []) | length),
+      checks_failed: ((.checks // []) | map(select(.result=="fail")) | length)
     }'
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
@@ -163,7 +182,14 @@ agg="$(jq -s '
     sh_total: (map(select(.tier=="standard" or .tier=="heavy")) | length),
     sh_ran: (map(select((.tier=="standard" or .tier=="heavy") and (.gate_b=="passed"))) | length),
     pct_misscored: (if length==0 then 0 else ((map(select((.escalations // 0) > 0)) | length) * 100 / length | floor) end),
-    avg_followups: (if length==0 then 0 else ((map(.followups // 0) | add) / length) end)
+    avg_followups: (if length==0 then 0 else ((map(.followups // 0) | add) / length) end),
+    ratio_tokens: (map(select(((.est_tokens // 0) > 0) and ((.act_tokens // 0) > 0)) | (.act_tokens / .est_tokens)) | median),
+    n_tok: (map(select(((.est_tokens // 0) > 0) and ((.act_tokens // 0) > 0))) | length),
+    ratio_dur: (map(select(((.est_duration_min // 0) > 0) and ((.act_duration_min // 0) > 0)) | (.act_duration_min / .est_duration_min)) | median),
+    n_dur: (map(select(((.est_duration_min // 0) > 0) and ((.act_duration_min // 0) > 0))) | length),
+    late_rate: (if length==0 then 0 else ((map(select((.defects_late // 0) > 0)) | length) * 100 / length | floor) end),
+    flaky_rate: (if length==0 then 0 else ((map(select(.flaky == true)) | length) * 100 / length | floor) end),
+    tests_rate: (if length==0 then 0 else ((map(select(.tests_added == true)) | length) * 100 / length | floor) end)
   }' "$rows" 2>/dev/null || echo '{}')"
 
 terminal=$((done_count + stalled))
@@ -204,5 +230,29 @@ avg_followups="$(printf '%s' "$agg" | jq -r '(.avg_followups // 0) | (.*10|round
 printf 'Gate B coverage        ran on %s/%s standard+heavy runs (%s skipped)\n' "$sh_ran" "$sh_total" "$sh_skipped"
 printf 'Effort mis-scoring     %s%% of completed runs escalated tier mid-run\n' "$pct_misscored"
 printf 'Follow-up debt         %s parked follow-ups per completed run (avg)\n' "$avg_followups"
+echo ""
+
+# --- Run metrics: estimate accuracy + quality-signal trends ------------------
+rt="$(printf '%s' "$agg" | jq -r '(.ratio_tokens // 0) | (.*100|round)/100' 2>/dev/null || echo 0)"
+rd="$(printf '%s' "$agg" | jq -r '(.ratio_dur // 0) | (.*100|round)/100' 2>/dev/null || echo 0)"
+n_tok="$(printf '%s' "$agg" | jq -r '.n_tok // 0' 2>/dev/null || echo 0)"
+n_dur="$(printf '%s' "$agg" | jq -r '.n_dur // 0' 2>/dev/null || echo 0)"
+late_rate="$(printf '%s' "$agg" | jq -r '.late_rate // 0' 2>/dev/null || echo 0)"
+flaky_rate="$(printf '%s' "$agg" | jq -r '.flaky_rate // 0' 2>/dev/null || echo 0)"
+tests_rate="$(printf '%s' "$agg" | jq -r '.tests_rate // 0' 2>/dev/null || echo 0)"
+
+echo "Run metrics (estimate vs actual, quality signals)"
+if [ "$n_tok" -gt 0 ]; then
+  printf 'Estimate accuracy      tokens: actual/est median %sx (n=%s)\n' "$rt" "$n_tok"
+else
+  printf 'Estimate accuracy      tokens: no measured runs yet\n'
+fi
+if [ "$n_dur" -gt 0 ]; then
+  printf '                       time:   actual/est median %sx (n=%s)\n' "$rd" "$n_dur"
+fi
+printf 'Late-defect rate       %s%% of completed runs had a late (Gate-B) defect\n' "$late_rate"
+printf 'Flakiness rate         %s%% of completed runs hit a flaky test\n' "$flaky_rate"
+printf 'Tests-added rate       %s%% of completed runs touched a test file\n' "$tests_rate"
+printf '(A median actual/est ratio >1 means runs cost MORE than estimated; <1 means less.)\n'
 
 exit 0

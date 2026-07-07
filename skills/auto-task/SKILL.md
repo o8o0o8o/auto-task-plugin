@@ -113,6 +113,30 @@ Define-phase scoring (see Phase 1 rubric) produces Difficulty (D) and Risk (R), 
       { "from": "standard", "to": "heavy", "reason": "schema migration not in initial blast radius", "at": "ISO-8601" }
     ]
   },
+  "estimate": {
+    "duration_min": 0, "tokens_total": 0,
+    "tokens_breakdown": { "input": 0, "output": 0, "cache": 0 },
+    "basis": "<from estimate.sh; fields are null when unestimable>", "at": "ISO-8601"
+  },
+  "actuals": {
+    "duration_min": 0, "tokens_total": 0,
+    "tokens_breakdown": { "input": 0, "output": 0, "cache_read": 0, "cache_creation": 0 },
+    "at": "ISO-8601"
+  },
+  "quality": {
+    "defects": { "early": 0, "late": 0, "by_severity": {} },
+    "tests_added": false, "flaky": false,
+    "diff": { "files": 0, "loc_added": 0, "loc_removed": 0 },
+    "planning": { "est_time_ratio": null, "est_token_ratio": null, "drift": 0, "escalations": 0, "first_pass_ac": null },
+    "maintainability_note": "<reused verbatim from the code-review verdict — NOT a bespoke score>",
+    "not_measured": ["business impact", "collaboration", "long-term maintainability"]
+  },
+  "checks": [
+    { "name": "typecheck", "category": "build", "command": "tsc --noEmit", "gate": "self-verify", "result": "pass", "evidence": "exit 0", "at": "ISO-8601" }
+  ],
+  "requirements": [
+    { "id": "R1", "text": "<atomic, unambiguous requirement dissected from the task>", "covered_by_acs": [1, 3], "status": "pending|done|dropped" }
+  ],
   "iteration": { "review": 0, "fix": 0 },
   "history": [
     { "phase": "self-verify", "result": "fail", "summary": "2 tests failing", "at": "ISO-8601" }
@@ -131,6 +155,8 @@ Define-phase scoring (see Phase 1 rubric) produces Difficulty (D) and Risk (R), 
 ```
 
 Update this file at every phase transition and at the end of every loop iteration.
+
+**Run-metrics objects (`estimate`, `actuals`, `quality`, `checks`).** These are additive and populated by the run-metrics helpers + orchestrator (see "Run metrics" wiring in Phases 1, 3, and 5). They never gate a commit — `enforce-gates.sh` reads only `gates.*`. `estimate`/`actuals` token+time fields are `null` (never `0`) when a measurement could not be taken, so the telemetry reader (`auto-task-stats`) EXCLUDES them from the actual/estimate ratio instead of dividing by zero. `quality` is a **signals panel, not a composite score** (the maintainability read is reused verbatim from the code-review verdict; per-run business impact / collaboration / long-term maintainability are explicitly out of reach and listed under `not_measured`). `checks[]` is the comprehensive checks manifest surfaced in the final summary.
 
 ### Yield-point contract (mechanical anti-stall enforcement)
 
@@ -455,6 +481,14 @@ Use the recon findings as input to the next step.
 
 Invoke the `auto-task-plan` skill internally. The plan MUST include an explicit **Acceptance Criteria** section with objectively verifiable items. The `auto-task-plan` skill's default template does NOT produce one — you MUST append it before stopping, or the run cannot proceed.
 
+**Requirements decomposition (NON-NEGOTIABLE — the task, made unambiguous).** Before (or alongside) the AC table, dissect the raw task description into an explicit, numbered `## Requirements` list in `.auto-task/<branch>/PLAN.md`, and mirror it to `state.requirements[]`. Each requirement is:
+
+- **Atomic** — one testable obligation, not a paragraph. Split "estimate time and tokens, then compare" into separate requirements.
+- **Unambiguous** — phrased so a third party reads exactly one meaning; resolve vagueness using the Clarifications (asked answers + evidence-backed resolutions), never by leaving it fuzzy.
+- **Traceable** — an `id` (`R1`, `R2`, …), the requirement `text`, `covered_by_acs` (the AC row numbers that verify it), and a `status` (`pending` → `done`, or `dropped` with a reason if explicitly descoped).
+
+Then bind the two together: **every Acceptance Criterion names the requirement(s) it verifies (add a `Req` column to the AC table), and every requirement is covered by ≥1 AC.** Run `hooks/requirements-coverage.sh <STATE.json>` (locate via the three-probe pattern) and require `all_covered == true` BEFORE presenting the plan for approval — an uncovered requirement means the AC table is incomplete, so fix it (add an AC) rather than stopping. This is what makes "is the task done?" a checklist, not a judgment call: Phase 5 re-runs the same helper to confirm `all_complete == true`. Log `{ phase: "define-requirements", count: <n>, all_covered: <bool>, at: "ISO-8601" }`.
+
 **Acceptance Criteria contract (NON-NEGOTIABLE).** Phase 1 cannot complete unless `.auto-task/<branch>/PLAN.md` contains an `## Acceptance Criteria` section that satisfies every rule below. If any rule fails, do NOT stop for human approval — fix the AC table first, then stop. The user approval gate verifies these rules are met before accepting "approved".
 
 Required format — a table, not prose:
@@ -526,6 +560,14 @@ In addition to what `auto-task-plan` produces, write a short feasibility note at
 - Production blast: internal tool (0), user-facing (1), auth / payments / data integrity / multi-tenant (2)
 
 Write D, R, and the resulting tier into both `.auto-task/<branch>/PLAN.md` and state's `effort` object.
+
+**Run-metrics estimate (auto — pre-execution).** Once tier/D/R are scored and the AC table + blast-radius file list exist, compute the pre-execution estimate so the user sees the run's likely cost at the approval gate. Locate the helper via the same three-probe pattern used for `check-version.sh` (`CLAUDE_PLUGIN_ROOT` is empty in the Bash-tool env), substituting `hooks/estimate.sh`. Then:
+
+```bash
+est="$(bash "$estimate_sh" --tier "$TIER" --difficulty "$D" --risk "$R" --acs "$AC_COUNT" --files "$BLAST_FILES")"
+```
+
+Write the parsed result to `state.estimate` (`duration_min`, `tokens_total`, `tokens_breakdown`, `basis`, `at`) and add an `## Estimate` section to `.auto-task/<branch>/PLAN.md` (a small table: metric | estimate | basis). Surface it in the plan presentation at the approval gate — this is the "estimate before execution" the metrics feature promises; the final summary later compares it against measured actuals. Log `{ phase: "define-estimate", result: "<duration>min/<tokens>tok", at: "ISO-8601" }` to `state.history`. **Fail-open:** if the helper cannot be located or returns null fields, record the estimate as unavailable (a visible note, never a fabricated number) and proceed — the estimate never blocks the run. **Bootstrap caveat:** if this run is itself modifying `estimate.sh`, the not-yet-installed helper cannot self-estimate; compute the estimate manually from the same heuristic and note it.
 
 **Critique pass.** Before stopping for human approval, spawn a `general-purpose` Agent with a fresh-context prompt containing:
 - `.auto-task/<branch>/PLAN.md` as the only input.
@@ -638,7 +680,14 @@ Same rules as Phase 1 recon apply: **read-only by default** (writes to external 
 
 `gates.self_verify.passed` cannot be set to `true` unless EVERY `self-verify`-gated AC row has a recorded `result: "pass"` entry from the current iteration. If the `auto-task-verify` skill's report says "all quality checks PASS" but an AC's bound check was never executed (e.g., the test file the AC names doesn't exist yet), that is a FAIL — surface it as a missing test, not a pass. Do not treat AC coverage as optional just because the generic checks were green.
 
-- All `auto-task-verify`-skill tasks COMPLETE + all quality checks PASS + every `self-verify` AC executed with `result: "pass"` → set `gates.self_verify = { passed: true, at: <ISO>, evidence: "<short summary of checks that passed, including which AC rows ran>" }` and advance to Gate A.
+**Checks-manifest capture (NON-NEGOTIABLE — builds the "comprehensive checks" the summary enumerates).** Every verification run in this phase MUST be recorded to `state.checks[]` so the final summary can list them all. A check row is `{ name, category, command, gate, result: "pass|fail|warn|info|skip", evidence, at }`. Populate it from two sources:
+
+1. **Each `auto-task-verify` check** (typecheck, lint, build, unit, e2e/playwright) and **each `self-verify` AC bound-check** — one row per check, `gate: "self-verify"`, `result` from its exit code / comparison, `evidence` a short snippet.
+2. **Universal hygiene/defect checks** via `hooks/checks.sh` (locate with the three-probe pattern). Run `checks.sh --base <base>` and append every returned row (secret-scan, conflict-markers, debug-artifacts, large-files, diff-size, tests-added) to `state.checks[]` with `gate: "self-verify"`. **A `result: "fail"` row (a real secret or a leftover conflict marker outside test/fixture paths) FAILS self-verify** — route it into the fix loop exactly like a failing quality check. `warn`/`info` rows are recorded but do not block.
+
+Gate A and Gate B likewise append their findings to `state.checks[]` (tagged with the appropriate `gate`), so the manifest is complete by Phase 5. This is additive to the `self-verify-ac` / `gate-a-ac` history entries — reuse their evidence rather than re-running. Fail-open: if `checks.sh` cannot be located, record a single `metric-unavailable` note and proceed (never a silent skip that reads as "all clean").
+
+- All `auto-task-verify`-skill tasks COMPLETE + all quality checks PASS + every `self-verify` AC executed with `result: "pass"` + no `checks.sh` `fail` row → set `gates.self_verify = { passed: true, at: <ISO>, evidence: "<short summary of checks that passed, including which AC rows ran>" }` and advance to Gate A.
 - Any task PARTIAL/NOT FOUND, or any quality check FAIL → diagnose:
   - If the failure indicates flakiness (intermittent test, retry-passes-without-change) → STOP and surface per Loop rule.
   - Otherwise → invoke `/auto-task-fix` against the failing item (which modifies the working tree, no commit), then return to start of Phase 3. Increment `iteration.fix`.
@@ -729,6 +778,7 @@ This is the **only phase that commits**. By the time you reach it, the working t
    - `gates.code_review.passed === true` — required.
    - For STANDARD/HEAVY tier: `gates.gate_b.passed === true` (or `gates.gate_b.skipped_reason` set with a valid reason).
    If either is missing, STOP and surface — something went wrong in the pipeline and you should not be in Phase 5. Do NOT manually set the flags to escape this.
+   - **Requirements completion check.** Set each satisfied `state.requirements[].status` to `done` (based on its `covered_by_acs` ACs having passed), then run `hooks/requirements-coverage.sh <STATE.json>` and require `all_complete == true`. Any requirement still `pending` means an obligation of the original task is unverified — do NOT commit; feed it back as a fix (or, only with the user's standing approval, mark it `dropped` with a reason). This is the "check every requirement on completion" contract: the task is done only when every dissected requirement is individually verified.
 2. **Build the change diagram.** Produce a human-readable Mermaid diagram that the reviewer can scan in ~10 seconds to understand what the run did and (where applicable) what the prior state looked like. Embed it in the PR body under `## Change diagram` so GitHub renders it inline. This is a MANDATORY step — every auto-task PR must carry a diagram or a one-line documented skip.
 
    **Pick the diagram type that matches the change.** Use ONE diagram unless the task spans multiple concerns and a second adds clear value:
@@ -781,6 +831,11 @@ This is the **only phase that commits**. By the time you reach it, the working t
 
    If `.auto-task/<branch>/CONTEXT.md` already exists (re-run, resumed run), overwrite without prompting — it's generated content.
 
+   **Before rendering — compute run metrics (actuals + quality signals).** These feed the new CONTEXT.md sections below, the PR `## Run notes`, and telemetry:
+   - **Actuals.** Locate `hooks/token-usage.sh` (three-probe pattern) and run `token-usage.sh --since <earliest state.history .at>` → write `state.actuals` (`tokens_total`, `tokens_breakdown`, `at`). Compute `state.actuals.duration_min` with the same first→last history-timestamp formula `record-outcome.sh` uses. Fail-open: `null` on failure (never a fabricated number).
+   - **Quality signals (NOT a score).** Assemble `state.quality` from data already in state: `defects.early` = count of self-verify/Gate-A findings, `defects.late` = count of code-review/Gate-B findings; `flaky` from any flakiness surfaced; `tests_added` from the `checks.sh` tests-added row; `diff` from `git diff --numstat <base>`; `planning.est_time_ratio`/`est_token_ratio` = actual/estimate (null when the estimate is null); `drift`/`escalations` from history; `first_pass_ac` = share of ACs green on the first self-verify; `maintainability_note` = a one-line quote of the code-review verdict's maintainability read (**reused, not recomputed** — no bespoke judge); `not_measured` = the fixed list. **Emit NO composite 0–100 score** — the panel is the deliverable (a single number is gameable and hides what a run can't see).
+   - Save `artifacts/token-usage.json` + `artifacts/checks.json`; log `{ phase: "handover-metrics", est: "...", act: "...", at: "ISO-8601" }`.
+
    **Required sections (in this order; if a section has nothing to say, keep the heading and write `None.` with a one-line reason — predictable structure is the artifact's whole point):**
 
    ```markdown
@@ -830,9 +885,12 @@ This is the **only phase that commits**. By the time you reach it, the working t
    - Final: <tier> (D=<n>, R=<n>)
    - Escalations: <one bullet per `effort.history` entry, in order; or "None.">
 
+   ## Requirements coverage
+   The dissected task requirements and their completion — from `state.requirements[]` + `requirements-coverage.sh`. One row per requirement: `| id | requirement | covered by (ACs) | status |`. End with the coverage tally (`N requirements: C covered / D done / K dropped — all_covered=<bool>, all_complete=<bool>`). Every requirement MUST be `done` (or explicitly `dropped` with a reason) for a completed run — this is the per-requirement completion check.
+
    ## Acceptance Criteria results
    For each AC row in PLAN.md:
-   - **AC #N — <criterion text>**
+   - **AC #N — <criterion text>** (verifies: <Req ids>)
      - Gate: <self-verify | gate-a | gate-b>
      - Verification method: <command/observation, verbatim from PLAN.md>
      - Result: <pass | fail-then-fixed | n/a>
@@ -843,6 +901,25 @@ This is the **only phase that commits**. By the time you reach it, the working t
    - **Gate A** (independent verifier): <gates.gate_a.evidence; or "skipped — <reason>" if applicable>
    - **Code review** (Phase 4, `auto-task-code-review` skill): <gates.code_review.evidence; iteration count if > 1>
    - **Gate B** (adversarial verifier): <gates.gate_b.evidence; or "skipped — tier=light" / other skip reason>
+
+   ## Estimate vs actual
+   | Metric | Estimated | Actual | Δ | actual/est |
+   |---|---|---|---|---|
+   | Wall-clock (min) | <state.estimate.duration_min> | <state.actuals.duration_min> | <act−est> | <ratio> |
+   | Tokens (total)   | <state.estimate.tokens_total> | <state.actuals.tokens_total> | <act−est> | <ratio> |
+   Token scope caveat: run-scoped via `--since`; sub-agent sidechains + concurrent same-session work are approximate. If either side is `null` (unmeasured), write "unavailable" — never fabricate. If the estimate was a manual bootstrap (a run that built `estimate.sh`), say so.
+
+   ## Checks performed
+   The comprehensive checks manifest — every row of `state.checks[]` as a table: `| check | category | gate | result | evidence |`. Includes typecheck/lint/build/unit/e2e, each AC bound-check, the `checks.sh` hygiene checks (secret-scan, conflict-markers, debug-artifacts, large-files, diff-size, tests-added), and Gate A/B findings. Order so any `fail`/`warn` rows appear first; end with a one-line tally (`N checks: X pass / Y warn / Z fail / W info`).
+
+   ## Quality signals
+   The `state.quality` panel — **not a single score** (per the quality rubric: a composite invites gaming and hides what one run cannot see):
+   - **Defects:** <early> caught early (self-verify/Gate A) · <late> caught late (code-review/Gate B).
+   - **Delivery reliability:** time <est_time_ratio>× · tokens <est_token_ratio>× estimate · <fix>/<review> fix/review loops.
+   - **Scope discipline:** <drift> drift event(s) · <escalations> effort escalation(s).
+   - **Completeness:** first-pass AC <first_pass_ac> · tests added: <yes/no>.
+   - **Maintainability (from the code-review verdict, reused):** <maintainability_note>.
+   - **Not measurable per-run:** business impact, collaboration, long-term maintainability.
 
    ## Drift events
    One bullet per `state.history` entry with `result: "drift"`. Format: `<phase>: <files outside Blast Radius> — <one-line summary> — <action taken: continued | tier escalated | surfaced>`. Skip `result: "adjacent"` entries. If none, write `None — execution stayed within planned Blast Radius.`
@@ -901,11 +978,23 @@ This is the **only phase that commits**. By the time you reach it, the working t
    <diagram from step 2, or the skip line>
    ```
 
+   ## Requirements coverage
+   <one row per state.requirements[]: id | requirement | covered-by ACs | status — every requirement done or explicitly dropped; end with all_covered/all_complete tally>
+
    ## Acceptance Criteria
    <checklist from PLAN.md, all checked>
 
    ## Test plan
    <quality checks run + their results>
+
+   ## Estimate vs actual
+   <compact table from state.estimate/actuals: metric | estimated | actual | actual/est — write "unavailable" for any null side; note if the estimate was a manual bootstrap>
+
+   ## Checks performed
+   <one-line tally `N checks: X pass / Y warn / Z fail / W info` from state.checks[], then list any fail/warn rows; the full manifest lives in the local CONTEXT.md>
+
+   ## Quality signals
+   <the state.quality panel as bullets — defects early/late, delivery reliability (est×), scope discipline, completeness, maintainability (from review verdict); NOT a single score. End with the "not measurable per-run" note.>
 
    ## Run notes
    <derived from state — see "Run notes content" below>

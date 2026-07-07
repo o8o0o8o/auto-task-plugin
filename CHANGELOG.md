@@ -2,6 +2,29 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.0]
+
+Adds **run metrics** — the pipeline now estimates its cost before execution, measures the actuals, enumerates every verification it ran, reports quality as an honest signals panel (deliberately not a gameable single score), decomposes the task into a checked requirements list, and feeds all of it into the cross-run telemetry. Purely additive and fail-open — the measurement helpers never block a run, and the new STATE fields are invisible to the gate/stall hooks.
+
+### Added
+
+- **`hooks/estimate.sh` — pre-execution estimate.** Pure, deterministic, no-jq helper. From `--tier/--difficulty/--risk/--acs/--files` it prints a JSON estimate of wall-clock minutes + token usage (static tier heuristic; tier derivable from `max(D,R)`). Emits `null` (never `0`) on unusable input so the telemetry ratio can exclude it. Surfaced at the Phase-1 approval gate as PLAN.md `## Estimate`. 18-assertion `tests/estimate.test.sh`.
+- **`hooks/token-usage.sh` — actual token measurement.** Sums `message.usage` from the session transcript JSONL under `~/.claude/projects/<slug>/`, **run-scoped** by `--since` (numeric ISO compare), summing across ALL transcripts in the slug dir (resume / new-session / post-compaction safe). Slug maps **every** non-alphanumeric char (incl. `.`) to `-`. `null` (not `0`) on any failure. 15-assertion `tests/token-usage.test.sh`.
+- **`hooks/checks.sh` — universal hygiene/defect checks.** Scans tracked *and untracked* changes vs `<base>`: secret-scan, conflict-markers, debug-artifacts, large/binary files, diff-size, tests-added. F1/F2 are block-worthy on real source but demote to `warn` on test/fixture paths (segment-anchored, never substring `*test*`); never echoes secret content. bash-3.2-safe, fail-open. 11-assertion `tests/checks.test.sh`.
+- **`hooks/requirements-coverage.sh` — requirement coverage/completion check.** Reads `state.requirements[]` and reports `covered/uncovered`, `complete/incomplete/dropped`, and `all_covered`/`all_complete`. Phase 1 requires every requirement covered by ≥1 AC; Phase 5 requires every requirement `done`. 16-assertion `tests/requirements-coverage.test.sh`.
+- **`tests/metrics-integration.test.sh`** — 23-assertion behavioral test of the full data path (estimate → STATE → `record-outcome` ledger row → `auto-task-stats` render), including the null/0-estimate divide-by-zero guard.
+- **Orchestrator wiring (`skills/auto-task/SKILL.md`).** New STATE objects `estimate`/`actuals`/`quality`/`checks`/`requirements`. Phase 1 computes the estimate + dissects the task into an unambiguous requirements list. Phase 3 self-verify runs `checks.sh` and records a comprehensive checks manifest (a real secret / conflict marker fails the run). Phase 5 measures actuals + assembles the quality signals panel and renders new CONTEXT.md/PR sections: `## Estimate vs actual`, `## Checks performed`, `## Quality signals`, `## Requirements coverage`.
+
+### Changed
+
+- **`hooks/record-outcome.sh` + `hooks/auto-task-stats.sh` (lockstep).** The ledger row and reader gain `est_/act_` time+token fields and quality-signal trend fields (`defects_early/late`, `flaky`, `tests_added`, `diff_loc`, `first_pass_ac`, `checks_run/failed`). The reader adds a **Run metrics** section: estimate-accuracy (median actual/estimate, null/0 excluded), late-defect / flakiness / tests-added rates. `tests/record-outcome.test.sh` extended to 60 assertions incl. forward-compat defaults and a DERIVE-lockstep guard.
+- **Docs** — README `## Run metrics` section (+ sample stats output) and `auto-task-stats` skill doc describe the metrics, the run-scoped token caveat, and the "signals + trends, not a single score" quality philosophy.
+
+### Notes
+
+- **Quality is a signals panel, not a score.** By design there is no composite 0–100 quality number: a single figure invites optimizing to the metric and hides what a single autonomous run cannot see (business impact, collaboration, long-term maintainability). Maintainability is reused verbatim from the code-review verdict rather than recomputed.
+- **Token accounting is approximate** for sub-agent sidechains and concurrent unrelated same-session work; `--since` scopes to the run but pre-STATE setup tokens are a minor undercount. Documented, not hidden.
+
 ## [0.1.16]
 
 Adds opt-in, local run-outcome telemetry so maintainers can measure the pipeline's own completion rate and find where runs stall. Purely additive — no network, no new PII, no change to the orchestrator's runtime behavior.

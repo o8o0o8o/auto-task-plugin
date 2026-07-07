@@ -61,8 +61,20 @@ From then on, every `/auto-task` run that reaches `phase: done` appends one loca
 
 3. **Present** the script's output to the user verbatim (it is already formatted as a readable summary). If the output is the "no runs recorded yet" message, remind the user of the opt-in step above.
 
+## Run metrics (estimate accuracy + quality trends)
+
+Since v0.2.0 each completed run also records run-metrics fields to `outcomes.jsonl` (populated by the Phase-5 handover from `estimate.sh` / `token-usage.sh` and the quality-signals panel): `est_duration_min`, `est_tokens`, `act_duration_min`, `act_tokens`, `defects_early`, `defects_late`, `flaky`, `tests_added`, `diff_loc`, `first_pass_ac`, `checks_run`, `checks_failed`. The aggregator (kept in DERIVE-lockstep with `record-outcome.sh`) turns them into cross-run trend lines under a **"Run metrics"** section:
+
+- **Estimate accuracy** — median `actual/estimate` ratio for tokens and time across completed runs (`>1` = ran costlier than estimated, `<1` = cheaper). Runs whose estimate or actual is `null`/`0` (a failed measurement) are EXCLUDED, so the ratio is never poisoned or divided by zero.
+- **Late-defect rate** — % of completed runs that had a defect caught only late (Gate B).
+- **Flakiness rate** — % of completed runs that hit a flaky test.
+- **Tests-added rate** — % of completed runs whose diff touched a test file.
+
+These are **trends, not snapshots** (a single run is a snapshot; the ledger makes it a trend) and are process/reliability signals — deliberately NOT a single composite "quality score" (a composite invites gaming and hides what a run cannot see). Older ledger rows lacking these fields are tolerated (`// default`) and simply don't contribute to the ratio.
+
 ## Rules
 
 - **Read-only.** Never write to the ledger, never edit `STATE.json`, never modify pipeline files.
 - Do not fabricate figures — report only what the script prints.
 - "Gate B coverage" reports how many STANDARD/HEAVY runs ran the adversarial gate to a pass vs. were skipped (from the recorded `gate_b` outcome). It is a coverage figure, not a "bugs caught" count — present it as such.
+- "Estimate accuracy" is a median actual/estimate ratio over runs that actually recorded both — present it as calibration signal, not a guarantee. "Late-defect / flakiness / tests-added" are process signals, not a quality score.

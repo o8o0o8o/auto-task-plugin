@@ -91,19 +91,27 @@ fi
 
 # --- Derive the one-line row from STATE.json ----------------------------------
 # Every field guarded with a default so a partial/legacy state never errors.
-# Free-text fields are length-capped (task ~200, gate_b ~120) so the compact
-# row stays well under PIPE_BUF (512B) and the single `printf >>` append is
-# atomic even if two Stop events in the same working tree race.
+# Free-text fields are length-capped (task ~140, gate_b ~120). The row now also
+# carries run metrics (estimate/actual time+tokens, quality-signal trend fields);
+# it may exceed the old 512B PIPE_BUF target, so append atomicity relies on the
+# single O_APPEND `printf >>` write (a completing run is effectively single-writer
+# per working tree — concurrent same-tree completions are not a real scenario).
+# The metric fields mirror auto-task-stats.sh's DERIVE VERBATIM (lockstep — a
+# regression test asserts the two field sets match). est_*/act_* are `null` when
+# unmeasured so the reader's ratio can exclude them (no divide-by-zero / poison).
 row="$(jq -c '
   (.history // []) as $h
   | ($h | map(.at // empty)) as $ats
   | ($ats | first) as $t0
   | ($ats | last) as $t1
+  | (if ($t0 != null and $t1 != null)
+       then (((($t1 | fromdateiso8601?) // 0) - (($t0 | fromdateiso8601?) // 0)) / 60 | floor)
+       else 0 end) as $dur
   | {
       at: ($t1 // ""),
       branch: (.branch // ""),
       base: (.base // ""),
-      task: ((.description // "") | .[0:200]),
+      task: ((.description // "") | .[0:140]),
       terminal_state: "done",
       tier: (.effort.tier // ""),
       tier_initial: (((.effort.history // []) | first | .from) // (.effort.tier // "")),
@@ -113,10 +121,19 @@ row="$(jq -c '
       gate_b: (if (.gates.gate_b.passed // false) then "passed"
                else ((.gates.gate_b.skipped_reason // "") | .[0:120]) end),
       followups: ((.followups // []) | length),
-      duration_min: (
-        if ($t0 != null and $t1 != null) then
-          (((($t1 | fromdateiso8601?) // 0) - (($t0 | fromdateiso8601?) // 0)) / 60 | floor)
-        else 0 end)
+      duration_min: $dur,
+      est_duration_min: (.estimate.duration_min // null),
+      est_tokens: (.estimate.tokens_total // null),
+      act_duration_min: (.actuals.duration_min // $dur),
+      act_tokens: (.actuals.tokens_total // null),
+      defects_early: (.quality.defects.early // 0),
+      defects_late: (.quality.defects.late // 0),
+      flaky: (.quality.flaky // false),
+      tests_added: (.quality.tests_added // false),
+      diff_loc: (((.quality.diff.loc_added // 0) + (.quality.diff.loc_removed // 0))),
+      first_pass_ac: (.quality.planning.first_pass_ac // null),
+      checks_run: ((.checks // []) | length),
+      checks_failed: ((.checks // []) | map(select(.result=="fail")) | length)
     }
 ' "$state" 2>/dev/null || true)"
 
