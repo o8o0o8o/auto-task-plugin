@@ -2,6 +2,18 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.1]
+
+Sharpens the PR handover so the async reviewer sees **intent vs. reality** at a glance, and lands the reference design for **Autonomous Mode** (the roadmap toward board-driven, self-approving, PR-only runs). Docs- and template-only — no behavioral hooks change, all existing tests pass.
+
+### Added
+
+- **`skills/auto-task/AUTONOMOUS-MODE.md` — design + roadmap reference.** Captures the locked target (a scheduled agent pulls a board card → self-approves → opens a PR it never merges, with async PR review + a post-deploy watch as the safety valves), the verification ladder (L0 code → L1 preview → L2 prod smoke → L3 monitor → L4 notify), all 11 locked decisions with rationale, the 8 new architecture pieces (board adapter, autonomous Phase 1, compensating gates, `never-merge` invariant, `post-deploy` AC gate, log-based probe adapter, Slack notifier, local runner), the Phase 0–F roadmap, and the honest limitations.
+
+### Changed
+
+- **PR body — `## Requirements coverage` → `## Task breakdown — planned vs. done` (`skills/auto-task/SKILL.md`, Phase 5).** The lead review section is now an intent-vs-reality table: one row per `state.requirements[]` plus drift-added/dropped rows, a `✅ done · ⚠️ changed · ❌ dropped · ➕ added` status, and a "done in fact" column citing the AC evidence that proves each item. Subsumes the old coverage block (keeps its `all_complete` tally) and pairs with the retained `## Acceptance Criteria` checklist (breakdown = intent vs. reality; checklist = each criterion's bound check). The local CONTEXT.md `## Requirements coverage` artifact is unchanged.
+
 ## [0.2.0]
 
 Adds **run metrics** — the pipeline now estimates its cost before execution, measures the actuals, enumerates every verification it ran, reports quality as an honest signals panel (deliberately not a gameable single score), decomposes the task into a checked requirements list, and feeds all of it into the cross-run telemetry. Purely additive and fail-open — the measurement helpers never block a run, and the new STATE fields are invisible to the gate/stall hooks.

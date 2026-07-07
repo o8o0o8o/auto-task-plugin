@@ -978,11 +978,11 @@ This is the **only phase that commits**. By the time you reach it, the working t
    <diagram from step 2, or the skip line>
    ```
 
-   ## Requirements coverage
-   <one row per state.requirements[]: id | requirement | covered-by ACs | status — every requirement done or explicitly dropped; end with all_covered/all_complete tally>
+   ## Task breakdown — planned vs. done
+   <the intent-vs-reality view — the first thing an async reviewer should read. A table `| # | Planned (from the approved plan) | Status | Done in fact |`, one row per state.requirements[] plus extra rows for drift-added and dropped work. Status ∈ ✅ done · ⚠️ changed · ❌ dropped · ➕ added. "Done in fact" cites the AC evidence proving it (link artifacts/ac-<#>-evidence.* where saved); for ⚠️ changed write "planned X → did Y (reason)", for ➕ added name the drift event that introduced it, for ❌ dropped the descope reason. Sourcing: planned rows + status + dropped ← state.requirements[]; ⚠️ changed and ➕ added ← state.history drift events; evidence ← AC results. End with the coverage tally `N requirements — C done / K dropped · all_complete=<bool>` from requirements-coverage.sh. This subsumes the former standalone Requirements-coverage block — do not also emit that.>
 
    ## Acceptance Criteria
-   <checklist from PLAN.md, all checked>
+   <checklist from PLAN.md, all checked — the falsifiable-verification view that complements the task breakdown above (breakdown = intent vs. reality; this = each criterion's bound check)>
 
    ## Test plan
    <quality checks run + their results>
