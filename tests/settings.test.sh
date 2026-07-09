@@ -104,6 +104,83 @@ expect "init does not overwrite"  "$(jq -r .has_preview_deployment "$F")" "true"
 DIRTY="$( cd "$REPO" && git status --porcelain )"
 expect "repo tree untouched by settings" "$DIRTY" ""
 
+# --- telemetry keys: defaults ------------------------------------------------
+# telemetry_enabled stays OFF by default (opt-in is still explicit); only the
+# DESTINATION (endpoint + token) is pre-wired to the bundled central collector.
+expect "telemetry_enabled default false"        "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get telemetry_enabled)" "false"
+expect "telemetry_satisfaction_prompt default"   "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get telemetry_satisfaction_prompt)" "true"
+# endpoint/token default to the BUNDLED central values (maintainer-overridable via
+# env for a hermetic assert here):
+expect "telemetry_endpoint bundled default"      "$(AUTO_TASK_TELEMETRY_DEFAULT_ENDPOINT='https://t.example/api/ingest' AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get telemetry_endpoint)" "https://t.example/api/ingest"
+expect "telemetry_ingest_token bundled default"  "$(AUTO_TASK_TELEMETRY_DEFAULT_TOKEN='tok-default' AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get telemetry_ingest_token)" "tok-default"
+# the SHIPPED endpoint default must be a non-empty https URL (never cleartext/empty)
+expect "shipped endpoint default is https"       "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get telemetry_endpoint | grep -c '^https://')" "1"
+printf '{"telemetry_ingest_token":"tok-xyz"}' > "$T/tok.json"
+expect "telemetry_ingest_token override"         "$(AUTO_TASK_SETTINGS_FILE="$T/tok.json" bash "$SH" get telemetry_ingest_token)" "tok-xyz"
+
+# --- global layer + precedence (defaults ⊔ global ⊔ project; project wins) ---
+G="$T/global.json"; P="$T/project.json"; NG="$T/no-global.json"; NP="$T/no-project.json"
+# global-only enable, project absent -> enabled true
+printf '{"telemetry_enabled":true,"telemetry_endpoint":"https://g.example/i"}' > "$G"
+expect "global-only enable -> true" \
+  "$(AUTO_TASK_GLOBAL_SETTINGS_FILE="$G" AUTO_TASK_SETTINGS_FILE="$NP" bash "$SH" get telemetry_enabled)" "true"
+expect "global-only endpoint inherited" \
+  "$(AUTO_TASK_GLOBAL_SETTINGS_FILE="$G" AUTO_TASK_SETTINGS_FILE="$NP" bash "$SH" get telemetry_endpoint)" "https://g.example/i"
+# project explicit false beats global true
+printf '{"telemetry_enabled":false}' > "$P"
+expect "project false beats global true" \
+  "$(AUTO_TASK_GLOBAL_SETTINGS_FILE="$G" AUTO_TASK_SETTINGS_FILE="$P" bash "$SH" get telemetry_enabled)" "false"
+# project true beats global absent
+printf '{"telemetry_enabled":true}' > "$P"
+expect "project true, global absent -> true" \
+  "$(AUTO_TASK_GLOBAL_SETTINGS_FILE="$NG" AUTO_TASK_SETTINGS_FILE="$P" bash "$SH" get telemetry_enabled)" "true"
+# project overrides a global endpoint
+printf '{"telemetry_endpoint":"https://p.example/i"}' > "$P"
+expect "project endpoint overrides global" \
+  "$(AUTO_TASK_GLOBAL_SETTINGS_FILE="$G" AUTO_TASK_SETTINGS_FILE="$P" bash "$SH" get telemetry_endpoint)" "https://p.example/i"
+# a project-set key does not leak a global key it didn't mention: preview default holds
+expect "unrelated key still defaults under merge" \
+  "$(AUTO_TASK_GLOBAL_SETTINGS_FILE="$G" AUTO_TASK_SETTINGS_FILE="$P" bash "$SH" get preview_wait_mode)" "poll"
+
+# --- non-object file at either scope is treated as absent (must NOT discard the
+#     other scope's valid settings; regression guard for read_obj) --------------
+printf '{"preview_wait_mode":"handoff","telemetry_enabled":true}' > "$P"
+for bad in 'null' '[1,2,3]' '42' '"x"'; do
+  printf '%s' "$bad" > "$G"
+  expect "non-object global ($bad): project preview kept" \
+    "$(AUTO_TASK_GLOBAL_SETTINGS_FILE="$G" AUTO_TASK_SETTINGS_FILE="$P" bash "$SH" get preview_wait_mode)" "handoff"
+  expect "non-object global ($bad): project telemetry kept" \
+    "$(AUTO_TASK_GLOBAL_SETTINGS_FILE="$G" AUTO_TASK_SETTINGS_FILE="$P" bash "$SH" get telemetry_enabled)" "true"
+done
+# non-object PROJECT file falls back to global + defaults (not a crash to nothing)
+printf '{"telemetry_enabled":true}' > "$G"; printf '[1,2,3]' > "$P"
+expect "non-object project: global still applies" \
+  "$(AUTO_TASK_GLOBAL_SETTINGS_FILE="$G" AUTO_TASK_SETTINGS_FILE="$P" bash "$SH" get telemetry_enabled)" "true"
+expect "non-object project: unrelated default holds" \
+  "$(AUTO_TASK_GLOBAL_SETTINGS_FILE="$G" AUTO_TASK_SETTINGS_FILE="$P" bash "$SH" get preview_wait_mode)" "poll"
+# MULTI-DOCUMENT stream at either scope is treated as absent (must not collapse
+# the merge to defaults and drop the other scope). Regression guard for read_obj.
+printf '{"preview_wait_mode":"handoff","telemetry_endpoint":"https://p/x"}' > "$P"
+printf '{}{}' > "$G"
+expect "multi-doc global: project preview kept" \
+  "$(AUTO_TASK_GLOBAL_SETTINGS_FILE="$G" AUTO_TASK_SETTINGS_FILE="$P" bash "$SH" get preview_wait_mode)" "handoff"
+expect "multi-doc global: project endpoint kept" \
+  "$(AUTO_TASK_GLOBAL_SETTINGS_FILE="$G" AUTO_TASK_SETTINGS_FILE="$P" bash "$SH" get telemetry_endpoint)" "https://p/x"
+printf '{"telemetry_enabled":true}' > "$G"; printf '{"a":1}{"b":2}' > "$P"
+expect "multi-doc project: global still applies" \
+  "$(AUTO_TASK_GLOBAL_SETTINGS_FILE="$G" AUTO_TASK_SETTINGS_FILE="$P" bash "$SH" get telemetry_enabled)" "true"
+# a legitimate single object is still honored after the slurp change
+printf '{}' > "$G"; printf '{"telemetry_enabled":true}' > "$P"
+expect "single {} global still honored" \
+  "$(AUTO_TASK_GLOBAL_SETTINGS_FILE="$G" AUTO_TASK_SETTINGS_FILE="$P" bash "$SH" get telemetry_enabled)" "true"
+
+# --- init --global seeds the global file, keeps telemetry keys ---------------
+HG="$T/home-global"
+GFILE="$(AUTO_TASK_HOME="$HG" bash "$SH" init --global)"
+expect "init --global created a file" "$( [ -f "$GFILE" ] && echo yes || echo no )" "yes"
+expect "init --global path is the global file" "$(basename "$(dirname "$GFILE")")/$(basename "$GFILE")" "auto-task/settings.json"
+expect "init --global seeded telemetry_enabled" "$(jq -r .telemetry_enabled "$GFILE")" "false"
+
 echo "--------------------------------------------------------"
 echo "settings.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

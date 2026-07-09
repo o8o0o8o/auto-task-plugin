@@ -15,6 +15,7 @@ End-to-end autonomous task workflow for Claude Code. Takes a task description fr
   - `warn-checkout-drift.sh` (PreToolUse on Bash): informational, NEVER blocks. Warns on every command when an active run exists on a branch other than the one checked out (the proactive half of the checkout-drift guard; the enforce-gates block is the mechanical half). Silent and near-free in non-auto-task repos.
   - `prevent-mid-protocol-stall.sh` (Stop event): blocks turn-ends mid-pipeline by reading `expected_next_action` from STATE.json. The antidote to sub-skill output looking completion-shaped.
   - `record-outcome.sh` (Stop event): **opt-in, never blocks.** When `.auto-task/outcomes.jsonl` exists and a run reaches `phase: done`, appends one derived JSON row (fields from STATE.json — no network, no new data). A base-keyed sentinel makes it write once per run. Silent no-op unless opted in. Read by `auto-task-stats`. See "Run telemetry (opt-in)".
+  - `send-telemetry.sh` (Stop event): **opt-in, off by default, never blocks.** The **remote** counterpart to `record-outcome.sh` — when `telemetry_enabled`+`telemetry_endpoint` are set (see "Remote telemetry"), POSTs an anonymized quality/perf row to your HTTPS endpoint at `phase: done`. Bounded, fail-open, write-once per run. Silent no-op unless opted in.
   - `check-version.sh` (SessionStart): best-effort update notice. Once per 24h it compares the installed version against the published `plugin.json` on GitHub and, if you're behind, prints a one-line reminder to run `/plugin update auto-task@auto-task-plugin`. Fails open and silent when current, offline, or unparseable — this cached SessionStart notice never blocks or slows a session. **Per-run version check:** on top of that notice, `/auto-task` Phase 1 runs a fresh **per-run version check** (the same script via `--plain`, throttle bypassed) at the start of every NEW run and, if you're behind, asks once whether to auto-apply the update (via `hooks/apply-update.sh` — no manual command) or proceed on the current version. It is separately bounded (`--connect-timeout 2 -m 5`) and fully fail-open — it never blocks the run and never touches the SessionStart throttle stamp. Skipped on resume.
 - **`inject-history-reminder.sh`** (optional, `UserPromptSubmit`): tells non-bundled tools that an `.auto-task/<branch>/` history folder exists for the current branch. **Off by default** (token overhead on every prompt); opt in via the snippet in `settings-fragment.json`.
 - **`settings-fragment.json`** — fallback only. The marketplace install wires the hooks for you; this snippet is for the offline/dev `install.sh` path and for opting into the two optional hooks.
@@ -28,7 +29,7 @@ This repo is its own plugin marketplace. From inside Claude Code:
 /plugin install auto-task@auto-task-plugin
 ```
 
-That copies the plugin into your plugin cache and **auto-wires everything** — the seven skills, the `task-execution-verifier` agent, and all five core hooks (`hooks/hooks.json`). No `settings.json` editing, no symlinks, no `install.sh`.
+That copies the plugin into your plugin cache and **auto-wires everything** — the seven skills, the `task-execution-verifier` agent, and all six core hooks (`hooks/hooks.json`). No `settings.json` editing, no symlinks, no `install.sh`.
 
 Plugin skills are namespaced under the plugin name, so you invoke the orchestrator as:
 
@@ -182,7 +183,8 @@ Per-project, per-user configuration for the pipeline. **Optional and fully defau
 
 - **Kept OUTSIDE your repo.** Settings live at `${AUTO_TASK_HOME:-$HOME/.claude}/auto-task/<project-key>/settings.json`. The `<project-key>` is derived from the repo's git **common dir** (`git rev-parse --git-common-dir`), which every worktree of one clone shares — so settings are **project-specific and per-clone** (all worktrees resolve to the same file), and a setting **never alters your repo** (nothing is written in the working tree; it never appears in `git status`).
 - **JSON, with fallback.** A flat `key: value` object. Any key you omit falls back to the built-in default — the single source of truth is the `default_for` table in `hooks/settings.sh`. A missing file, malformed JSON, or an absent key all resolve to defaults (the reader is fail-open and never errors a run).
-- **Managing them.** `bash hooks/settings.sh path` prints the file location; `bash hooks/settings.sh init` seeds a documented template; `bash hooks/settings.sh get <key>` / `all` read values. (The orchestrator reads them automatically in Phase 1.)
+- **Two scopes: global + project.** Besides the per-project file, a **global** file at `${AUTO_TASK_HOME:-$HOME/.claude}/auto-task/settings.json` applies to every project. They merge as `defaults ⊔ global ⊔ project` — the **project file wins**, so you can set a default globally and override it (either direction) per clone. Both scopes are optional.
+- **Managing them.** `bash hooks/settings.sh path` prints the project file location; `bash hooks/settings.sh init` seeds a project template and `bash hooks/settings.sh init --global` seeds the global one; `bash hooks/settings.sh get <key>` / `all` read the merged values. (The orchestrator reads them automatically in Phase 1.)
 
 Recognized keys (v1):
 
@@ -195,6 +197,10 @@ Recognized keys (v1):
 | `preview_poll_interval_sec` | `60` | Seconds between readiness polls. |
 | `preview_bypass_header` | `""` | Optional `Name: value` header for deployment-protection bypass tokens. |
 | `preview_post_verdict_comment` | `false` | When `true`, post the verdict as a PR comment (an external write — off by default). |
+| `telemetry_enabled` | `false` | Opt-in for **remote** anonymous telemetry. Default OFF. See "Remote telemetry" below. |
+| `telemetry_endpoint` | `""` | HTTPS ingest URL the anonymized row is POSTed to. Must be `https://…`. |
+| `telemetry_ingest_token` | `""` | Optional bearer token sent as `Authorization: Bearer …` (e.g. the dashboard's `INGEST_TOKEN`). Empty → no auth header. |
+| `telemetry_satisfaction_prompt` | `true` | When telemetry is on, whether Phase 5 asks a satisfaction/correctness question at the push prompt. |
 
 ### Preview verification (opt-in)
 
@@ -248,6 +254,38 @@ Tests-added rate       100% of completed runs touched a test file
 ```
 
 A live, approved, non-`done` run whose newest history entry is older than the stale threshold is reported as **stalled**; newer than it, **in-flight**. "Gate B coverage" is how many STANDARD/HEAVY runs actually ran the adversarial gate to a pass (vs. were skipped) — derived from the recorded `gate_b` outcome. (A per-run "did Gate B catch a bug" count isn't reported: the orchestrator doesn't record a Gate B bounce as a distinct `STATE.json` signal, only as a review-loop iteration, so it can't be reconstructed after the fact without changing pipeline behavior.)
+
+### Remote telemetry (opt-in, off by default)
+
+The telemetry above is **local only** — nothing leaves your machine. If you want to send the same quality/performance signals to a central endpoint (to build a cross-user dashboard later), there is a **separate, explicit, off-by-default** remote path. It is independent of the local `outcomes.jsonl` opt-in.
+
+**Enable it** with a single key in the [project or global settings](#project-settings-opt-in):
+
+```jsonc
+// ~/.claude/auto-task/settings.json (global)  — or  <project-key>/settings.json (project)
+{ "telemetry_enabled": true }
+```
+
+That's all a user needs — the **destination is pre-wired**. `telemetry_endpoint` and `telemetry_ingest_token` ship with the plugin as built-in defaults pointing at the project's central collector (the `auto-task-plugin-admin` dashboard), so opting in sends there automatically. Only the destination is bundled, **not** the consent — collection stays OFF until you explicitly set `telemetry_enabled: true`.
+
+- **The bundled ingest token is a PUBLIC, write-only key — not a secret.** It ships inside this open-source client, so it is world-readable by design (like a Sentry DSN / analytics write key). A leak only permits appending junk rows: it is write-only, can't read the dashboard, and never carries the Turso credential. The endpoint is protected server-side (rate-limiting); rotate the key to cut off abuse.
+- **Self-host** by overriding `telemetry_endpoint` (and `telemetry_ingest_token`) in your settings to point at your own dashboard.
+- Because settings merge `defaults ⊔ global ⊔ project`, you can opt in globally and **exclude one project** with `{ "telemetry_enabled": false }` in that project's file (or opt in for just one). A non-https or emptied endpoint sends nothing.
+- **Maintainers:** the shipped defaults live in `hooks/settings.sh` (`AUTO_TASK_TELEMETRY_DEFAULT_ENDPOINT` / `_TOKEN`) — set them to your deployed dashboard URL and its `INGEST_TOKEN` at release. `settings.sh get telemetry_endpoint` shows users exactly where data goes.
+
+**What is sent** (when on, once per completed run, at `phase: done`): the same metric fields recorded locally — tier, escalations, fix/review iterations, Gate B outcome, follow-up count, duration, estimate-vs-actual time+tokens, defects early/late, flaky, tests-added, diff size, first-pass-AC, checks tally — **plus** a random install id, the plugin version, the OS name, a schema version, and your Phase-5 satisfaction/correctness answers.
+
+**What is NOT sent — it's anonymous by construction:** no task description, no branch name, no repository path, no base commit SHA, and no wall-clock timestamp (the server stamps its own `received_at`). The install id is a random UUID with no personal data. The **one exception** is the optional satisfaction *comment* — free text you type at the prompt, sent verbatim; leave it blank to send nothing free-form.
+
+**Satisfaction prompt.** When telemetry is on, the single existing Phase-5 push prompt gains one extra question — *"Did this run produce a correct, satisfactory result?"* (`yes`/`mostly`/`no`/`skip`) — plus an **optional free-text comment**. So no new interruption point is introduced. Set `telemetry_satisfaction_prompt: false` to collect metrics without the prompt. The comment is the one field that isn't auto-anonymized — it is **whatever you type**, sent verbatim (capped 500 chars) to your endpoint, so leave it blank if you don't want free text to leave the machine.
+
+**Reset or opt out.**
+- Opt out: set `telemetry_enabled: false` (or remove the endpoint). Data stops immediately.
+- Reset your install id: `rm ~/.claude/auto-task/client-id` — a new random id is generated on the next send.
+
+**Transport.** The client `curl`s the payload to your endpoint with a bounded timeout (`--connect-timeout 2 -m 5`) and is fail-open — a slow or dead endpoint never blocks or breaks a run. It fires once per run (a base-keyed sentinel prevents resends). Implemented in `hooks/send-telemetry.sh`.
+
+**The endpoint + database.** A **reference (undeployed)** ingest server and the Turso/libSQL table schema live under [`server/`](server/README.md): a portable `fetch` handler (`server/ingest.mjs`) that writes to a `runs` table (`server/schema.sql`). You deploy it and provision Turso yourself; the server holds the DB credential so clients never carry one. It is write-only for now (a dashboard is future work).
 
 ## Run metrics — estimate vs actual, quality signals
 

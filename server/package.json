@@ -1,0 +1,13 @@
+{
+  "name": "auto-task-telemetry-ingest",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Reference (undeployed) ingest endpoint for auto-task anonymous telemetry: accepts the client payload and writes it to Turso/libSQL. Write-only for now.",
+  "license": "MIT",
+  "main": "ingest.mjs",
+  "exports": "./ingest.mjs",
+  "dependencies": {
+    "@libsql/client": "^0.15.0"
+  }
+}
