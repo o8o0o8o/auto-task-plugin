@@ -2,6 +2,23 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.0]
+
+Expands the opt-in remote telemetry into a richer, anonymous **v2 payload** with per-skill **token-cost attribution** and **zero-config preview auto-detection**, and folds in the clarifying-questions ticket-comment feature. All telemetry stays opt-in, off by default, and anonymous by construction.
+
+### Added
+
+- **Telemetry payload `schema_version: 2` (additive).** Beyond the v1 metrics: effort `difficulty`/`risk`, `model` + `claude_code_version` (from the transcript), `task_type` (the branch *prefix* only — never the slug), cache-excluded `tokens_input`/`tokens_output` (so the estimate ratio is meaningful, not cache-dominated), `files_changed`, `requirements_count`, `drift_events`, `preview_verdict`; **bucketed project size** (`repo_files_bucket`, `primary_language`, `is_monorepo`); and an **anonymous change-heat** signal (`churn_ratio`, `hotspot_concentration`, `dirs_touched`, `max_depth`) computed from a LOCAL path history that never leaves the machine. New helper `hooks/repo-metrics.sh` (buckets/numbers only — no paths, names, or hashes; `tests/repo-metrics.test.sh`).
+- **Per-skill token-cost attribution (`tokens_by_skill`).** `hooks/token-usage.sh` now emits a deterministic per-skill output-token map from the transcript's `attributionSkill` (orchestrator / code-review / commit vs unattributed main loop). `send-telemetry.sh` **self-measures token usage at `phase: done`** (calling `token-usage.sh` directly) so the cost is sent on *every* completed run rather than depending on the orchestrator populating `state.actuals`. Documented limitation: sub-agent (Gate A/B verifier, review-subagent) tokens are not logged by Claude Code and are excluded — stated, never fabricated.
+- **Preview auto-detection (`hooks/pr-deploy-url.sh`, default on).** With no preview settings, when a PR is opened Phase 6 polls the PR's comments/body for a deployment URL (Vercel/Netlify/Cloudflare Pages/Render/Fly/Railway/Firebase/… bot comments) and verifies against it — zero config. No URL within the bound ⇒ `skipped-no-url`, ends cleanly (no failure, no stall). New `preview_autodetect` setting (default `true`); `has_preview_deployment`/`preview_url` remain explicit overrides. `tests/pr-deploy-url.test.sh`.
+- **`settings.sh` `present`/`set` subcommands** (from 0.4.1's consent work) plus the new `preview_autodetect`/`telemetry_*` keys.
+- **Clarifying questions forwarded as a ticket comment + run title** (`skills/auto-task/SKILL.md`) — Phase 1 can surface the clarifying Q&A back to the originating ticket and set a readable run title.
+
+### Notes
+
+- Anonymous by construction throughout: no task text, branch, repo path, base SHA, or wall-clock timestamp. The optional satisfaction comment is the one consented, user-authored free-text field.
+- `bundled` central-collector endpoint + public write-only ingest token ship in `hooks/settings.sh`; a user opts in with a single `telemetry_enabled: true` (or the once-per-repo Phase-1 prompt).
+
 ## [0.4.1]
 
 Makes the remote-telemetry opt-in (0.4.0) **explicit for every user** via a once-per-repo consent prompt, instead of a flag they must discover. Still opt-in, still off until answered, still anonymous.
