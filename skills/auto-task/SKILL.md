@@ -419,7 +419,7 @@ Trigger reconnaissance when the task description involves any of:
 - Visual / UI / styling / layout / responsive behavior ("the card looks wrong", "background image is off", "spacing on mobile").
 - A specific page, route, component, or user-facing flow whose current behavior must be observed (not just inferred from code).
 - A bug report tied to runtime behavior (console errors, network failures, interaction states, hover/focus/animation).
-- A reference to an external/live URL the user provided.
+- A reference to an external/live URL the user provided (load it per the **Link handling** protocol below — two-tier fetch→Playwright, videos get screenshots + transcript).
 - A library / framework / SDK / API whose current syntax or behavior is load-bearing on the plan (use Context7 MCP).
 - A Figma file, design system, or visual reference the user linked or named (use the Figma MCP).
 - Any other external system the task explicitly references (Notion docs, Slack threads, Linear tickets, Drive files, Gmail, Calendar, Asana, Ahrefs, Sanity, etc.) where the relevant facts are not in the repo.
@@ -441,6 +441,15 @@ Rules that apply to every MCP used in recon:
 3. **Mandatory prerequisite skills still apply.** Before any `use_figma` call, load the `figma-use` skill; before any `generate_diagram` call, load the `figma-generate-diagram` skill. The skill's own instructions override generic recon guidance.
 4. **Stop as soon as the observation is sufficient.** Recon is not a full audit. One or two MCPs covering the relevant fact is enough.
 
+**Link handling (two-tier load + resource-aware recon).** Any link posted in the task card / prompt is load-bearing context — a bug repro, a design ref, a spec, a demo video. Load each one; never plan around a link you didn't open.
+
+1. **Enumerate the links.** Read the task description for URLs. As a mechanical assist you MAY call `hooks/extract-links.sh` (locate via the three-probe pattern used for `check-version.sh`; `CLAUDE_PLUGIN_ROOT` is empty in the Bash-tool env) — pipe the description in (`--text "<desc>"` or stdin) and it returns a JSON array of `{url,host,kind,strategy}` where `kind ∈ video|figma|doc|page`. It is fail-open (bad/no input → `[]`, exit 0) and is only an **assist, not the sole source**: it deliberately DEFERS bare scheme-less hosts (`loom.com/x`, `notion.so/x`) to avoid false positives, so you MUST also eyeball the description yourself for scheme-less or link-text references it won't surface.
+2. **Two-tier load (the default for every link).** For each link, **first try an ordinary fetch** — `WebFetch` (or `curl` for a raw payload). If that returns **no usable data** — an empty body, a JS-only shell / SPA skeleton, a bot / consent / login wall, a non-2xx status, or content that plainly doesn't contain what the task points at — **fall back to Playwright**: `browser_navigate` to the URL, let it render, then `browser_snapshot` (and `browser_console_messages` / `browser_network_requests` when runtime behavior matters). The ordinary fetch is cheap and first; the Playwright fallback is the reliable second tier for anything client-rendered or gated. Record which tier produced the usable data.
+3. **Videos (Loom and similar → screenshots + transcript).** For a link whose `kind` is `video` (Loom, YouTube/youtu.be, Vimeo, Wistia), a fetch returns almost nothing useful, so go straight to Playwright: `browser_navigate` to the video, capture a few **representative screenshots** (`browser_take_screenshot`) at key frames, and extract the **transcript** — open the transcript / captions panel and read it out of the DOM via the snapshot (or `browser_evaluate`). Save the screenshots under `.auto-task/<branch>/recon/` and fold the transcript's relevant points into the recon notes. A silent or transcript-less video is a limitation to note under Unknowns, not a blocker.
+4. **Generalize to all external resource types.** This two-tier, resource-aware pattern applies to **all external resources** referenced in the task, not just plain web pages and videos — pick the most direct reader per `kind` and keep the fetch→Playwright fallback underneath: `figma` → the Figma MCP (load `figma-use` first); `doc` systems (Notion, Google Docs/Drive, Slack, Linear, Atlassian) → that system's MCP when available, else the ordinary fetch, else the Playwright fallback; `page` → fetch→Playwright. The generalization is the point: whatever the resource, try the cheap/native reader first and fall back to a real browser when it comes back empty.
+
+**Cost bound.** Recon is bounded, never a stall: when a card carries many links, load the few most load-bearing on the plan and skip decorative or duplicate ones. Two-tier loading and video capture are subject to the same "stop as soon as the observation is sufficient" rule as every other recon step. The read-only / auth-is-not-a-blocker / prerequisite-skill rules above remain authoritative for every fetch and Playwright call here.
+
 When triggered:
 
 1. **Pick the target(s).**
@@ -451,7 +460,7 @@ When triggered:
    - Else if the task is about a known production/staging URL discoverable from the repo (e.g., README, env files) → use that, read-only.
    - If no target can be identified, log `result: "recon-skipped"` with reason `"no reachable target"` and proceed to plan — do NOT ask the user (the recon is best-effort; the plan can still proceed and flag the missing observation under Unknowns).
 
-2. **Inspect.** Use the selected MCP(s) and/or `curl` to gather only what's needed to plan:
+2. **Inspect.** Use the selected MCP(s) and/or `curl` to gather only what's needed to plan. For any link in the card / prompt, apply the **Link handling** protocol above (two-tier fetch→Playwright load; videos → screenshots + transcript; resource-aware reader per kind):
    - Current visible behavior of the relevant element/flow.
    - Console errors and failed network requests on the affected page.
    - DOM/computed-style facts that disambiguate the task.
