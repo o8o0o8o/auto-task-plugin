@@ -36,6 +36,8 @@
 # Usage:
 #   settings.sh path                      # print the resolved settings-file path
 #   settings.sh get <key>                 # print value (file override, else default)
+#   settings.sh present <key>             # true iff key is EXPLICITLY set in a file (not just a default)
+#   settings.sh set <key> <value> [--global]  # persist a key (merge) into project/global file
 #   settings.sh all                       # print merged (defaults ⊔ file) JSON
 #   settings.sh init [--global]           # write a documented template if absent (project, or global)
 #   settings.sh keys                      # list known default keys
@@ -226,6 +228,50 @@ cmd_path() { resolve_file; printf '\n'; }
 
 cmd_keys() { printf '%s\n' "$known_keys" | tr ' ' '\n'; }
 
+# `present <key>` — has the key been EXPLICITLY set in a settings file (project or
+# global), as opposed to only resolving to a built-in default? Prints true/false.
+# This is how the orchestrator distinguishes "user has decided" from "never asked"
+# for the once-per-repo telemetry consent prompt — `get` can't, since it always
+# returns the default.
+cmd_present() {
+  local key="${1:-}"
+  if [ -z "$key" ] || ! command -v jq >/dev/null 2>&1; then printf 'false\n'; return 0; fi
+  local g p
+  g="$(read_obj "$(resolve_global_file)")"
+  p="$(read_obj "$(resolve_file)")"
+  if printf '%s' "$p" | jq -e --arg k "$key" 'has($k)' >/dev/null 2>&1 \
+     || printf '%s' "$g" | jq -e --arg k "$key" 'has($k)' >/dev/null 2>&1; then
+    printf 'true\n'
+  else
+    printf 'false\n'
+  fi
+}
+
+# `set <key> <value> [--global]` — persist a key into the project (default) or
+# global settings file, merging with (never clobbering) existing keys. Creates the
+# file/dir if absent. `true`/`false`/`null`/numbers are written as JSON literals;
+# anything else as a string. Prints the file path. Writes OUTSIDE the repo by
+# construction (resolve_file / global_file_path target ~/.claude). Fail-open.
+cmd_set() {
+  local key="${1:-}" val="${2:-}" scope="project"
+  [ "${3:-}" = "--global" ] && scope="global"
+  if [ -z "$key" ]; then echo "settings.sh set: missing <key>" >&2; exit 0; fi
+  if ! command -v jq >/dev/null 2>&1; then echo "settings.sh set: jq required" >&2; exit 0; fi
+  local file dir cur out
+  if [ "$scope" = "global" ]; then file="$(global_file_path)"; else file="$(resolve_file)"; fi
+  dir="$(dirname "$file")"
+  mkdir -p "$dir" 2>/dev/null || { echo "settings.sh set: cannot create $dir" >&2; exit 0; }
+  cur="$(read_obj "$file")"   # {} when absent/invalid
+  if printf '%s' "$val" | grep -qE '^(true|false|null|-?[0-9]+(\.[0-9]+)?)$'; then
+    out="$(printf '%s' "$cur" | jq --arg k "$key" --argjson v "$val" '.[$k] = $v' 2>/dev/null)"
+  else
+    out="$(printf '%s' "$cur" | jq --arg k "$key" --arg v "$val" '.[$k] = $v' 2>/dev/null)"
+  fi
+  if [ -z "$out" ]; then echo "settings.sh set: merge failed" >&2; exit 0; fi
+  printf '%s\n' "$out" > "$file" 2>/dev/null || { echo "settings.sh set: write failed" >&2; exit 0; }
+  printf '%s\n' "$file"
+}
+
 cmd_get() {
   local key="${1:-}"
   if [ -z "$key" ]; then
@@ -293,6 +339,8 @@ case "$sub" in
   path) cmd_path ;;
   keys) cmd_keys ;;
   get)  cmd_get "${1:-}" ;;
+  present) cmd_present "${1:-}" ;;
+  set)  cmd_set "$@" ;;
   all)  cmd_all ;;
   init) cmd_init "${1:-}" ;;
   *)    echo "settings.sh: unknown subcommand '$sub' (use: path|get|all|init|keys)" >&2 ;;

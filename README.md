@@ -259,7 +259,9 @@ A live, approved, non-`done` run whose newest history entry is older than the st
 
 The telemetry above is **local only** — nothing leaves your machine. If you want to send the same quality/performance signals to a central endpoint (to build a cross-user dashboard later), there is a **separate, explicit, off-by-default** remote path. It is independent of the local `outcomes.jsonl` opt-in.
 
-**Enable it** with a single key in the [project or global settings](#project-settings-opt-in):
+**You are asked once per repo.** The first time you run `/auto-task` in a repo with no telemetry decision recorded, Phase 1 asks a single consent question — *"Share anonymous auto-task telemetry from this repo?"* — with **Enable** / **No thanks (don't ask again)**. Your answer is saved to that project's settings (`telemetry_enabled: true` or `false`), so you're never asked again for that repo. Declining is remembered as a decision. It's off until you answer; a headless run with no prompt available just stays off.
+
+**Or set it yourself** with a single key in the [project or global settings](#project-settings-opt-in):
 
 ```jsonc
 // ~/.claude/auto-task/settings.json (global)  — or  <project-key>/settings.json (project)

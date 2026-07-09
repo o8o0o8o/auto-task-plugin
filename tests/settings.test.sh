@@ -174,6 +174,31 @@ printf '{}' > "$G"; printf '{"telemetry_enabled":true}' > "$P"
 expect "single {} global still honored" \
   "$(AUTO_TASK_GLOBAL_SETTINGS_FILE="$G" AUTO_TASK_SETTINGS_FILE="$P" bash "$SH" get telemetry_enabled)" "true"
 
+# --- present / set (once-per-repo telemetry consent machinery) ---------------
+PS="$T/consent.json"
+expect "present: never-asked -> false" \
+  "$(AUTO_TASK_SETTINGS_FILE="$T/absent.json" bash "$SH" present telemetry_enabled)" "false"
+AUTO_TASK_SETTINGS_FILE="$PS" bash "$SH" set telemetry_enabled true >/dev/null
+expect "set true -> present true"  "$(AUTO_TASK_SETTINGS_FILE="$PS" bash "$SH" present telemetry_enabled)" "true"
+expect "set true -> get true"      "$(AUTO_TASK_SETTINGS_FILE="$PS" bash "$SH" get telemetry_enabled)" "true"
+# declining is a DECISION: false is recorded, present() true, so it never re-asks
+AUTO_TASK_SETTINGS_FILE="$PS" bash "$SH" set telemetry_enabled false >/dev/null
+expect "set false -> decision recorded (present true)" "$(AUTO_TASK_SETTINGS_FILE="$PS" bash "$SH" present telemetry_enabled)" "true"
+expect "set false -> get false"    "$(AUTO_TASK_SETTINGS_FILE="$PS" bash "$SH" get telemetry_enabled)" "false"
+# set merges (preserves existing keys)
+printf '{"preview_wait_mode":"handoff"}' > "$PS"
+AUTO_TASK_SETTINGS_FILE="$PS" bash "$SH" set telemetry_enabled true >/dev/null
+expect "set preserves other keys"  "$(jq -r '.preview_wait_mode' "$PS")" "handoff"
+expect "set added the key"         "$(jq -r '.telemetry_enabled' "$PS")" "true"
+# a global explicit value also counts as "decided" (suppresses the per-repo prompt)
+printf '{"telemetry_enabled":false}' > "$T/gdecide.json"
+expect "present: global decision counts" \
+  "$(AUTO_TASK_GLOBAL_SETTINGS_FILE="$T/gdecide.json" AUTO_TASK_SETTINGS_FILE="$T/absent.json" bash "$SH" present telemetry_enabled)" "true"
+# set --global targets the global file
+GP="$(AUTO_TASK_HOME="$T/sethome" bash "$SH" set telemetry_enabled true --global)"
+expect "set --global writes global file" "$(basename "$(dirname "$GP")")/$(basename "$GP")" "auto-task/settings.json"
+expect "set --global value"        "$(jq -r '.telemetry_enabled' "$GP")" "true"
+
 # --- init --global seeds the global file, keeps telemetry keys ---------------
 HG="$T/home-global"
 GFILE="$(AUTO_TASK_HOME="$HG" bash "$SH" init --global)"
