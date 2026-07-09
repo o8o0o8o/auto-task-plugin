@@ -2,6 +2,19 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.1]
+
+Makes the remote-telemetry opt-in (0.4.0) **explicit for every user** via a once-per-repo consent prompt, instead of a flag they must discover. Still opt-in, still off until answered, still anonymous.
+
+### Added
+
+- **Once-per-repo telemetry consent prompt (`skills/auto-task/SKILL.md`, Phase 1).** On a NEW run in a repo with no recorded decision, Phase 1 asks a single question — *"Share anonymous auto-task telemetry from this repo?"* (**Enable** / **No thanks — don't ask again**) — as part of the existing human gate, and records the answer to the project settings so it is never asked again. Declining writes `telemetry_enabled: false` (a real decision). Skipped on resume and when already decided at project **or** global scope. Fail-open: if the prompt is unavailable (headless) or `settings.sh` can't be located, it proceeds with telemetry OFF — never blocks a run, never enables without an explicit answer.
+- **`settings.sh` `present` + `set` subcommands.** `present <key>` reports whether a key is **explicitly set** in a settings file (project or global) versus only resolving to a built-in default — how the orchestrator tells "decided" from "never asked". `set <key> <value> [--global]` persists a choice into the project (or global) file, merging without clobbering existing keys, creating the file outside the repo. Both fail-open. `tests/settings.test.sh` extended.
+
+### Notes
+
+- The destination stays bundled (endpoint + public write-only ingest token from 0.4.0), so the consent answer is the only user-facing decision.
+
 ## [0.4.0]
 
 Adds **opt-in anonymous remote telemetry** — the plugin can now send anonymized quality/performance metrics from completed runs to a central collector, on top of the existing local-only `outcomes.jsonl`. Off by default and anonymous by construction; a project that sets nothing behaves exactly as before.
