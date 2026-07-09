@@ -2,6 +2,25 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.0]
+
+Adds **opt-in anonymous remote telemetry** — the plugin can now send anonymized quality/performance metrics from completed runs to a central collector, on top of the existing local-only `outcomes.jsonl`. Off by default and anonymous by construction; a project that sets nothing behaves exactly as before.
+
+### Added
+
+- **`hooks/send-telemetry.sh` — opt-in remote telemetry (new Stop hook).** At `phase==done`, when `telemetry_enabled` is `true` and the endpoint is a valid `https://` URL, it derives an ANONYMIZED row from `STATE.json` and POSTs it — bounded (`--connect-timeout 2 -m 5`), fail-open, write-once per run (base-keyed sentinel). The payload is the `record-outcome.sh` metric set **minus** task/branch/base/completion-timestamp, **plus** a random resettable install id (`~/.claude/auto-task/client-id`, no PII), `plugin_version`, `os`, `schema_version`, the Phase-5 `satisfaction`/`correctness` answers, and an optional free-text `comment` (the one user-authored field, capped 500 chars). `Authorization: Bearer <token>` is sent when an ingest token is set. A drift test binds the payload field set to the source row so the two cannot silently diverge. `tests/send-telemetry.test.sh`.
+- **Bundled central collector + `telemetry_*` settings.** New `settings.sh` keys: `telemetry_enabled` (default `false` — opting in stays explicit), `telemetry_endpoint`, `telemetry_ingest_token`, `telemetry_satisfaction_prompt` (default `true`). The endpoint + token ship as **built-in defaults** pointing at the project's central dashboard, so a user opts in with a single flag; both are overridable to self-host. The ingest token is a **public, write-only key by design** (world-readable in an open-source client; a leak only permits appending junk rows — no read, no DB credential).
+- **Global settings layer.** `settings.sh` now merges `defaults ⊔ global ⊔ project` — a global file (`${AUTO_TASK_HOME:-$HOME/.claude}/auto-task/settings.json`) applies to every project; the per-project file overrides it. `init --global` seeds the global template. `read_obj` accepts exactly one JSON object (rejects scalars, arrays, and multi-document streams) so a corrupt file at one scope can't wipe the other.
+- **Phase-5 satisfaction prompt.** When telemetry is on, the single existing push prompt gains one satisfaction/correctness question plus an optional comment (persisted to STATE before `phase==done`); no new interruption surface. `quality.satisfaction`/`correctness`/`comment` added to the state schema.
+- **`server/` reference (undeployed).** Turso/libSQL `schema.sql` + a portable `fetch` ingest handler (`ingest.mjs`) + deploy guide, as a minimal reference receiver.
+- **Docs** — README `### Remote telemetry (opt-in, off by default)` section (what is/isn't sent, single-flag enable, self-hosting, the public-key rationale) + the new keys in the settings table.
+
+### Notes
+
+- Anonymous by construction: no task text, branch, repo path, base SHA, or wall-clock timestamp is ever sent. The optional `comment` is the one user-authored, consented exception.
+- Independent of the local `outcomes.jsonl` opt-in; the local ledger and its `auto-task-stats` reader are unchanged (`metrics-integration.test.sh` lockstep intact).
+- Forward-compatible: the receiver retains the full payload in a `raw` column, so new fields survive before a column exists; `schema_version` is the migration anchor.
+
 ## [0.3.0]
 
 Adds **project settings** and a gated **post-push preview-verification phase**. Both are purely additive and default-off — a project that sets nothing behaves exactly as before. Settings live outside your repo and never touch the tracked tree.
