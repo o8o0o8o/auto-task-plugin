@@ -190,7 +190,8 @@ Recognized keys (v1):
 
 | Key | Default | Meaning |
 |---|---|---|
-| `has_preview_deployment` | `false` | Whether the project has a preview deployment. Enables the post-push **preview verification** phase. |
+| `has_preview_deployment` | `false` | Explicitly declare a preview deployment (uses the `gh` deployment API + `preview_url`). |
+| `preview_autodetect` | `true` | By default, when a PR is opened, poll its comments for a deployment URL (Vercel/Netlify/Cloudflare/… bot comment) and run preview verification against it — zero config. No URL found ⇒ skips gracefully. Set `false` to disable. |
 | `preview_url` | `""` | Optional preview URL template (fallback when `gh` finds no deployment); `{branch}` is substituted. |
 | `preview_wait_mode` | `"poll"` | `poll` = bounded in-session wait for the deploy; `handoff` = defer the check to a later `/auto-task` resume. |
 | `preview_timeout_min` | `30` | Max minutes to wait for the preview before recording `pending`. |
@@ -275,7 +276,7 @@ That's all a user needs — the **destination is pre-wired**. `telemetry_endpoin
 - Because settings merge `defaults ⊔ global ⊔ project`, you can opt in globally and **exclude one project** with `{ "telemetry_enabled": false }` in that project's file (or opt in for just one). A non-https or emptied endpoint sends nothing.
 - **Maintainers:** the shipped defaults live in `hooks/settings.sh` (`AUTO_TASK_TELEMETRY_DEFAULT_ENDPOINT` / `_TOKEN`) — set them to your deployed dashboard URL and its `INGEST_TOKEN` at release. `settings.sh get telemetry_endpoint` shows users exactly where data goes.
 
-**What is sent** (when on, once per completed run, at `phase: done`): the same metric fields recorded locally — tier, escalations, fix/review iterations, Gate B outcome, follow-up count, duration, estimate-vs-actual time+tokens, defects early/late, flaky, tests-added, diff size, first-pass-AC, checks tally — **plus** a random install id, the plugin version, the OS name, a schema version, and your Phase-5 satisfaction/correctness answers.
+**What is sent** (when on, once per completed run, at `phase: done`; `schema_version: 2`): the run's quality/perf metrics — tier, effort **difficulty/risk**, escalations, fix/review iterations, Gate B outcome, follow-up count, duration, estimate-vs-actual time + **input/output tokens** (cache-excluded), defects early/late, flaky, tests-added, diff size + **files changed**, first-pass-AC, checks tally, requirements count, drift events, preview verdict — **plus** environment (random install id, plugin version, OS, **Claude model + Claude Code version**), the **task type** (`feat`/`fix`/… — the branch *prefix* only, never the slug), **bucketed project size + primary language + monorepo flag**, an anonymous **change-heat** signal (churn ratio, hotspot concentration, dirs-touched, max-depth — numbers derived from a *local* path history that never leaves), a schema version, and your Phase-5 satisfaction/correctness answers + optional comment.
 
 **What is NOT sent — it's anonymous by construction:** no task description, no branch name, no repository path, no base commit SHA, and no wall-clock timestamp (the server stamps its own `received_at`). The install id is a random UUID with no personal data. The **one exception** is the optional satisfaction *comment* — free text you type at the prompt, sent verbatim; leave it blank to send nothing free-form.
 

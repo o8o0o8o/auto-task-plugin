@@ -54,6 +54,25 @@ expect "messages counted"   "$(field "$OUT" .messages)"                        "
 ALL="$(bash "$TU" --transcript "$TR")"
 expect "no-since includes all assistant lines" "$(field "$ALL" .messages)" "3"
 
+# --- model + Claude Code version extraction (anonymous) ----------------------
+MV="$T/mv.jsonl"
+printf '{"type":"assistant","version":"2.1.205","timestamp":"2026-07-07T05:00:00.0Z","message":{"model":"claude-opus-4-8","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n' > "$MV"
+MVOUT="$(bash "$TU" --transcript "$MV")"
+expect "model extracted"            "$(field "$MVOUT" .model)"               "claude-opus-4-8"
+expect "claude_code_version extracted" "$(field "$MVOUT" .claude_code_version)" "2.1.205"
+# tokens_by_skill: attribution buckets output tokens per skill (auto-task: prefix
+# stripped; unattributed -> "base").
+BS="$T/byskill.jsonl"
+printf '{"type":"assistant","attributionSkill":"auto-task:auto-task-code-review","message":{"usage":{"output_tokens":40}}}\n{"type":"assistant","message":{"usage":{"output_tokens":10}}}\n' > "$BS"
+BSOUT="$(bash "$TU" --transcript "$BS")"
+expect "by_skill review bucket"     "$(field "$BSOUT" '.tokens_by_skill["auto-task-code-review"]')" "40"
+expect "by_skill base bucket"       "$(field "$BSOUT" '.tokens_by_skill.base')"                       "10"
+# absent model/version -> null (the original fixture has neither)
+expect "model null when absent"     "$(field "$ALL" .model)"                 "null"
+expect "cc-version null when absent" "$(field "$ALL" .claude_code_version)"   "null"
+# missing-file path also yields null model/version (fail-open shape)
+expect "missing-file model null"    "$(field "$(bash "$TU" --transcript /no/such.jsonl)" .model)" "null"
+
 # Slug auto-discovery WITH a dotted cwd (tests the '.'->'-' mapping) + multi-file.
 WORK="$T/work.dir/sub"; mkdir -p "$WORK"     # note the dot in 'work.dir'
 slug="$(printf '%s' "$WORK" | sed 's/[^a-zA-Z0-9]/-/g')"

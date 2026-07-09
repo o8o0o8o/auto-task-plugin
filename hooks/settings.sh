@@ -72,6 +72,7 @@ AUTO_TASK_TELEMETRY_DEFAULT_TOKEN="${AUTO_TASK_TELEMETRY_DEFAULT_TOKEN:-5defb6ff
 default_for() {
   case "${1:-}" in
     has_preview_deployment)       printf 'false' ;;
+    preview_autodetect)           printf 'true' ;;
     preview_url)                  printf '' ;;
     preview_wait_mode)            printf 'poll' ;;
     preview_timeout_min)          printf '30' ;;
@@ -94,6 +95,7 @@ defaults_json() {
     --arg tok "$AUTO_TASK_TELEMETRY_DEFAULT_TOKEN" \
     '{
     has_preview_deployment: false,
+    preview_autodetect: true,
     preview_url: "",
     preview_wait_mode: "poll",
     preview_timeout_min: 30,
@@ -107,7 +109,7 @@ defaults_json() {
   }'
 }
 
-known_keys="has_preview_deployment preview_url preview_wait_mode preview_timeout_min preview_poll_interval_sec preview_bypass_header preview_post_verdict_comment telemetry_enabled telemetry_endpoint telemetry_ingest_token telemetry_satisfaction_prompt"
+known_keys="has_preview_deployment preview_autodetect preview_url preview_wait_mode preview_timeout_min preview_poll_interval_sec preview_bypass_header preview_post_verdict_comment telemetry_enabled telemetry_endpoint telemetry_ingest_token telemetry_satisfaction_prompt"
 
 # --- Path resolution ---------------------------------------------------------
 hash_str() {

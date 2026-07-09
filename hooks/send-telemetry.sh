@@ -47,7 +47,7 @@
 
 set -uo pipefail
 
-SCHEMA_VERSION=1
+SCHEMA_VERSION=2
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 settings_sh="$SCRIPT_DIR/settings.sh"
@@ -185,38 +185,100 @@ payload="$(jq -c \
   | (if ($t0 != null and $t1 != null)
        then (((($t1 | fromdateiso8601?) // 0) - (($t0 | fromdateiso8601?) // 0)) / 60 | floor)
        else 0 end) as $dur
+  | (((.branch // "") | split("/") | .[0]) // "") as $ttype
   | {
       terminal_state: "done",
       tier: (.effort.tier // ""),
       tier_initial: (((.effort.history // []) | first | .from) // (.effort.tier // "")),
+      difficulty: (.effort.difficulty // null),
+      risk: (.effort.risk // null),
       escalations: ((.effort.history // []) | length),
+      task_type: (if $ttype == "" then null else $ttype end),
       fix_iterations: (.iteration.fix // 0),
       review_iterations: (.iteration.review // 0),
       gate_b: (if (.gates.gate_b.passed // false) then "passed"
                else ((.gates.gate_b.skipped_reason // "") | .[0:120]) end),
       followups: ((.followups // []) | length),
+      requirements_count: ((.requirements // []) | length),
+      drift_events: ((.history // []) | map(select(.result == "drift")) | length),
       duration_min: $dur,
       est_duration_min: (.estimate.duration_min // null),
       est_tokens: (.estimate.tokens_total // null),
       act_duration_min: (.actuals.duration_min // $dur),
       act_tokens: (.actuals.tokens_total // null),
+      tokens_input: (.actuals.tokens_breakdown.input // null),
+      tokens_output: (.actuals.tokens_breakdown.output // null),
+      tokens_by_skill: (.actuals.tokens_by_skill // null),
       defects_early: (.quality.defects.early // 0),
       defects_late: (.quality.defects.late // 0),
       flaky: (.quality.flaky // false),
       tests_added: (.quality.tests_added // false),
       diff_loc: (((.quality.diff.loc_added // 0) + (.quality.diff.loc_removed // 0))),
+      files_changed: (.quality.diff.files // null),
       first_pass_ac: (.quality.planning.first_pass_ac // null),
       checks_run: ((.checks // []) | length),
       checks_failed: ((.checks // []) | map(select(.result=="fail")) | length),
+      preview_verdict: (.preview.verdict // null),
       satisfaction: (.quality.satisfaction // null),
       correctness: (.quality.correctness // null),
       comment: ((.quality.comment // null) | if type == "string" then .[0:500] else . end),
+      model: (.actuals.model // null),
+      claude_code_version: (.actuals.claude_code_version // null),
       client_id: $client_id,
       plugin_version: $plugin_version,
       os: $os,
       schema_version: $schema_version
     }
 ' "$state" 2>/dev/null || true)"
+
+# --- Merge measured repo metrics (size + churn) — bounded, fail-open ----------
+# Sourced from the sibling repo-metrics.sh against the run's repo; every field is
+# nullable and the whole block is optional (older/failed measurements just omit it,
+# and the DB/dashboard treat missing as null). Keeps the anonymity contract: the
+# helper emits only buckets/numbers, never paths or names.
+if [ -n "$payload" ] && [ -f "$SCRIPT_DIR/repo-metrics.sh" ]; then
+  repo_dir="${AUTO_TASK_REPO_DIR:-${project_dir:-}}"
+  if [ -n "$repo_dir" ]; then
+    rm_base="$(jq -r '.base // ""' "$state" 2>/dev/null || echo "")"
+    rmjson="$(bash "$SCRIPT_DIR/repo-metrics.sh" --repo "$repo_dir" --base "$rm_base" 2>/dev/null || true)"
+    if [ -n "$rmjson" ] && printf '%s' "$rmjson" | jq empty 2>/dev/null; then
+      payload="$(printf '%s' "$payload" | jq -c --argjson rm "$rmjson" '. * $rm' 2>/dev/null || printf '%s' "$payload")"
+    fi
+  fi
+fi
+
+# --- Authoritative token measurement (reliable, at send time) ----------------
+# The token cost (total/breakdown/model/version/by-skill) is measured HERE by
+# calling token-usage.sh directly, so it is sent on EVERY completed run — instead
+# of depending on the orchestrator having populated state.actuals in Phase 5
+# (which is model-driven and may be skipped). Tool output overrides the STATE
+# values field-by-field; STATE stays the fallback when a field is unmeasured.
+#   AUTO_TASK_TOKEN_USAGE_JSON  (test hook): if SET, use verbatim instead of
+#   running the tool (empty => skip recompute, keep state.actuals). Unset in a
+#   real run => run the tool. Skipped in AUTO_TASK_STATE_FILE mode (hermetic)
+#   unless the override is provided, so tests never scan a real transcript.
+if [ -n "$payload" ]; then
+  tu_json="${AUTO_TASK_TOKEN_USAGE_JSON-__RUN__}"
+  if [ "$tu_json" = "__RUN__" ]; then
+    if [ -z "${AUTO_TASK_STATE_FILE:-}" ] && [ -f "$SCRIPT_DIR/token-usage.sh" ]; then
+      run_start="$(jq -r '[.history[].at] | map(select(. != null)) | first // ""' "$state" 2>/dev/null || echo "")"
+      tu_json="$(bash "$SCRIPT_DIR/token-usage.sh" --since "$run_start" 2>/dev/null || true)"
+    else
+      tu_json=""
+    fi
+  fi
+  if [ -n "$tu_json" ] && printf '%s' "$tu_json" | jq empty 2>/dev/null; then
+    payload="$(printf '%s' "$payload" | jq -c --argjson tu "$tu_json" '
+      .act_tokens          = ($tu.tokens_total // .act_tokens)
+      | .tokens_input      = ($tu.tokens_breakdown.input  // .tokens_input)
+      | .tokens_output     = ($tu.tokens_breakdown.output // .tokens_output)
+      | .model             = ($tu.model // .model)
+      | .claude_code_version = ($tu.claude_code_version // .claude_code_version)
+      | .tokens_by_skill   = (if (($tu.tokens_by_skill // {}) | length) > 0
+                              then $tu.tokens_by_skill else .tokens_by_skill end)
+    ' 2>/dev/null || printf '%s' "$payload")"
+  fi
+fi
 
 # A malformed/empty derivation must not send garbage — skip silently.
 [ -n "$payload" ] || exit 0

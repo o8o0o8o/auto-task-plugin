@@ -201,8 +201,16 @@ if [ -f "$RO" ]; then
   # Extract the row object's keys from record-outcome.sh source text.
   ro_keys="$(sed -n '/row="\$(jq/,/^    }/p' "$RO" | grep -oE '^ +[a-zA-Z_]+:' | tr -d ' :' | sort -u)"
   # Expected payload key set = ro_keys - {task,branch,base,at} + {6 additions}.
+  # Base = record-outcome row keys MINUS identifiers, PLUS the v2 additions the
+  # sender derives itself. (Optional repo-metrics keys are NOT here — they only
+  # appear when the measured merge runs, which needs a repo dir; this dry-run has
+  # none. They're covered by the repo-metrics merge test below.)
   expected="$( { printf '%s\n' "$ro_keys" | grep -vE '^(task|branch|base|at)$'
-                 printf '%s\n' client_id plugin_version os schema_version satisfaction correctness comment
+                 printf '%s\n' client_id plugin_version os schema_version \
+                   satisfaction correctness comment \
+                   difficulty risk task_type requirements_count drift_events \
+                   tokens_input tokens_output tokens_by_skill files_changed preview_verdict \
+                   model claude_code_version
                } | sort -u )"
   actual="$(printf '%s' "$P" | jq -r 'keys[]' | sort -u)"
   expect "payload keys == source-derived set" "$actual" "$expected"
@@ -229,6 +237,53 @@ Pt="$(AUTO_TASK_HOME="$HOME_DIR" AUTO_TASK_STATE_FILE="$CST" AUTO_TASK_SETTINGS_
 expect "comment capped at 500 chars" "$(printf '%s' "$Pt" | jq -r '.comment | length')" "500"
 # absent comment -> null
 expect "comment null when unset" "$(printf '%s' "$P" | jq -r '.comment')" "null"
+
+# --- 13c. schema v2 fields present + anonymized (task_type is prefix only) ----
+expect "schema_version is 2"        "$(printf '%s' "$P" | jq -r '.schema_version')" "2"
+for k in difficulty risk task_type requirements_count drift_events tokens_input tokens_output tokens_by_skill files_changed preview_verdict model claude_code_version; do
+  expect "v2 field present: $k" "$(printf '%s' "$P" | jq -r "has(\"$k\")")" "true"
+done
+# task_type carries ONLY the branch <type> prefix, never the slug
+STT="$T/state-tt.json"; jq '.branch="feat/super-secret-project-name"' "$STATE" > "$STT"
+Ptt="$(AUTO_TASK_HOME="$HOME_DIR" AUTO_TASK_STATE_FILE="$STT" AUTO_TASK_SETTINGS_FILE="$T/on.json" \
+  AUTO_TASK_GLOBAL_SETTINGS_FILE="$NOFILE" AUTO_TASK_TELEMETRY_DRYRUN=1 AUTO_TASK_TELEMETRY_IGNORE_SENTINEL=1 bash "$SH" 2>/dev/null)"
+expect "task_type is the prefix only" "$(printf '%s' "$Ptt" | jq -r '.task_type')" "feat"
+expect "task_type leaks no slug"      "$(printf '%s' "$Ptt" | jq -r 'tostring | test("super-secret") | not')" "true"
+
+# --- 13d. repo-metrics merge: measured size/churn fields appear + anonymous ---
+if command -v git >/dev/null 2>&1; then
+  RR="$T/repo"; git init -q "$RR"; git -C "$RR" config user.email t@t; git -C "$RR" config user.name t
+  printf 'x\n' > "$RR/a.ts"; git -C "$RR" add -A; git -C "$RR" commit -qm base >/dev/null 2>&1
+  RB="$(git -C "$RR" rev-parse HEAD)"; printf 'x\ny\n' > "$RR/a.ts"; git -C "$RR" add -A; git -C "$RR" commit -qm ch >/dev/null 2>&1
+  jq --arg b "$RB" '.base=$b' "$STATE" > "$T/state-repo.json"
+  Prm="$(AUTO_TASK_HOME="$HOME_DIR" AUTO_TASK_STATE_FILE="$T/state-repo.json" AUTO_TASK_REPO_DIR="$RR" \
+    AUTO_TASK_SETTINGS_FILE="$T/on.json" AUTO_TASK_GLOBAL_SETTINGS_FILE="$NOFILE" \
+    AUTO_TASK_TELEMETRY_DRYRUN=1 AUTO_TASK_TELEMETRY_IGNORE_SENTINEL=1 bash "$SH" 2>/dev/null)"
+  expect "repo-metrics merged (files bucket)" "$(printf '%s' "$Prm" | jq -r 'has("repo_files_bucket")')" "true"
+  expect "repo-metrics primary_language"      "$(printf '%s' "$Prm" | jq -r '.primary_language')" "ts"
+  expect "repo-metrics still no paths leaked"  "$(printf '%s' "$Prm" | jq -r 'tostring | test("a\\.ts") | not')" "true"
+else
+  echo "  SKIP  git not installed (repo-metrics merge test)"
+fi
+
+# --- 13e. token cost measured AT SEND TIME (reliable, not orchestrator-dependent)
+# Even with EMPTY state.actuals, the hook's own token-usage measurement populates
+# the payload (via the AUTO_TASK_TOKEN_USAGE_JSON override standing in for the tool).
+jq '.actuals = {}' "$STATE" > "$T/state-noactuals.json"
+TU='{"tokens_total":123,"tokens_breakdown":{"input":40,"output":80,"cache_read":3},"model":"claude-opus-4-8","claude_code_version":"2.1.9","tokens_by_skill":{"base":50,"auto-task-code-review":30}}'
+Ptu="$(env AUTO_TASK_TOKEN_USAGE_JSON="$TU" AUTO_TASK_HOME="$HOME_DIR" AUTO_TASK_STATE_FILE="$T/state-noactuals.json" \
+  AUTO_TASK_SETTINGS_FILE="$T/on.json" AUTO_TASK_GLOBAL_SETTINGS_FILE="$NOFILE" \
+  AUTO_TASK_TELEMETRY_DRYRUN=1 AUTO_TASK_TELEMETRY_IGNORE_SENTINEL=1 bash "$SH" 2>/dev/null)"
+expect "send-time tokens: output"       "$(printf '%s' "$Ptu" | jq -r '.tokens_output')" "80"
+expect "send-time tokens: input"        "$(printf '%s' "$Ptu" | jq -r '.tokens_input')"  "40"
+expect "send-time tokens: model"        "$(printf '%s' "$Ptu" | jq -r '.model')"         "claude-opus-4-8"
+expect "send-time tokens: by_skill review" "$(printf '%s' "$Ptu" | jq -r '.tokens_by_skill["auto-task-code-review"]')" "30"
+# empty override => keep state.actuals (deterministic; no real-transcript scan)
+jq '.actuals.tokens_breakdown = {"input":11,"output":22}' "$STATE" > "$T/state-actuals.json"
+Pkeep="$(env AUTO_TASK_TOKEN_USAGE_JSON='' AUTO_TASK_HOME="$HOME_DIR" AUTO_TASK_STATE_FILE="$T/state-actuals.json" \
+  AUTO_TASK_SETTINGS_FILE="$T/on.json" AUTO_TASK_GLOBAL_SETTINGS_FILE="$NOFILE" \
+  AUTO_TASK_TELEMETRY_DRYRUN=1 AUTO_TASK_TELEMETRY_IGNORE_SENTINEL=1 bash "$SH" 2>/dev/null)"
+expect "empty override keeps state actuals" "$(printf '%s' "$Pkeep" | jq -r '.tokens_output')" "22"
 
 # --- 14. bearer auth header: sent iff telemetry_ingest_token is set ----------
 mkdir -p "$T/curlbin"

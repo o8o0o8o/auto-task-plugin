@@ -52,7 +52,7 @@ done
 since_esc="$(printf '%s' "$since" | tr -d '\000-\037' | sed 's/\\/\\\\/g; s/"/\\"/g')"
 
 emit_null(){
-  printf '{"tokens_total":null,"tokens_breakdown":{"input":null,"output":null,"cache_read":null,"cache_creation":null},"messages":0,"transcripts":%d,"since":"%s"}\n' "${1:-0}" "$since_esc"
+  printf '{"tokens_total":null,"tokens_breakdown":{"input":null,"output":null,"cache_read":null,"cache_creation":null},"model":null,"claude_code_version":null,"tokens_by_skill":{},"messages":0,"transcripts":%d,"since":"%s"}\n' "${1:-0}" "$since_esc"
   exit 0
 }
 
@@ -83,7 +83,7 @@ agg="$(jq -n --arg since "$since" '
   def epoch: if type=="string" then (sub("\\.[0-9]+";"") | fromdateiso8601? // null) else null end;
   ($since | if . == "" then null else epoch end) as $s
   | reduce inputs as $l (
-      {input:0, output:0, cache_read:0, cache_creation:0, messages:0};
+      {input:0, output:0, cache_read:0, cache_creation:0, messages:0, model:"", version:"", by_skill:{}};
       if ($l.type == "assistant") and ($l.message.usage != null)
          and ( $s == null
                or ( ($l.timestamp | epoch) as $t
@@ -94,6 +94,16 @@ agg="$(jq -n --arg since "$since" '
         | .cache_read   += ($l.message.usage.cache_read_input_tokens // 0)
         | .cache_creation += ($l.message.usage.cache_creation_input_tokens // 0)
         | .messages     += 1
+        # last-seen (within scope) model + Claude Code version — anonymous.
+        | .model        = (if (($l.message.model // "") == "") then .model else $l.message.model end)
+        | .version      = (if (($l.version // "") == "") then .version else $l.version end)
+        # output tokens bucketed by the skill that produced them (deterministic,
+        # from attributionSkill; "auto-task:" prefix stripped, unattributed -> "base").
+        # This is the reliable "where did the cost go" split. NOTE: sub-agent
+        # (Task/Agent) verifier + review-subagent tokens are NOT in the transcript
+        # and are therefore NOT counted here — a documented gap, not a guess.
+        | ( ($l.attributionSkill // "base") | sub("^auto-task:"; "") ) as $sk
+        | .by_skill[$sk] = ((.by_skill[$sk] // 0) + ($l.message.usage.output_tokens // 0))
       else . end
     )
   | .total = (.input + .output + .cache_read + .cache_creation)
@@ -111,8 +121,17 @@ in_tok="$(printf '%s' "$agg" | jq -r '.input // 0')"
 out_tok="$(printf '%s' "$agg" | jq -r '.output // 0')"
 cr_tok="$(printf '%s' "$agg" | jq -r '.cache_read // 0')"
 cc_tok="$(printf '%s' "$agg" | jq -r '.cache_creation // 0')"
+# model / Claude Code version — anonymous tokens; sanitize to a safe charset and
+# emit as JSON string or null (keeps the fail-open valid-JSON contract).
+model="$(printf '%s' "$agg" | jq -r '.model // ""' | tr -cd 'A-Za-z0-9._-')"
+ccver="$(printf '%s' "$agg" | jq -r '.version // ""' | tr -cd 'A-Za-z0-9._-')"
+model_json="null"; [ -n "$model" ] && model_json="\"$model\""
+ccver_json="null"; [ -n "$ccver" ] && ccver_json="\"$ccver\""
+# by-skill map is already valid JSON built by jq; pass through (fallback {}).
+by_skill_json="$(printf '%s' "$agg" | jq -c '.by_skill // {}' 2>/dev/null || echo '{}')"
+[ -n "$by_skill_json" ] || by_skill_json='{}'
 
-printf '{"tokens_total":%s,"tokens_breakdown":{"input":%s,"output":%s,"cache_read":%s,"cache_creation":%s},"messages":%s,"transcripts":%d,"since":"%s"}\n' \
-  "$total" "$in_tok" "$out_tok" "$cr_tok" "$cc_tok" "$messages" "${#files[@]}" "$since_esc"
+printf '{"tokens_total":%s,"tokens_breakdown":{"input":%s,"output":%s,"cache_read":%s,"cache_creation":%s},"model":%s,"claude_code_version":%s,"tokens_by_skill":%s,"messages":%s,"transcripts":%d,"since":"%s"}\n' \
+  "$total" "$in_tok" "$out_tok" "$cr_tok" "$cc_tok" "$model_json" "$ccver_json" "$by_skill_json" "$messages" "${#files[@]}" "$since_esc"
 
 exit 0
