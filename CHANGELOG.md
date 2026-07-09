@@ -2,6 +2,24 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.0]
+
+Adds **project settings** and a gated **post-push preview-verification phase**. Both are purely additive and default-off — a project that sets nothing behaves exactly as before. Settings live outside your repo and never touch the tracked tree.
+
+### Added
+
+- **`hooks/settings.sh` — project settings (opt-in).** Pure, fail-open bash+jq reader for a per-project, per-user JSON settings file kept **outside the repo** at `${AUTO_TASK_HOME:-$HOME/.claude}/auto-task/<project-key>/settings.json`. The `<project-key>` is `<repo-basename>-<12-char-hash>` derived from the git **common dir**, so every worktree of one clone resolves to the same file (per-clone, not per-worktree) and nothing is ever written inside the working tree (never shows in `git status`). Every key has a built-in default (single source of truth in the script); a missing file, malformed JSON, or an absent key all fall back. `false`/`0`/`""` file values are honored (presence-tested, not jq's `//`). Subcommands: `get`/`all`/`path`/`init`/`keys`. Recognized keys (v1): `has_preview_deployment` (default `false`), `preview_url`, `preview_wait_mode` (`poll`|`handoff`), `preview_timeout_min` (30), `preview_poll_interval_sec` (60), `preview_bypass_header`, `preview_post_verdict_comment`. 28-assertion `tests/settings.test.sh`.
+- **Phase 6 — post-push preview verification + verdict (`skills/auto-task/SKILL.md`).** Gated on `has_preview_deployment` + an actual push (else it no-ops straight to `done`, exactly as before). Waits for the preview deploy (`poll` default — bounded, configurable timeout — or `handoff` to a later resume), resolves the preview URL **bound to the pushed HEAD SHA** (`gh` deployment auto-detect, then a configured `preview_url` fallback), re-runs the URL-checkable Acceptance Criteria + a smoke check against the live preview, and records a **PASS / FAIL / INCONCLUSIVE** verdict in STATE + CONTEXT.md (optional PR comment via `preview_post_verdict_comment`). Auth-protected (401/403) previews → `INCONCLUSIVE` with a bypass-token hint (never silently masked); timeout → `pending` + resume; a completed verdict (incl. FAIL) is terminal so telemetry captures it. New STATE objects `settings`/`preview` + `phase: "preview"` + yield-point rows; a "User settings" section and a Phase-1 settings-load step.
+
+### Changed
+
+- **`hooks/prevent-mid-protocol-stall.sh` — `preview.polls` added to the soft-lock signature.** A Phase-6 `poll` wait is the one legitimately long-lived `auto-continue` state (phase/iterations constant across many turn-ends); each poll cycle bumps `preview.polls`, which advances the stall signature so a progressing poll is not misread as a frozen run — while a poll that stops bumping is still caught by the backstop. Backward-compatible: absent on every non-preview run (`// 0` → constant), so existing stall behavior is unchanged. `tests/enforcement-spine.test.sh` +8 assertions (progressing poll never soft-locks; frozen poll still released at the limit).
+- **Docs** — README `## Project settings (opt-in)` + `### Preview verification (opt-in)` sections (location, keys, defaults, the post-push flow), and a feature-list entry.
+
+### Notes
+
+- **Default-off, zero behavior change.** With `has_preview_deployment` at its `false` default (and no settings file at all), the pipeline ends at Phase 5 exactly as in 0.2.x. The plugin's own repo has no preview deployment, so this release does not change how `/auto-task` runs here.
+
 ## [0.2.1]
 
 Sharpens the PR handover so the async reviewer sees **intent vs. reality** at a glance, and lands the reference design for **Autonomous Mode** (the roadmap toward board-driven, self-approving, PR-only runs). Docs- and template-only — no behavioral hooks change, all existing tests pass.
