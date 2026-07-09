@@ -4,7 +4,8 @@ End-to-end autonomous task workflow for Claude Code. Takes a task description fr
 
 ## What it ships
 
-- **`auto-task` skill** — the orchestrator. Composes the six bundled sibling skills and the verifier agent across five phases (Define → Execute → Self-verify → Review → Handover).
+- **`auto-task` skill** — the orchestrator. Composes the six bundled sibling skills and the verifier agent across the pipeline (Define → Execute → Self-verify → Review → Handover, plus an optional post-push Preview-verification phase).
+- **`hooks/settings.sh` — project settings (opt-in).** Reads a per-project, per-user JSON settings file kept **outside your repo** (`~/.claude/auto-task/<project-key>/settings.json`), with a built-in default for every key. First key: `has_preview_deployment`, which turns on the post-push preview verification. See "Project settings (opt-in)" below. Pure, fail-open, `tests/settings.test.sh`.
 - **Six namespaced sibling skills** — `auto-task-plan`, `auto-task-implement`, `auto-task-verify`, `auto-task-code-review`, `auto-task-commit`, `auto-task-fix`. Forked from the upstream skills and patched to participate in the read-before-review contract. The `auto-task-` prefix keeps them distinct from your existing `/plan`, `/verify`, etc.; under a marketplace install they are further namespaced (`auto-task:auto-task-plan`), and under the `install.sh` fallback they keep the bare `auto-task-plan` form.
 - **`task-execution-verifier` agent** — read-only verifier spawned at Gate A (completeness) and Gate B (adversarial). Fresh context per spawn.
 - **`auto-task-stats` skill** — standalone, read-only maintainer tool (NOT part of the pipeline). Reports local run-outcome telemetry: completion rate, where runs stall, per-tier fix/review effort, Gate B coverage. See "Run telemetry (opt-in)" below. Invoke as `/auto-task:auto-task-stats` (marketplace) or `/auto-task-stats` (install.sh fallback).
@@ -174,6 +175,30 @@ The plugin does NOT ship memory entries. They are per-user, per-project, opt-in.
 | `.auto-task/` showing up in `git status` as untracked | The exclude entry didn't land. | Append `.auto-task/` to `$(git rev-parse --git-common-dir)/info/exclude` (worktree-correct — in a worktree `.git` is a file, so the bare `.git/info/exclude` path fails). |
 | `the working-tree diff changed since the last clean code-review pass` | Code was edited after the code-review gate went clean, so the staleness check fired. | Re-run the `auto-task-code-review` skill on the current diff, drive it to a clean pass, then refresh `gates.code_review.reviewed_diff_sha`. Do not bypass. |
 | `jq is not installed` / `STATE.json is not valid JSON` (hook block) | A hook failed closed because it couldn't verify state during an active run. | Install `jq`, or repair/remove `.auto-task/<branch>/STATE.json` if no run is active. |
+
+## Project settings (opt-in)
+
+Per-project, per-user configuration for the pipeline. **Optional and fully defaulted** — a project with no settings file behaves exactly as it did before this feature existed.
+
+- **Kept OUTSIDE your repo.** Settings live at `${AUTO_TASK_HOME:-$HOME/.claude}/auto-task/<project-key>/settings.json`. The `<project-key>` is derived from the repo's git **common dir** (`git rev-parse --git-common-dir`), which every worktree of one clone shares — so settings are **project-specific and per-clone** (all worktrees resolve to the same file), and a setting **never alters your repo** (nothing is written in the working tree; it never appears in `git status`).
+- **JSON, with fallback.** A flat `key: value` object. Any key you omit falls back to the built-in default — the single source of truth is the `default_for` table in `hooks/settings.sh`. A missing file, malformed JSON, or an absent key all resolve to defaults (the reader is fail-open and never errors a run).
+- **Managing them.** `bash hooks/settings.sh path` prints the file location; `bash hooks/settings.sh init` seeds a documented template; `bash hooks/settings.sh get <key>` / `all` read values. (The orchestrator reads them automatically in Phase 1.)
+
+Recognized keys (v1):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `has_preview_deployment` | `false` | Whether the project has a preview deployment. Enables the post-push **preview verification** phase. |
+| `preview_url` | `""` | Optional preview URL template (fallback when `gh` finds no deployment); `{branch}` is substituted. |
+| `preview_wait_mode` | `"poll"` | `poll` = bounded in-session wait for the deploy; `handoff` = defer the check to a later `/auto-task` resume. |
+| `preview_timeout_min` | `30` | Max minutes to wait for the preview before recording `pending`. |
+| `preview_poll_interval_sec` | `60` | Seconds between readiness polls. |
+| `preview_bypass_header` | `""` | Optional `Name: value` header for deployment-protection bypass tokens. |
+| `preview_post_verdict_comment` | `false` | When `true`, post the verdict as a PR comment (an external write — off by default). |
+
+### Preview verification (opt-in)
+
+When `has_preview_deployment` is `true` and a push happened, `/auto-task` adds a final **Phase 6** after the PR: it waits for the preview deployment (bounded, configurable — default 30 min), resolves the preview URL (from `gh` deployment statuses bound to the pushed commit, else the configured `preview_url`), re-runs the URL-checkable Acceptance Criteria against the live preview plus a smoke check (loads, no console errors), and records a **final verdict** — `PASS` / `FAIL` / `INCONCLUSIVE` — in `STATE.json`, `CONTEXT.md`, and (optionally) a PR comment. A timeout records `pending` and asks you to resume; a `FAIL` surfaces with evidence (the commit already shipped, so it recommends a follow-up fix rather than auto-looping); an auth-protected (401/403) preview is reported as `INCONCLUSIVE` with a bypass-token hint, never masked. With `has_preview_deployment` left at its `false` default, none of this runs.
 
 ## Run telemetry (opt-in)
 

@@ -17,7 +17,7 @@ Phase 1 contains the **only** human-interaction surface in the entire pipeline. 
 
 After the user types `approved` / `looks good` / `proceed` / `yes` / `go ahead` at the Phase 1 plan gate, the pipeline runs to one of two terminal states **without stopping for the user**:
 
-- **Success:** Phase 5 completes (commit landed + PR open OR explicit user choice to hold the push at the final handover prompt).
+- **Success:** Phase 5 completes (commit landed + PR open OR explicit user choice to hold the push at the final handover prompt) — and, when `has_preview_deployment` is enabled and a push happened, Phase 6 (preview verification) then records a final verdict (PASS/FAIL/INCONCLUSIVE = terminal `done`). A preview `handoff` or timeout (`pending`) is a legitimate Phase-6 surface per the yield-point table (verification still owed), not a mid-pipeline stall.
 - **Hard stop:** a Loop-rule trigger fires (no-progress, out-of-scope, external blocker, test flakiness) per the "Surfacing protocol" below.
 
 There are NO other legitimate stopping points between plan approval and Phase 5. In particular:
@@ -41,7 +41,7 @@ The single exception during Phase 5: pushing to remote and opening a PR are exte
 
 ## Operating principles
 
-- **One human gate.** The plan produced in Phase 1 is the contract. After the user approves it, do not stop for confirmation — proceed through Execute → Verify → Review → Handover automatically.
+- **One human gate.** The plan produced in Phase 1 is the contract. After the user approves it, do not stop for confirmation — proceed through Execute → Verify → Review → Handover (→ Preview verification, when enabled) automatically. The single mid-run exception remains the Phase 5 push/PR prompt; a Phase-6 surface (handoff or timeout, where verification is still owed) is a documented yield, not a new gate.
 - **Surface only when the loop rule says to.** See "Loop rule" below. Never invent new stops outside that rule.
 - **Single commit at handover.** Phases 2 through Gate B make NO commits — all changes accumulate as one growing uncommitted diff against the branch base, and only Phase 5 commits, after every required gate has passed (see the "Single-commit rule" below, mechanically enforced by the pre-commit hook). Durability and resumability come from `.auto-task/<branch>/STATE.json` on disk, not from intermediate commits.
 - **`.auto-task/` is the persistent local history root — gitignored, NEVER committed.** Layout: `.auto-task/<branch-name>/` per run, where `<branch-name>` mirrors the git branch path verbatim (so branch `fix/auth-bug` → `.auto-task/fix/auth-bug/`). Inside each per-run folder:
@@ -99,7 +99,7 @@ Define-phase scoring (see Phase 1 rubric) produces Difficulty (D) and Risk (R), 
 
 ```json
 {
-  "phase": "define|execute|self-verify|gate-a|review|gate-b|handover|done",
+  "phase": "define|execute|self-verify|gate-a|review|gate-b|handover|preview|done",
   "expected_next_action": "auto-continue|user-approval|user-push-prompt|null",
   "approved": true,
   "description": "<verbatim task input from /auto-task argument>",
@@ -150,13 +150,32 @@ Define-phase scoring (see Phase 1 rubric) produces Difficulty (D) and Risk (R), 
   "followups": [
     { "source": "code-review", "note": "Consider extracting X helper", "at": "ISO-8601" }
   ],
-  "pr_url": null
+  "pr_url": null,
+  "settings": {
+    "source": "<resolved settings-file path from settings.sh, or null when none exists>",
+    "resolved": { "has_preview_deployment": false, "preview_wait_mode": "poll", "preview_timeout_min": 30 },
+    "at": "ISO-8601"
+  },
+  "preview": {
+    "status": "skipped-disabled|skipped-no-push|awaiting|pending|verified|failed|inconclusive",
+    "wait_mode": "poll|handoff",
+    "url": "<resolved preview URL, or null>",
+    "deployment_sha": "<the pushed HEAD SHA the preview was bound to, or null>",
+    "polls": 0,
+    "verdict": "PASS|FAIL|INCONCLUSIVE|null",
+    "checks": [ { "ac": 3, "result": "pass|fail", "evidence": "<url check + result>", "at": "ISO-8601" } ],
+    "at": "ISO-8601"
+  }
 }
 ```
 
 Update this file at every phase transition and at the end of every loop iteration.
 
 **Run-metrics objects (`estimate`, `actuals`, `quality`, `checks`).** These are additive and populated by the run-metrics helpers + orchestrator (see "Run metrics" wiring in Phases 1, 3, and 5). They never gate a commit — `enforce-gates.sh` reads only `gates.*`. `estimate`/`actuals` token+time fields are `null` (never `0`) when a measurement could not be taken, so the telemetry reader (`auto-task-stats`) EXCLUDES them from the actual/estimate ratio instead of dividing by zero. `quality` is a **signals panel, not a composite score** (the maintainability read is reused verbatim from the code-review verdict; per-run business impact / collaboration / long-term maintainability are explicitly out of reach and listed under `not_measured`). `checks[]` is the comprehensive checks manifest surfaced in the final summary.
+
+**Settings + preview objects (`settings`, `preview`).** Both additive. `settings` is the Phase-1 snapshot of the resolved project settings (see "User settings" below) — a record of what the run read, not a live source; it is invisible to every hook. `preview` is populated only by Phase 6 (preview verification); it is `null` on every run where the preview phase does not execute (the default, since `has_preview_deployment` defaults to `false`). `enforce-gates.sh` and `record-outcome.sh` read neither object (they key on `gates.*` and `phase` respectively). The **one** hook that reads `preview` is the Stop hook (`prevent-mid-protocol-stall.sh`): its soft-lock signature includes `preview.polls` so a Phase-6 `poll` wait — the single legitimately long-lived `auto-continue` state — is recognized as *progressing* each time the poll counter bumps, instead of being misread as a frozen run. This is the ONE hook edit this feature required; all other hooks are phase/preview-agnostic and untouched.
+
+**Terminal vs in-flight for `phase: "preview"`.** The hooks treat any non-`"done"` phase as an active run, and `record-outcome.sh` fires only at `phase: "done"`. Phase 6 therefore maps its outcomes so the ledger/telemetry stay honest: a **completed** verification — verdict `PASS`, `FAIL`, or `INCONCLUSIVE` — is TERMINAL (`phase: "done"`), so it is recorded and never lingers as "stalled"; an **incomplete** verification — `awaiting` (handoff, deferred) or `pending` (deploy not ready by timeout) — stays `phase: "preview"` and is correctly counted as in-flight until a resume finishes it. A `FAIL` is done-with-a-negative-verdict (the run did everything it automatically could; fixing the regression is a *new* run), not an open loop.
 
 ### Yield-point contract (mechanical anti-stall enforcement)
 
@@ -200,7 +219,13 @@ The hook is shipped in the plugin's `settings-fragment.json`. Without it, the fi
 | Phase 5 step 1–4 (gates verify, diagram, artifacts, CONTEXT.md) | `"auto-continue"` |
 | Phase 5 step 5–7 (stage, commit, verify, push prep) | `"auto-continue"` |
 | Phase 5 just-before `git push` / `gh pr create` | `"user-push-prompt"` |
-| Phase 5 PR opened, state written | `null` (and `phase: "done"`) |
+| Phase 5 push/PR done, preview verification NOT applicable (`has_preview_deployment` false, or push held) | `null` (and `phase: "done"`) |
+| Phase 5 push/PR done, preview verification applicable → entering Phase 6 | `"auto-continue"` (and `phase: "preview"`) |
+| Phase 6 polling for the preview deployment (`poll` mode) | `"auto-continue"` |
+| Phase 6 handoff mode (wait deferred to a later resume) | `"user-approval"` (and `phase: "preview"`) |
+| Phase 6 timeout — deploy not ready within `preview_timeout_min` | `"user-approval"` (and `phase: "preview"`, `preview.status: "pending"`) |
+| Phase 6 poll cycle (not yet ready) — bump `preview.polls`, wait, re-poll | `"auto-continue"` (the `preview.polls` bump advances the anti-stall signature) |
+| Phase 6 verdict PASS / FAIL / INCONCLUSIVE, state written | `null` (and `phase: "done"`) — a completed verification is terminal; FAIL is reported prominently but the run is done (fix = new run) |
 | Loop-rule surface (anywhere) | `"user-approval"` |
 | Destructive action confirmation prompt | `"user-approval"` |
 
@@ -209,6 +234,32 @@ If you cannot map the current transition to one of these, the default is `"auto-
 `gates` is the mechanical contract enforced by the global pre-commit hook (`enforce-gates.sh`). **No commit is permitted during an auto-task run until `gates.code_review.passed === true`, `gates.code_review.clean_pass_after_last_fix === true`, and (for STANDARD/HEAVY tier) `gates.gate_b.passed === true` or `gates.gate_b.skipped_reason` is set.** The hook reads this file at every `git commit`/`git commit --amend` invocation. Setting these flags is a checkable artifact — only set them after the agent actually ran and returned a clean result; never set them speculatively. If a gate fails, leave `passed: false` and surface.
 
 Beyond the booleans, the hook also enforces **review staleness**: when `state.base` and `gates.code_review.reviewed_diff_sha` are both present, it recomputes `git diff <pinned-flags> <base> | git hash-object --stdin` (the pinned flags are listed under Phase 4 `reviewed_diff_sha`) and blocks the commit if the result differs from `reviewed_diff_sha`. This catches the most common real failure mode — review passes clean, then more code is edited (a "quick" Gate B fix, a stray tweak) and committed without re-review. The flags are self-attested; this binds them to the actual bytes of the diff. The only way past it is to re-review the current diff and refresh the sha, which is exactly the intended behavior.
+
+## User settings
+
+Per-project, per-user configuration for the pipeline. **Optional and fully defaulted** — a project with no settings file behaves exactly as before. Settings are read (never written) by the orchestrator via the `hooks/settings.sh` helper.
+
+- **Where they live (deliberately OUTSIDE the user's repo).** `${AUTO_TASK_HOME:-$HOME/.claude}/auto-task/<project-key>/settings.json` (i.e. under `~/.claude/auto-task/` by default), where `<project-key>` is `<repo-basename>-<12-char-hash>` derived from the git **common dir** (`git rev-parse --git-common-dir`) — which every linked worktree of one clone shares. So settings are **project-specific and per-clone** (all worktrees of a repo resolve to the same file), and a setting **never alters the tracked repo** (nothing is written inside the working tree; it never shows in `git status`). This satisfies the "keep them elsewhere, don't touch my repo" contract.
+- **Format: JSON.** A flat object of `key: value`. Any key the user omits **falls back to the built-in default** (the single source of truth is the `default_for` table in `hooks/settings.sh`). A missing file, malformed JSON, or an absent key all resolve to defaults — the helper is fail-open and never errors a run. Note `false`/`0`/`""` file values are honored (the helper tests key *presence*, not jq's `//`).
+- **Reading them.** Locate `hooks/settings.sh` via the same three-probe pattern used for `check-version.sh`/`estimate.sh` (`CLAUDE_PLUGIN_ROOT` is empty in the Bash-tool env), substituting `hooks/settings.sh`. Then:
+  - `bash "$settings_sh" get <key>` → the value (file override, else default).
+  - `bash "$settings_sh" all` → the merged (defaults ⊔ file) JSON.
+  - `bash "$settings_sh" path` → the resolved file path (for surfacing to the user).
+  - `bash "$settings_sh" init` → seed a documented template if none exists (only when the user asks to configure).
+
+**Recognized keys (v1):**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `has_preview_deployment` | `false` | Whether this project has a preview deployment. Gates **Phase 6** (preview verification) — when `false`, the pipeline ends at Phase 5 exactly as before. |
+| `preview_url` | `""` | Optional preview URL template used as a fallback when `gh` auto-detection finds no deployment. `{branch}` is substituted with the run branch. |
+| `preview_wait_mode` | `"poll"` | `poll` = bounded in-session polling for the deploy; `handoff` = record state and defer the check to a later `/auto-task` resume. |
+| `preview_timeout_min` | `30` | Max minutes to poll for the preview deployment before recording `pending` and surfacing. |
+| `preview_poll_interval_sec` | `60` | Seconds between readiness polls in `poll` mode. |
+| `preview_bypass_header` | `""` | Optional `Name: value` header sent with preview requests, for deployment-protection bypass tokens (Vercel/Netlify). |
+| `preview_post_verdict_comment` | `false` | When `true`, post the Phase-6 verdict as a PR comment (an external write — off by default). |
+
+Unknown keys present in the file are preserved by `all` (forward-compatible) and returned verbatim by `get`, so the schema can grow without a helper change.
 
 ## Pipeline
 
@@ -315,6 +366,8 @@ This ask is part of the existing Phase-1 human surface — it runs while `approv
 4. **State.** Initialize `.auto-task/<branch>/STATE.json` with `phase: "define"`, `expected_next_action: null`, `approved: false`, `description: "<verbatim task input>"`, `branch: "<resolved name>"`, `base: "<base-commit SHA>"`, and empty containers for the rest (see "State file" schema). Capture `base` as `git rev-parse HEAD` at run start — for the isolated worktree this is the fresh default-branch fork point (set in branch-setup step 2); for the in-place fallback it is the tip the new branch was cut from. Either way `git diff <base>` is then exactly *this run's* uncommitted work, which is what the change diagram, the verifiers, and the review-staleness gate hook all measure against. `base` must NOT change for the life of the run. **Caveat:** the isolated worktree starts clean, so there is normally no pre-existing WIP in it; but if a run somehow starts with pre-existing uncommitted changes (e.g. the in-place fallback on a dirty tree), those are part of `git diff <base>` too — the baseline-exclusion rule keeps them out of *commits*, but reviewers and the staleness hash will see them. When that happens, note it under PLAN.md Unknowns so a reviewer isn't surprised. `expected_next_action` is `null` while `approved` is `false` — the Stop hook allows yields freely until the user has approved the plan.
 
 5. **Initialize TRACE.md.** Create `.auto-task/<branch>/TRACE.md` with the header block from the "Persistent history & trace contract" section, and append the first trace entry: `operation: auto-task:phase-1-start`, summary: "Branch <name> created from <base>; task: <one-line task summary>".
+
+6. **Load settings (auto, fail-open).** Read the project's settings via `hooks/settings.sh` (see "User settings"; locate it with the three-probe pattern). Write a snapshot to `state.settings`: `{ source: "<settings.sh path>", resolved: { has_preview_deployment, preview_wait_mode, preview_timeout_min, ... }, at }` — capture at least the preview-relevant keys via `settings.sh all`. This snapshot records what the run read (later phases re-read live values; the snapshot is for the audit trail + the approval-gate surface). If `settings.sh` cannot be located or errors, record `state.settings = { source: null, resolved: {}, note: "settings unavailable — using built-in defaults", at }` and proceed on defaults (never block). Surface the resolved `has_preview_deployment` at the plan-approval gate so the user knows whether a Phase-6 preview verification will run. On **resume**, re-read settings (they may have changed between sessions) and refresh the snapshot. This step is additive and never gates anything.
 
 **Do NOT make any commit during branch setup.** The branch starts empty (zero commits ahead of the base). The first commit comes only after the user approves the plan, in Phase 2 — and it commits real code changes, not `.auto-task/<branch>/` content. The plan itself lives on disk under `.auto-task/<branch>/` for the user to read and for resumption, but it is never part of the git history.
 
@@ -1009,7 +1062,9 @@ This is the **only phase that commits**. By the time you reach it, the working t
 
 11. **Append the handover trace.** Append a final entry to `.auto-task/<branch>/TRACE.md` summarizing the completed run (see "Persistent history & trace contract" for format): operation=`auto-task:phase-5`, summary covers PR URL, files touched count, AC pass count, follow-up count.
 
-12. Write `pr_url`, `phase: "done"`, AND `expected_next_action: null` to state — the run has reached its terminal state and the Stop hook allows the final yield. Report the PR URL to the user along with: (a) a one-line description of the diagram type used, and (b) a one-line pointer that local context + artifacts live at `.auto-task/<branch>/` for future reviews.
+12. Write `pr_url` to state, then **decide the terminal transition**:
+    - **Preview verification applicable** — `state.settings.resolved.has_preview_deployment === true` AND a push actually happened (the user chose push/push-and-PR at step 8, not "hold"): set `phase: "preview"`, `expected_next_action: "auto-continue"`, and advance to **Phase 6**. Do NOT report a final summary yet — Phase 6 owns the terminal state.
+    - **Otherwise** (`has_preview_deployment` is false, OR the user held the push so nothing deployed): set `preview` = `{ status: "<skipped-disabled|skipped-no-push>", verdict: null, at }`, `phase: "done"`, `expected_next_action: null`. The run has reached its terminal state and the Stop hook allows the final yield. Report the PR URL to the user along with: (a) a one-line description of the diagram type used, and (b) a one-line pointer that local context + artifacts live at `.auto-task/<branch>/` for future reviews.
 
 **Run notes content.** Derive entirely from state and PLAN.md — do not invent. Include only buckets that produced bullets; omit empty ones. Format as labeled bullet groups:
 
@@ -1020,6 +1075,46 @@ This is the **only phase that commits**. By the time you reach it, the working t
 - **Plan critique at approval** — if `.auto-task/<branch>/PLAN.md` `## Critique` section was non-empty (not `No issues found.`), include both its **Auto-fixed** and **For your judgment** parts verbatim under this label so reviewers see what the re-plan loop repaired and what concerns were left for human judgment before approval.
 
 If none of the above produced bullets, write a single line: `Clean run — no escalations, no drift, no loop retries.`
+
+### Phase 6 — Preview verification & final verdict (auto, GATED, NO new authored commit)
+
+The last verification rung: after the change has been pushed, confirm it actually works on the **deployed preview**, then record a final judgment. This phase runs **only** when both hold — otherwise Phase 5 step 12 already routed to `done`:
+
+- `state.settings.resolved.has_preview_deployment === true`, and
+- a push actually happened in Phase 5 (the user did not "hold").
+
+**This phase makes NO new authored commit.** The single reviewed commit already shipped in Phase 5; Phase 6 only observes the deployed result. A FAIL here is surfaced as a finding, not auto-fixed (see below) — fixing it is a follow-up run, preserving the single-commit invariant. Because it never commits, `enforce-gates.sh` is not involved; the only mechanical contract is the Stop hook, satisfied by keeping polling on `auto-continue` and every human surface on `user-approval`.
+
+Read the live settings again (do not trust only the Phase-1 snapshot — the user may have edited them). Resolve: `wait_mode = settings.get preview_wait_mode` (default `poll`), `timeout_min = preview_timeout_min` (default 30), `interval_sec = preview_poll_interval_sec` (default 60), `url_template = preview_url`, `bypass = preview_bypass_header`.
+
+**Wait mode:**
+
+- **`handoff`** — do NOT wait in-session. Set `preview = { status: "awaiting", wait_mode: "handoff", ... }`, `phase: "preview"`, `expected_next_action: "user-approval"`, append a TRACE entry, and surface to the user: "Pushed. Preview verification deferred — re-run `/auto-task` once the deploy lands and I'll verify + verdict." On the later resume, the pipeline re-enters Phase 6 and runs the `poll`-style detection immediately (the deploy should be ready by then).
+- **`poll`** (default) — poll for readiness in-session, bounded by `timeout_min`. Keep polling until a ready, SHA-matched preview URL resolves OR the timeout elapses. Each poll cycle that does NOT yet resolve a URL: (a) **increment `preview.polls` and refresh `preview.at` in STATE** — this is REQUIRED, not optional; (b) wait `interval_sec` before the next cycle using a bounded mechanism (e.g. the **Monitor** tool — foreground `sleep` may be blocked in this environment); (c) re-poll. **Why the `preview.polls` bump matters:** the anti-stall Stop hook (`prevent-mid-protocol-stall.sh`) blocks turn-ends whose run-state signature is unchanged for ~25 turn-ends in a row (a frozen-run backstop). A poll holds `phase`/`expected_next_action`/iterations constant, so without a changing field it would trip that backstop and abandon the wait with a false "frozen" warning. `preview.polls` is part of that signature — bumping it each cycle marks the poll as *progressing*, so the wait survives to `timeout_min`; if you ever stop bumping it, the backstop correctly reclaims the session. The turn stays alive on `auto-continue` between cycles; if it ends, the Stop hook re-invokes you and polling continues.
+
+**1. Resolve the preview URL (bound to the pushed commit).** `HEAD_SHA = git rev-parse HEAD`.
+   1. **`gh` auto-detect first.** If `gh` is available and authenticated, read deployment status for the pushed ref — e.g. `gh api "repos/{owner}/{repo}/deployments?sha=$HEAD_SHA"` and the deployment's statuses (`state == "success"`, `environment_url`), and/or `gh pr checks` for a preview/deploy check that exposes a URL. **Bind to the SHA:** accept a deployment only when its `sha`/`ref` matches `HEAD_SHA`. A `success` deployment for an *older* SHA is NOT ready for us — keep polling (a newer deploy for our SHA is still building). Record the matched `deployment_sha`.
+   2. **Configured fallback.** If `gh` is missing / not authenticated / errors, OR it ran but exposed no deployment URL: fall back to `url_template` with `{branch}` substituted (skip if empty). This URL is not SHA-verifiable via the provider, so after fetching it, best-effort confirm it reflects the change (e.g. an asset hash, a version string, or simply that it is reachable and recently deployed).
+   3. **Neither yields a reachable, SHA-appropriate URL by `timeout_min`** → record `preview.status = "pending"`, surface (`user-approval`), tell the user the deploy did not become ready in time and to resume `/auto-task` once it lands. Do **not** emit FAIL (no preview ≠ a regression).
+
+**2. Verify the change on the preview.** MCP allowance is the same as Phase 3 (read-only by default; `playwright` for browser checks; auth prompts are not verifiers you invoke interactively). Send `bypass` as a request header when set (for deployment-protection tokens).
+   - **Reachability / auth.** Fetch the preview URL. **A 401/403 is deployment protection, NOT a genuine failure** — if `bypass` is unset, do not treat it as a pass or a FAIL; record `preview.status = "inconclusive"`, verdict `INCONCLUSIVE`, with the explicit note "preview is auth-protected — set `preview_bypass_header` to a bypass token", and surface. Never silently mask a possible regression behind a 401.
+   - **URL-checkable ACs.** For each AC row whose `Verification method` is a URL / `playwright` / `curl` check, re-run it against the **preview URL** (substitute the base). Record each as a `preview.checks[]` entry `{ ac, result, evidence, at }`.
+   - **Smoke.** Navigate the preview URL and the routes the change touched; assert they load (HTTP 200 / rendered) and the browser console shows no new errors on the affected pages.
+
+**3. Final verdict.** Compute and record `preview.verdict`:
+   - **PASS** — every URL-checkable AC passed against the preview AND the smoke check is clean. `preview.status = "verified"`.
+   - **FAIL** — the preview was reachable but a URL-AC or the smoke check regressed. `preview.status = "failed"`. The commit already shipped, so do **NOT** auto-loop back into Phase 4/2 — the run is **done with a negative verdict** (fixing the regression is a separate `/auto-task "fix <the preview regression>"` run). Report the verdict prominently with evidence (which AC, observed vs. expected, `preview.checks[]`), but set the terminal state `phase: "done"`, `expected_next_action: null` (see step 4) so `record-outcome.sh` captures the completed run rather than leaving it to linger as an in-flight "stall". Do not dress a FAIL up as success.
+   - **INCONCLUSIVE** — could not reach the preview, auth-protected without a bypass, or the resolved URL could not be SHA-bound. `preview.status = "inconclusive"`. Surface with the reason; do not claim success.
+
+**4. Record + report.**
+   - Write `preview` to state with the verdict, url, `deployment_sha`, and `checks[]`. Append the checks to `state.checks[]` (tagged `gate: "preview"`) so the manifest stays complete.
+   - Append a `## Preview verification` section to `.auto-task/<branch>/CONTEXT.md` (URL, deployment SHA, verdict, per-check results, any INCONCLUSIVE reason). Save any screenshots under `artifacts/preview-*.png` and a transcript under `artifacts/preview-verdict.txt`.
+   - Append a TRACE entry: `operation: auto-task:phase-6-preview`, `outcome: <pass|fail|inconclusive|pending>`, summary covers the URL, verdict, and any surfaced reason.
+   - **Optional PR comment.** Only if `preview_post_verdict_comment === true`: post the verdict as a PR comment via `gh pr comment` (an external write — off by default). Otherwise report the verdict only to the user + CONTEXT.md.
+   - **Terminal state.** A **completed** verification is terminal: on PASS, FAIL, or INCONCLUSIVE set `phase: "done"`, `expected_next_action: null`, and give the user the final summary (PR URL + the preview verdict + where artifacts live) — so `record-outcome.sh` records the run and telemetry never misclassifies a decided verdict as a perpetual stall. An **incomplete** verification stays in-flight: on `pending` (timeout) or `awaiting` (handoff), leave `phase: "preview"` with `expected_next_action: "user-approval"` (surfaced) — the run is not `done` until a resume finishes the check (re-check once the deploy lands). The distinction is completion, not success: a FAIL is done (nothing more to do automatically; the fix is a new run), whereas a `pending`/`awaiting` genuinely has verification still owed.
+
+**No preview infra?** For a project without a preview deployment, `has_preview_deployment` stays `false` (the default) and this entire phase is skipped at Phase 5 step 12 — the pipeline ends exactly as it did before this feature existed. (This is the case for the plugin's own repo.)
 
 ## Persistent history & trace contract
 

@@ -178,6 +178,29 @@ expect "Stall: release #3 (count>=limit)"                 "$(stopS)" "allow"
 setstate '.iteration.fix=1'   # state advanced → fresh block sequence
 expect "Stall: blocking resumes after a release"         "$(stopS)" "block"
 
+echo "== Phase-6 preview poll: preview.polls advances the signature (no false soft-lock) =="
+# A `poll` wait holds phase/expected_next_action/iterations CONSTANT across many
+# turn-ends, but bumps preview.polls each cycle. Each bump changes the signature,
+# resetting the stall counter — so a PROGRESSING poll never force-releases as
+# "frozen", even past AUTO_TASK_STALL_LIMIT.
+rm -f "$SD/.stall-block-count"
+cat > "$ST" <<EOF
+{"approved":true,"phase":"preview","expected_next_action":"auto-continue","base":"$BASE","effort":{"tier":"standard"},
+ "iteration":{"review":0,"fix":0},
+ "gates":{"code_review":{"passed":true},"gate_b":{"passed":true}},
+ "preview":{"status":"awaiting","polls":0}}
+EOF
+expect "Preview poll: block #1 (polls=0)"                "$(stopS)" "block"
+setstate '.preview.polls=1'; expect "Preview poll: block (polls=1, counter reset)" "$(stopS)" "block"
+setstate '.preview.polls=2'; expect "Preview poll: block (polls=2)"               "$(stopS)" "block"
+setstate '.preview.polls=3'; expect "Preview poll: block (polls=3, still no release past limit)" "$(stopS)" "block"
+setstate '.preview.polls=4'; expect "Preview poll: block (polls=4, progressing poll never soft-locks)" "$(stopS)" "block"
+# A FROZEN poll (polls stops changing) is still caught by the backstop at the limit.
+rm -f "$SD/.stall-block-count"; setstate '.preview.polls=99'   # fixed; unchanged across the next calls
+expect "Frozen poll: block #1"                           "$(stopS)" "block"
+expect "Frozen poll: block #2"                           "$(stopS)" "block"
+expect "Frozen poll: RELEASE #3 (backstop intact)"       "$(stopS)" "allow"
+
 echo "================ AI-attribution block ================"
 expect "Attr: Co-Authored-By Claude BLOCKED"              "$(attr '{"tool_input":{"command":"git commit -m \"x\n\nCo-Authored-By: Claude <x@y>\""}}')" "2"
 expect "Attr: clean commit ALLOWED"                       "$(attr '{"tool_input":{"command":"git commit -m clean"}}')" "0"
