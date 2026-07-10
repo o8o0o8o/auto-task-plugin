@@ -194,22 +194,32 @@ Recognized keys (v1):
 
 | Key | Default | Meaning |
 |---|---|---|
-| `has_preview_deployment` | `false` | Explicitly declare a preview deployment (uses the `gh` deployment API + `preview_url`). |
-| `preview_autodetect` | `true` | By default, when a PR is opened, poll its comments for a deployment URL (Vercel/Netlify/Cloudflare/… bot comment) and run preview verification against it — zero config. No URL found ⇒ skips gracefully. Set `false` to disable. |
+| `has_preview_deployment` | `false` (unset) | Whether the project has a preview deployment. **Auto-learned when unset:** on the first post-PR run, `/auto-task` detects whether a deployment exists and **persists the answer here** (`true`→verify every run, `false`→skip) so later runs are deterministic. Set it explicitly to skip auto-learn — explicit `true`/`false` is honored and never overwritten. |
+| `preview_autodetect` | `true` | Gates the one-time auto-learn: when `has_preview_deployment` is unset and a PR is opened, poll its comments for a deployment URL (Vercel/Netlify/Cloudflare/… bot comment) and persist the result — zero config. Set `false` to disable auto-learn (unset then means "no preview", nothing persisted). |
 | `preview_url` | `""` | Optional preview URL template (fallback when `gh` finds no deployment); `{branch}` is substituted. |
 | `preview_wait_mode` | `"poll"` | `poll` = bounded in-session wait for the deploy; `handoff` = defer the check to a later `/auto-task` resume. |
 | `preview_timeout_min` | `30` | Max minutes to wait for the preview before recording `pending`. |
 | `preview_poll_interval_sec` | `60` | Seconds between readiness polls. |
 | `preview_bypass_header` | `""` | Optional `Name: value` header for deployment-protection bypass tokens. |
 | `preview_post_verdict_comment` | `false` | When `true`, post the verdict as a PR comment (an external write — off by default). |
+| `bot_review_autofix` | `false` | Opt-in: after the PR opens, collect **Cursor/GitHub review-bot** comments and conservatively auto-apply the high-confidence, in-scope fixes (each through the full verify→review→gate→commit→push loop); park the rest. Off by default — enabling grants write authority to your PR branch. See "Post-PR bot-comment review" below. |
+| `bot_review_timeout_min` | `10` | Max minutes to poll for bot comments after the PR opens. |
+| `bot_review_poll_interval_sec` | `30` | Seconds between bot-comment polls. |
+| `bot_review_bots` | `""` | Extra bot logins to treat as review bots (space/comma-separated), beyond the built-in list + any `[bot]`/`type:Bot` account. |
 | `telemetry_enabled` | `false` | Opt-in for **remote** anonymous telemetry. Default OFF. See "Remote telemetry" below. |
 | `telemetry_endpoint` | `""` | HTTPS ingest URL the anonymized row is POSTed to. Must be `https://…`. |
 | `telemetry_ingest_token` | `""` | Optional bearer token sent as `Authorization: Bearer …` (e.g. the dashboard's `INGEST_TOKEN`). Empty → no auth header. |
 | `telemetry_satisfaction_prompt` | `true` | When telemetry is on, whether Phase 5 asks a satisfaction/correctness question at the push prompt. |
 
-### Preview verification (opt-in)
+### Post-PR bot-comment review (opt-in)
 
-When `has_preview_deployment` is `true` and a push happened, `/auto-task` adds a final **Phase 6** after the PR: it waits for the preview deployment (bounded, configurable — default 30 min), resolves the preview URL (from `gh` deployment statuses bound to the pushed commit, else the configured `preview_url`), re-runs the URL-checkable Acceptance Criteria against the live preview plus a smoke check (loads, no console errors), and records a **final verdict** — `PASS` / `FAIL` / `INCONCLUSIVE` — in `STATE.json`, `CONTEXT.md`, and (optionally) a PR comment. A timeout records `pending` and asks you to resume; a `FAIL` surfaces with evidence (the commit already shipped, so it recommends a follow-up fix rather than auto-looping); an auth-protected (401/403) preview is reported as `INCONCLUSIVE` with a bypass-token hint, never masked. With `has_preview_deployment` left at its `false` default, none of this runs.
+Set `bot_review_autofix: true` and `/auto-task` adds **Phase 6** after the PR opens: it polls (bounded, default 10 min) for comments left by review bots — Cursor, CodeRabbit, Sourcery, GitHub Copilot review, and any `[bot]`-suffix / GitHub `type:Bot` account (extend via `bot_review_bots`) — via `hooks/pr-bot-comments.sh`, which merges the PR's issue comments, inline review threads, and review summaries into one de-duplicated set. It triages them **conservatively**: only high-confidence, in-scope findings that don't contradict a decision you already made are auto-applied, each routed through the same verify → `auto-task-code-review` → gate → commit → push loop as any other change (so every bot-fix commit is fully re-reviewed before it can land — the pre-commit gate is unchanged). Everything else is parked as a follow-up and reported. It runs exactly one collection round (it does not chase comments its own fix-push re-triggers); a fork-PR / protected-branch push failure is fail-open (parked, never a hard stop). Off by default — enabling it lets the pipeline push bot-derived fixes to your PR branch.
+
+### Preview verification (opt-in + auto-learn)
+
+When a push happened and a preview is expected, `/auto-task` adds a final **Phase 7** after the PR (and after any Phase-6 bot-fixes): it waits for the preview deployment (bounded, configurable — default 30 min), resolves the preview URL (from `gh` deployment statuses bound to the pushed commit, else the PR's deploy-bot comment, else the configured `preview_url`), re-runs the URL-checkable Acceptance Criteria against the live preview plus a smoke check (loads, no console errors), and records a **final verdict** — `PASS` / `FAIL` / `INCONCLUSIVE` — in `STATE.json`, `CONTEXT.md`, and (optionally) a PR comment. A timeout records `pending` and asks you to resume; a `FAIL` surfaces with evidence (the commit already shipped, so it recommends a follow-up fix rather than auto-looping); an auth-protected (401/403) preview is reported as `INCONCLUSIVE` with a bypass-token hint, never masked.
+
+**Auto-learn (zero config).** You don't have to set `has_preview_deployment`. Left unset, the first post-PR run detects whether a preview deployment exists and **persists the answer** to your project settings: found → `true` (verify every subsequent run), none found within the bound → `false` (skip subsequent runs, no polling). An explicit `has_preview_deployment` is always honored and never overwritten; set `preview_autodetect: false` to turn auto-learn off entirely.
 
 ## Run telemetry (opt-in)
 

@@ -127,15 +127,17 @@ count_file="$project_dir/.auto-task/$branch/.stall-block-count"
 # release, not on legitimate yield/done exits). Within a run (incl. resume) base
 # is stable, so the counter accumulates as intended.
 #
-# `.preview.polls` is included so Phase 6's `poll` wait — the one legitimately
-# long-lived `auto-continue` state, where phase/expected_next_action/iterations
-# all stay constant across many turn-ends while waiting for a deploy — is not
-# misread as a frozen run. Each poll cycle bumps `preview.polls`, which changes
-# the signature and resets the counter; a poll that STOPS bumping (a genuinely
-# frozen model) keeps a constant signature and is still caught by the backstop.
-# Backward-compatible: absent on every non-preview run (`// 0` → "0", constant),
-# so it is inert for existing runs and does not alter their stall behavior.
-sig="$(jq -r '[(.base // ""), (.phase // ""), (.expected_next_action // ""), ((.iteration.review // 0)|tostring), ((.iteration.fix // 0)|tostring), (.gates.code_review.reviewed_diff_sha // ""), ((.preview.polls // 0)|tostring)] | join("|")' "$state" 2>/dev/null || echo "")"
+# `.preview.polls` (Phase 7 preview) and `.bot_review.polls` (Phase 6 bot-comment
+# review) are included so their `poll` waits — the legitimately long-lived
+# `auto-continue` states, where phase/expected_next_action/iterations all stay
+# constant across many turn-ends while waiting for a deploy or for bot comments —
+# are not misread as a frozen run. Each poll cycle bumps the respective counter,
+# which changes the signature and resets the block counter; a poll that STOPS
+# bumping (a genuinely frozen model) keeps a constant signature and is still
+# caught by the backstop. Backward-compatible: absent on every non-poll run
+# (`// 0` → "0", constant), so it is inert for existing runs and does not alter
+# their stall behavior.
+sig="$(jq -r '[(.base // ""), (.phase // ""), (.expected_next_action // ""), ((.iteration.review // 0)|tostring), ((.iteration.fix // 0)|tostring), (.gates.code_review.reviewed_diff_sha // ""), ((.preview.polls // 0)|tostring), ((.bot_review.polls // 0)|tostring)] | join("|")' "$state" 2>/dev/null || echo "")"
 prev_count=0; prev_sig=""
 if [ -f "$count_file" ]; then
   prev_line="$(cat "$count_file" 2>/dev/null || echo "")"

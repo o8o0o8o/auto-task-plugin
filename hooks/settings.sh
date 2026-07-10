@@ -79,6 +79,10 @@ default_for() {
     preview_poll_interval_sec)    printf '60' ;;
     preview_bypass_header)        printf '' ;;
     preview_post_verdict_comment) printf 'false' ;;
+    bot_review_autofix)           printf 'false' ;;
+    bot_review_timeout_min)       printf '10' ;;
+    bot_review_poll_interval_sec) printf '30' ;;
+    bot_review_bots)              printf '' ;;
     telemetry_enabled)            printf 'false' ;;
     telemetry_endpoint)           printf '%s' "$AUTO_TASK_TELEMETRY_DEFAULT_ENDPOINT" ;;
     telemetry_ingest_token)       printf '%s' "$AUTO_TASK_TELEMETRY_DEFAULT_TOKEN" ;;
@@ -102,6 +106,10 @@ defaults_json() {
     preview_poll_interval_sec: 60,
     preview_bypass_header: "",
     preview_post_verdict_comment: false,
+    bot_review_autofix: false,
+    bot_review_timeout_min: 10,
+    bot_review_poll_interval_sec: 30,
+    bot_review_bots: "",
     telemetry_enabled: false,
     telemetry_endpoint: $ep,
     telemetry_ingest_token: $tok,
@@ -109,7 +117,7 @@ defaults_json() {
   }'
 }
 
-known_keys="has_preview_deployment preview_autodetect preview_url preview_wait_mode preview_timeout_min preview_poll_interval_sec preview_bypass_header preview_post_verdict_comment telemetry_enabled telemetry_endpoint telemetry_ingest_token telemetry_satisfaction_prompt"
+known_keys="has_preview_deployment preview_autodetect preview_url preview_wait_mode preview_timeout_min preview_poll_interval_sec preview_bypass_header preview_post_verdict_comment bot_review_autofix bot_review_timeout_min bot_review_poll_interval_sec bot_review_bots telemetry_enabled telemetry_endpoint telemetry_ingest_token telemetry_satisfaction_prompt"
 
 # --- Path resolution ---------------------------------------------------------
 hash_str() {

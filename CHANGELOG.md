@@ -2,6 +2,23 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+Two post-PR capabilities. **Preview-deployment auto-learn**: the pipeline already detected deploys after a PR but never remembered the answer — it now persists the detection result so the check becomes deterministic. **Post-PR bot-comment review** (opt-in): after the PR opens, collect Cursor/GitHub review-bot comments and conservatively auto-apply the safe fixes. Both default to their prior behavior (auto-learn only fires when `has_preview_deployment` is unset; bot-review is off unless `bot_review_autofix` is set).
+
+### Added
+
+- **Preview-deployment auto-learn + persist** (`skills/auto-task/SKILL.md`). When `has_preview_deployment` has never been explicitly set, the preview phase now detects whether a deployment exists and **persists the answer** to project settings via `settings.sh set` — `true` (verify every subsequent run) if a deployment/URL resolves, `false` (skip thereafter) if none is found within the bound. An explicit `true`/`false` is honored verbatim and never overwritten; `preview_autodetect: false` disables auto-learn entirely. Fail-open: a failed persist never blocks the run. Recorded in a new `preview.learned` state field.
+- **Phase 6 — post-PR bot-comment review (opt-in)** (`skills/auto-task/SKILL.md`). New `bot_review_autofix` (default `false`) enables a new phase after the PR opens: poll (bounded) for review-bot comments, triage them conservatively, and auto-apply only high-confidence in-scope fixes — each through the full verify → `auto-task-code-review` → gate → commit → push loop (so every bot-fix commit is fully re-reviewed; the pre-commit gate is unchanged). The rest are parked as follow-ups. One collection round (no re-comment chase); fork-PR / no-push-authority is fail-open. The prior preview phase is renumbered **Phase 6 → Phase 7** (bot-review runs first so preview verifies the final code).
+- **`hooks/pr-bot-comments.sh`** — new fail-open helper that merges a PR's issue comments, inline review-thread comments, and review summaries, filters to bot authors (`[bot]` suffix / GitHub `type:Bot` / built-in known list / `--bots` extras), de-duplicates across the three surfaces, and emits a normalized JSON array (`[]` on any failure). Modeled on `pr-deploy-url.sh`, with a `--json-file` test hook.
+- **`tests/pr-bot-comments.test.sh`** — focused test for the new helper: bot-vs-human filtering, `type:Bot`/`--bots` detection, inline path/line normalization, empty-review dropping, cross-surface de-duplication, malformed-element resilience (a bad element in one surface must not zero out the others), and fail-open `[]`.
+- **New settings keys** (`hooks/settings.sh` `default_for` / `defaults_json` / `known_keys`): `bot_review_autofix` (`false`), `bot_review_timeout_min` (`10`), `bot_review_poll_interval_sec` (`30`), `bot_review_bots` (`""`). Documented in the README + SKILL.md settings tables.
+
+### Changed
+
+- **Anti-stall Stop-hook signature** (`hooks/prevent-mid-protocol-stall.sh`) now includes `bot_review.polls` alongside `preview.polls`, so the Phase-6 bot-comment poll wait is recognized as *progressing* rather than misread as a frozen run. Backward-compatible (absent → `0`, inert on existing runs). This is the only hook change — `enforce-gates.sh` / `record-outcome.sh` / `auto-task-stats.sh` are phase-agnostic and gate/record the new `bot-review` phase with no change.
+- **STATE schema** gains a `bot_review` object, a `bot-review` phase value, and a `preview.learned` field; the single-commit rule documents a second exception (Phase-6 bot-fix commits, each gate-reviewed) and the yield-point table + NON-YIELDING contract cover the new post-PR ordering (Phase 6 bot-review → Phase 7 preview).
+
 ## [0.6.0]
 
 Sharpens the opt-in telemetry's **change-type signal** into a bounded, dashboard-groupable enum and fixes a latent data-loss bug in the reference receiver. All telemetry stays opt-in, off by default, and anonymous by construction — no new field leaves the machine.
