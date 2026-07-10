@@ -2,7 +2,7 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.7.0]
 
 Two post-PR capabilities. **Preview-deployment auto-learn**: the pipeline already detected deploys after a PR but never remembered the answer — it now persists the detection result so the check becomes deterministic. **Post-PR bot-comment review** (opt-in): after the PR opens, collect Cursor/GitHub review-bot comments and conservatively auto-apply the safe fixes. Both default to their prior behavior (auto-learn only fires when `has_preview_deployment` is unset; bot-review is off unless `bot_review_autofix` is set).
 
