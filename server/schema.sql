@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS runs (
   difficulty        INTEGER,            -- effort rubric D (0-8)  [v2]
   risk              INTEGER,            -- effort rubric R (0-8)  [v2]
   escalations       INTEGER,
-  task_type         TEXT,               -- branch <type> prefix only: feat|fix|chore|… [v2]
+  task_type         TEXT,               -- bounded enum, branch <type> prefix only: feat|fix|deps|refactor|docs|chore|cleanup|other [v2]
 
   -- loop effort
   fix_iterations    INTEGER,
@@ -80,7 +80,12 @@ CREATE TABLE IF NOT EXISTS runs (
   -- user feedback (NULL unless the Phase-5 satisfaction prompt was answered)
   satisfaction      TEXT,               -- "yes" | "mostly" | "no"
   correctness       TEXT,               -- "yes" | "mostly" | "no"
-  comment           TEXT                -- optional free-text note (<=500 chars)
+  comment           TEXT,               -- optional free-text note (<=500 chars)
+
+  -- forward-compat: the full JSON payload exactly as received. Captures nested or
+  -- future fields (e.g. tokens_by_skill) before they get a dedicated column, so a
+  -- newer client never silently loses data against an older schema. [v2]
+  raw               TEXT
 );
 
 -- Common dashboard access paths.

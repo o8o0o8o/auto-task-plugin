@@ -185,7 +185,12 @@ payload="$(jq -c \
   | (if ($t0 != null and $t1 != null)
        then (((($t1 | fromdateiso8601?) // 0) - (($t0 | fromdateiso8601?) // 0)) / 60 | floor)
        else 0 end) as $dur
-  | (((.branch // "") | split("/") | .[0]) // "") as $ttype
+  | (((.branch // "") | split("/") | .[0]) // "") as $ttype0
+  | (if $ttype0 == "" then null
+     else ($ttype0 | ascii_downcase) as $lc
+       | (if (["fix","feat","deps","refactor","docs","chore","cleanup"] | index($lc)) != null
+          then $lc else "other" end)
+     end) as $ttype
   | {
       terminal_state: "done",
       tier: (.effort.tier // ""),
@@ -193,7 +198,7 @@ payload="$(jq -c \
       difficulty: (.effort.difficulty // null),
       risk: (.effort.risk // null),
       escalations: ((.effort.history // []) | length),
-      task_type: (if $ttype == "" then null else $ttype end),
+      task_type: $ttype,
       fix_iterations: (.iteration.fix // 0),
       review_iterations: (.iteration.review // 0),
       gate_b: (if (.gates.gate_b.passed // false) then "passed"

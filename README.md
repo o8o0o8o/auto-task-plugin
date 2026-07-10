@@ -280,9 +280,22 @@ That's all a user needs — the **destination is pre-wired**. `telemetry_endpoin
 - Because settings merge `defaults ⊔ global ⊔ project`, you can opt in globally and **exclude one project** with `{ "telemetry_enabled": false }` in that project's file (or opt in for just one). A non-https or emptied endpoint sends nothing.
 - **Maintainers:** the shipped defaults live in `hooks/settings.sh` (`AUTO_TASK_TELEMETRY_DEFAULT_ENDPOINT` / `_TOKEN`) — set them to your deployed dashboard URL and its `INGEST_TOKEN` at release. `settings.sh get telemetry_endpoint` shows users exactly where data goes.
 
-**What is sent** (when on, once per completed run, at `phase: done`; `schema_version: 2`): the run's quality/perf metrics — tier, effort **difficulty/risk**, escalations, fix/review iterations, Gate B outcome, follow-up count, duration, estimate-vs-actual time + **input/output tokens** (cache-excluded), defects early/late, flaky, tests-added, diff size + **files changed**, first-pass-AC, checks tally, requirements count, drift events, preview verdict — **plus** environment (random install id, plugin version, OS, **Claude model + Claude Code version**), the **task type** (`feat`/`fix`/… — the branch *prefix* only, never the slug), **bucketed project size + primary language + monorepo flag**, an anonymous **change-heat** signal (churn ratio, hotspot concentration, dirs-touched, max-depth — numbers derived from a *local* path history that never leaves), a schema version, and your Phase-5 satisfaction/correctness answers + optional comment.
+**What is sent** (when on, once per completed run, at `phase: done`; `schema_version: 2`): the run's quality/perf metrics — tier, effort **difficulty/risk**, escalations, fix/review iterations, Gate B outcome, follow-up count, duration, estimate-vs-actual time + **input/output tokens** (cache-excluded), defects early/late, flaky, tests-added, diff size + **files changed**, first-pass-AC, checks tally, requirements count, drift events, preview verdict — **plus** environment (random install id, plugin version, OS, **Claude model + Claude Code version**), the **change type** (`task_type`, a bounded enum — see the table below; e.g. `feat`/`fix`/… — the branch *prefix* only, never the slug), **bucketed project size + primary language + monorepo flag**, an anonymous **change-heat** signal (churn ratio, hotspot concentration, dirs-touched, max-depth — numbers derived from a *local* path history that never leaves), a schema version, and your Phase-5 satisfaction/correctness answers + optional comment.
 
 **What is NOT sent — it's anonymous by construction:** no task description, no branch name, no repository path, no base commit SHA, and no wall-clock timestamp (the server stamps its own `received_at`). The install id is a random UUID with no personal data. The **one exception** is the optional satisfaction *comment* — free text you type at the prompt, sent verbatim; leave it blank to send nothing free-form.
+
+**Change type (`task_type`).** Each run is labelled with a bounded change-type enum, derived from the branch `<type>` prefix (never the slug) and normalized case-insensitively. Any unrecognized or slash-less prefix folds to `other`, so the set is closed and dashboard-groupable. **`change_type` is a bounded label — no per-run free text** (the only user-authored free text remains the optional satisfaction comment below).
+
+| `change_type` | Meaning |
+|---|---|
+| `fix` | Bug fix, regression, or broken behavior |
+| `feat` | New feature or capability |
+| `deps` | Dependency add/remove/bump (manifest / lockfile) |
+| `refactor` | Code reorganization with no behavior change |
+| `docs` | Docs / README / comments only |
+| `chore` | Build/test config, formatting sweeps |
+| `cleanup` | Dead-code or file removal |
+| `other` | Anything that doesn't fit the labels above |
 
 **Satisfaction prompt.** When telemetry is on, the single existing Phase-5 push prompt gains one extra question — *"Did this run produce a correct, satisfactory result?"* (`yes`/`mostly`/`no`/`skip`) — plus an **optional free-text comment**. So no new interruption point is introduced. Set `telemetry_satisfaction_prompt: false` to collect metrics without the prompt. The comment is the one field that isn't auto-anonymized — it is **whatever you type**, sent verbatim (capped 500 chars) to your endpoint, so leave it blank if you don't want free text to leave the machine.
 

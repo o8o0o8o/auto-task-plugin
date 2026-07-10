@@ -21,14 +21,23 @@ import { createClient } from "@libsql/client/web";
 
 // Column order MUST match the INSERT below and stays in lockstep with
 // server/schema.sql and the client payload (hooks/send-telemetry.sh).
+// Scalar columns, in schema.sql declaration order (everything except the
+// server-managed `id`/`received_at` and the forward-compat `raw`, which is
+// appended separately in the INSERT below). tests/ingest-columns.test.sh
+// asserts this list stays in lockstep with server/schema.sql.
 const COLUMNS = [
   "client_id", "plugin_version", "os", "schema_version",
-  "terminal_state", "tier", "tier_initial", "escalations",
-  "fix_iterations", "review_iterations", "gate_b", "followups",
+  "model", "claude_code_version",
+  "terminal_state", "tier", "tier_initial", "difficulty", "risk", "escalations", "task_type",
+  "fix_iterations", "review_iterations", "gate_b", "followups", "requirements_count",
+  "drift_events", "preview_verdict",
   "duration_min", "est_duration_min", "est_tokens", "act_duration_min", "act_tokens",
-  "defects_early", "defects_late", "flaky", "tests_added", "diff_loc",
+  "tokens_input", "tokens_output",
+  "defects_early", "defects_late", "flaky", "tests_added", "diff_loc", "files_changed",
   "first_pass_ac", "checks_run", "checks_failed",
-  "satisfaction", "correctness",
+  "repo_files_bucket", "primary_language", "is_monorepo", "churn_ratio",
+  "hotspot_concentration", "dirs_touched", "max_depth",
+  "satisfaction", "correctness", "comment",
 ];
 
 // Minimal shape validation: the three NOT NULL identity/env fields must be present.
@@ -48,8 +57,9 @@ function db(env) {
 
 function toArg(key, value) {
   if (value === undefined || value === null) return null;
-  // SQLite has no boolean — coerce the two boolean payload fields to 0/1.
-  if (key === "flaky" || key === "tests_added") return value ? 1 : 0;
+  // SQLite has no boolean — coerce the boolean payload fields to 0/1.
+  // is_monorepo arrives as a JSON boolean from repo-metrics.sh (--argjson mono).
+  if (key === "flaky" || key === "tests_added" || key === "is_monorepo") return value ? 1 : 0;
   return value;
 }
 
@@ -73,9 +83,13 @@ export async function handle(request, env = (globalThis.process && globalThis.pr
     }
   }
 
-  const placeholders = COLUMNS.map(() => "?").join(", ");
-  const sql = `INSERT INTO runs (${COLUMNS.join(", ")}) VALUES (${placeholders})`;
-  const args = COLUMNS.map((k) => toArg(k, payload[k]));
+  // `raw` is appended last: the full payload as received (forward-compat), so a
+  // newer client's not-yet-columned fields survive. Not part of COLUMNS (which
+  // mirrors the scalar schema); the drift test only checks COLUMNS vs schema.
+  const insertCols = [...COLUMNS, "raw"];
+  const placeholders = insertCols.map(() => "?").join(", ");
+  const sql = `INSERT INTO runs (${insertCols.join(", ")}) VALUES (${placeholders})`;
+  const args = [...COLUMNS.map((k) => toArg(k, payload[k])), JSON.stringify(payload)];
 
   try {
     await db(env).execute({ sql, args });

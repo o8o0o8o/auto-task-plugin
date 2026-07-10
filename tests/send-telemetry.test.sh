@@ -250,6 +250,24 @@ Ptt="$(AUTO_TASK_HOME="$HOME_DIR" AUTO_TASK_STATE_FILE="$STT" AUTO_TASK_SETTINGS
 expect "task_type is the prefix only" "$(printf '%s' "$Ptt" | jq -r '.task_type')" "feat"
 expect "task_type leaks no slug"      "$(printf '%s' "$Ptt" | jq -r 'tostring | test("super-secret") | not')" "true"
 
+# --- 13c-norm. task_type normalized to the bounded enum ----------------------
+# known prefix -> canonical; deps split-out -> deps; case-folded; unknown or
+# slash-less branch -> other; empty/no branch -> null.
+tt_case() { # $1=branch ("" = no branch)  $2=expected task_type
+  local sj="$T/state-ttn.json" out
+  if [ -n "$1" ]; then jq --arg b "$1" '.branch=$b' "$STATE" > "$sj"
+  else jq 'del(.branch)' "$STATE" > "$sj"; fi
+  out="$(AUTO_TASK_HOME="$HOME_DIR" AUTO_TASK_STATE_FILE="$sj" AUTO_TASK_SETTINGS_FILE="$T/on.json" \
+    AUTO_TASK_GLOBAL_SETTINGS_FILE="$NOFILE" AUTO_TASK_TELEMETRY_DRYRUN=1 AUTO_TASK_TELEMETRY_IGNORE_SENTINEL=1 bash "$SH" 2>/dev/null)"
+  expect "task_type norm: ${1:-<none>} -> $2" "$(printf '%s' "$out" | jq -r '.task_type')" "$2"
+}
+tt_case "deps/bump-lodash" "deps"
+tt_case "wibble/secret"    "other"
+tt_case "fix/x"            "fix"
+tt_case "Fix/x"            "fix"
+tt_case "main"             "other"
+tt_case ""                 "null"
+
 # --- 13d. repo-metrics merge: measured size/churn fields appear + anonymous ---
 if command -v git >/dev/null 2>&1; then
   RR="$T/repo"; git init -q "$RR"; git -C "$RR" config user.email t@t; git -C "$RR" config user.name t

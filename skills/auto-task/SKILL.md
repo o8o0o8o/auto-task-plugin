@@ -335,11 +335,12 @@ This ask is part of the existing Phase-1 human surface — it runs while `approv
 
 **Branch setup (new runs only).** Before invoking `auto-task-plan`, isolate the run:
 
-1. **Branch.** Every new-description run gets its OWN fresh branch named `<type>/<slug>`, created from the repo's **default branch** (`main`/`master`) — regardless of what branch is currently checked out. This is unconditional: auto-task no longer runs "in place" on a prepared feature branch (see "Isolate the new branch" below for why, the resolution, and the one exception — already being inside a linked worktree). Match the repo's existing convention (sample with `git for-each-ref --format='%(refname:short)' refs/heads refs/remotes/origin | head -30` and pick the dominant pattern — most repos here use `feat/`, `fix/`, `chore/`, `docs/`, `cleanup/`, `refactor/`). Pick `<type>` from the task description:
+1. **Branch.** Every new-description run gets its OWN fresh branch named `<type>/<slug>`, created from the repo's **default branch** (`main`/`master`) — regardless of what branch is currently checked out. This is unconditional: auto-task no longer runs "in place" on a prepared feature branch (see "Isolate the new branch" below for why, the resolution, and the one exception — already being inside a linked worktree). Match the repo's existing convention (sample with `git for-each-ref --format='%(refname:short)' refs/heads refs/remotes/origin | head -30` and pick the dominant pattern — most repos here use `feat/`, `fix/`, `chore/`, `deps/`, `docs/`, `cleanup/`, `refactor/`). Pick `<type>` from the task description:
 
    - `fix/` — bug reports, "X is broken", "doesn't work", "scrolls to wrong place", "throws error", "wrong output", "regression"
    - `feat/` — "add X", "implement Y", "new feature", "support Z", "enable …"
-   - `chore/` — internal cleanup, dependency bumps, build/test config, formatting-only sweeps
+   - `deps/` — dependency add/remove/bump: package-manifest / lockfile changes ("bump X", "update dependency", "upgrade package", "add library")
+   - `chore/` — internal cleanup, build/test config, formatting-only sweeps
    - `refactor/` — code reorganization with no behavior change
    - `docs/` — docs/README/comments-only changes
    - `cleanup/` — removal of dead code or files
