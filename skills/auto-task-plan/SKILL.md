@@ -68,7 +68,7 @@ Ensure the `.auto-task/<branch>/` directory exists (create it if needed). Write 
 
 ### 5. Present the plan
 
-Show the user the plan summary and tell them to run `/implement` when ready to start.
+Show the user the plan summary and tell them to run `/auto-task-implement` when ready to start.
 
 ## Rules
 

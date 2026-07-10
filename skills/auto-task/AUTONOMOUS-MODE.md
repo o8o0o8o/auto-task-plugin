@@ -29,7 +29,7 @@ Quality is layered. Each rung catches a failure class the rung below physically 
 | Rung | Verifies | Catches | When | Owner |
 |---|---|---|---|---|
 | **L0 Code** | tests/types/lint/build + code review + Gate B | logic bugs, type/test regressions | in-run (today) | tool |
-| **L1 Preview** | smoke ACs against the **PR preview deploy** | runtime/integration breakage, "builds but broken", config errors | in-run, pre-merge | tool |
+| **L1 Preview** | smoke ACs against the **PR preview deploy** | runtime/integration breakage, "builds but broken", config errors | in-run, pre-merge — **shipped today as Phase 7** (base pipeline, independent of autonomous mode) | tool |
 | **L2 Prod smoke** | smoke ACs against the **production URL** | env-specific breakage: prod config, secrets, data shape | post-merge, on deploy | tool |
 | **L3 Monitor** | error volume / uptime vs. baseline over a window | emergent regressions, downtime, error spikes | post-merge, T minutes | tool |
 | **L4 Notify** | — | human unaware of outcome | after L3 | tool → user |
@@ -99,7 +99,7 @@ Success and regression both post to Slack, using a **webhook URL from the env fi
 - **Scheduler:** `launchd` (macOS-native, reliable) or `cron`, calling a driver script — *not* the skill directly.
 - **Driver** (`auto-task-cron.sh`): `source` env → `cd` repo → `flock` lockfile → `timeout 45m claude -p "/auto-task --auto" --permission-mode acceptEdits`. Loop: `claim` → run → PR → `link_pr` → repeat until queue empty / blocker / **budget cap**.
 - **Env vars:** `~/.config/auto-task/env` (chmod 600) — `ASANA_PAT`, `SLACK_WEBHOOK_URL`, etc. Never in the repo, never in the crontab line.
-- **Permission prompts:** an unattended run can't answer them, so it runs non-interactive. Safe here because the **guardrails are hooks, not prompts** (`enforce-gates.sh`, single-commit, reviewed-diff hash, `never-merge`) — all fire regardless of permission mode.
+- **Permission prompts:** an unattended run can't answer them, so it runs non-interactive. Safe here because the **guardrails are hooks, not prompts** (`enforce-gates.sh`, single-commit, reviewed-diff hash — all shipped and firing regardless of permission mode; plus `never-merge`, **planned for Phase C**, not yet a firing hook).
 - **macOS gotcha:** plain cron won't fire while asleep → launchd + `caffeinate`, or accept "only while awake".
 
 ---
@@ -110,7 +110,7 @@ Success and regression both post to Slack, using a **webhook URL from the env fi
 |---|---|---|
 | **0 — quick win** ✅ | PR **planned-vs-done task breakdown** section (Phase 5 body) | Landed. Helps every run today, not just autonomous mode. |
 | **A** | Board-adapter contract + **GitHub Issues adapter** + `/auto-task --from-board` — **human gate still ON** | Proves source→pipeline→PR-link with zero external auth and full safety |
-| **B** | Autonomous mode: `autonomous` flag, self-approval + readiness score, **abstention rules**, compensating gates (+ optional **L1 preview smoke** where previews exist) | The one risky change (gate removal) lands alone, with abstention as the net |
+| **B** | Autonomous mode: `autonomous` flag, self-approval + readiness score, **abstention rules**, compensating gates (**L1 preview smoke already shipped as Phase 7** — autonomous mode reuses it) | The one risky change (gate removal) lands alone, with abstention as the net |
 | **C** | PR-only handover + board write-back + **`never-merge` hook invariant** | Locks the downstream safety valve mechanically |
 | **D (local)** | Driver script + `launchd`/cron + `flock` + `~/.config/auto-task/env` + budget caps | Unattended local operation |
 | **F (watch)** | Per-repo watch config + **`post-deploy` gate** + **log probe** + deploy-detection + **L2/L3** + **Slack notify** + **revert-PR** on regression | Decoupled — triggered by the deploy event, keyed to the PR commit |

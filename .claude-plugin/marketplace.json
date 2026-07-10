@@ -14,7 +14,7 @@
         "name": "Sergey Labut"
       },
       "license": "MIT",
-      "keywords": ["workflow", "automation", "autonomous", "code-review"]
+      "keywords": ["workflow", "automation", "autonomous", "code-review", "pull-request"]
     }
   ]
 }

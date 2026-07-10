@@ -33,7 +33,7 @@
 #   token-usage.sh --since 2026-07-07T00:00:00Z
 #   token-usage.sh --transcript /path/to/session.jsonl --since <iso>
 # Output (one line):
-#   {"tokens_total":..,"tokens_breakdown":{"input":..,"output":..,"cache_read":..,"cache_creation":..},"messages":..,"transcripts":..,"since":".."}
+#   {"tokens_total":..,"tokens_breakdown":{"input":..,"output":..,"cache_read":..,"cache_creation":..},"model":"..","claude_code_version":"..","tokens_by_skill":{..},"messages":..,"transcripts":..,"since":".."}
 
 set -uo pipefail
 

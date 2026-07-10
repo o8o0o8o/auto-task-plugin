@@ -1,5 +1,5 @@
 {
-  "_comment": "FALLBACK / REFERENCE ONLY. The recommended install is the marketplace flow (see README); it auto-wires the three core hooks via hooks/hooks.json, so you do NOT need this file for them. Plugin path variables like CLAUDE_PLUGIN_ROOT are substituted ONLY inside plugin-loaded hook configs (hooks/hooks.json) — they do NOT expand when pasted into ~/.claude/settings.json. So the placeholder /ABSOLUTE/PATH/TO/auto-task-plugin below must be replaced with the real absolute path to your clone (this is exactly what install.sh prints for you, so prefer copying install.sh's output). Merge into ~/.claude/settings.json — do NOT replace the file; preserve existing permissions, enabledPlugins, etc.",
+  "_comment": "FALLBACK / REFERENCE ONLY. The recommended install is the marketplace flow (see README); it auto-wires the seven core hooks via hooks/hooks.json, so you do NOT need this file for them. Plugin path variables like CLAUDE_PLUGIN_ROOT are substituted ONLY inside plugin-loaded hook configs (hooks/hooks.json) — they do NOT expand when pasted into ~/.claude/settings.json. So the placeholder /ABSOLUTE/PATH/TO/auto-task-plugin below must be replaced with the real absolute path to your clone (this is exactly what install.sh prints for you, so prefer copying install.sh's output). Merge into ~/.claude/settings.json — do NOT replace the file; preserve existing permissions, enabledPlugins, etc.",
 
   "hooks": {
     "PreToolUse": [
@@ -16,7 +16,9 @@
       {
         "matcher": "",
         "hooks": [
-          { "type": "command", "command": "/ABSOLUTE/PATH/TO/auto-task-plugin/hooks/prevent-mid-protocol-stall.sh" }
+          { "type": "command", "command": "/ABSOLUTE/PATH/TO/auto-task-plugin/hooks/prevent-mid-protocol-stall.sh" },
+          { "type": "command", "command": "/ABSOLUTE/PATH/TO/auto-task-plugin/hooks/record-outcome.sh" },
+          { "type": "command", "command": "/ABSOLUTE/PATH/TO/auto-task-plugin/hooks/send-telemetry.sh" }
         ]
       }
     ],

@@ -27,7 +27,7 @@ Execute tasks from `.auto-task/<branch>/PLAN.md` one by one. Supports session re
 
 - Parse the checkboxes in PLAN.md.
 - Find the first unchecked task (`- [ ]`). This is where work resumes.
-- If all tasks are checked, tell the user implementation is complete and suggest `/verify`.
+- If all tasks are checked, tell the user implementation is complete and suggest `/auto-task-verify`.
 - Show progress: "Resuming from task N of M" (or "Starting task 1 of M" if fresh).
 
 ### 3. Execute tasks
@@ -46,7 +46,7 @@ For each unchecked task, in order:
 When you reach a `<!-- DRIFT CHECKPOINT -->` line in the plan:
 
 - Pause implementation.
-- Tell the user: "Reached a checkpoint after task N. You can run `/commit` to save progress, then `/implement` to continue."
+- Tell the user: "Reached a checkpoint after task N. You can run `/auto-task-commit` to save progress, then `/auto-task-implement` to continue."
 - Stop and wait for the user.
 
 ### 5. Completion
@@ -54,7 +54,7 @@ When you reach a `<!-- DRIFT CHECKPOINT -->` line in the plan:
 When all tasks are checked:
 
 - Update the Status in PLAN.md from "IN PROGRESS" to "COMPLETE".
-- Tell the user: "All tasks complete. Run `/verify` to check the work, then `/commit` to save."
+- Tell the user: "All tasks complete. Run `/auto-task-verify` to check the work, then `/auto-task-commit` to save."
 
 ## Rules
 

@@ -13,7 +13,7 @@ Post-implementation verification. Checks that each planned task is actually impl
 
 > **Working directory.** Plan, state, and run history live under the gitignored `.auto-task/<branch>/` root, where `<branch>` is the current git branch (`git branch --show-current`; if detached or not in a repo, fall back to a flat `.auto-task/`). When invoked inside an `/auto-task` run, use the exact path the orchestrator references. **Never commit anything under `.auto-task/`.**
 
-> **Caller note (do not strip):** When invoked from an orchestration protocol (e.g. `/auto-task` Phase 3), the verification report is **INPUT returned to the caller**, not an end-of-turn. Do not address the user or suggest next commands (`/implement`, `/fix`) — the caller routes on the result (pass → advance; fail → fix-loop). When a human runs `/auto-task-verify` directly, the suggestions below are appropriate.
+> **Caller note (do not strip):** When invoked from an orchestration protocol (e.g. `/auto-task` Phase 3), the verification report is **INPUT returned to the caller**, not an end-of-turn. Do not address the user or suggest next commands (`/auto-task-implement`, `/auto-task-fix`) — the caller routes on the result (pass → advance; fail → fix-loop). When a human runs `/auto-task-verify` directly, the suggestions below are appropriate.
 
 > **Read-before-review contract.** If `.auto-task/<branch>/` exists for the current branch (`git branch --show-current`), read its history before verifying so you don't contradict settled decisions or miss a prior pass's open issue:
 > 1. **`CONTEXT.md`** (if present) — the run summary + Human choices; don't report a regression against a behavior the user deliberately chose.
@@ -81,6 +81,6 @@ X/Y tasks complete. Next steps: [suggestions based on results]
 ## Rules
 
 - Do not fix issues during verification. Report only.
-- If tasks are PARTIAL or NOT FOUND, suggest the user run `/implement` to resume.
-- If quality checks fail, suggest the user fix the issues or run `/fix`.
+- If tasks are PARTIAL or NOT FOUND, suggest the user run `/auto-task-implement` to resume.
+- If quality checks fail, suggest the user fix the issues or run `/auto-task-fix`.
 - Be specific -- include file paths and line numbers where possible.

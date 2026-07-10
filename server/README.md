@@ -32,7 +32,7 @@ wall-clock timestamp. Fields:
 | Field | Type | Notes |
 |---|---|---|
 | `client_id` | string | Random, resettable install id (no PII). **Required.** |
-| `plugin_version` | string | e.g. `"0.3.0"`. **Required.** |
+| `plugin_version` | string | e.g. `"0.6.0"`. **Required.** |
 | `os` | string | `uname -s` (e.g. `"Darwin"`, `"Linux"`). |
 | `schema_version` | number | Payload schema version (migration anchor). **Required.** |
 | `terminal_state` | string | Always `"done"`. |
@@ -50,13 +50,29 @@ wall-clock timestamp. Fields:
 | `first_pass_ac` | number \| null | Share of ACs green on first self-verify. |
 | `checks_run` / `checks_failed` | number | Checks-manifest tally. |
 | `satisfaction` / `correctness` | string \| null | Phase-5 answers (`"yes"`/`"mostly"`/`"no"`), null if not asked. |
+| `model` | string \| null | Model id, e.g. `"claude-opus-4-8"`. [v2] |
+| `claude_code_version` | string \| null | Claude Code CLI version. [v2] |
+| `difficulty` / `risk` | number | Effort rubric D / R (0–8). [v2] |
+| `task_type` | string | Branch `<type>` prefix only: `feat\|fix\|deps\|refactor\|docs\|chore\|cleanup\|other`. [v2] |
+| `requirements_count` | number | Dissected-requirement count. [v2] |
+| `drift_events` | number | Blast-radius drift events. [v2] |
+| `preview_verdict` | string \| null | `PASS\|FAIL\|INCONCLUSIVE`, null if no preview phase. [v2] |
+| `tokens_input` / `tokens_output` | number \| null | Cache-excluded input / output tokens. [v2] |
+| `files_changed` | number | Files in the run diff. [v2] |
+| `comment` | string \| null | Optional Phase-5 free-text note (≤500 chars) — the one **user-authored, non-derived** field; consent-gated. [v2] |
+| `repo_files_bucket`, `primary_language`, `is_monorepo`, `churn_ratio`, `hotspot_concentration`, `dirs_touched`, `max_depth` | mixed | Anonymized repo-shape block from `repo-metrics.sh` (coarse buckets/numbers only — no paths). [v2] |
+
+`tokens_by_skill` is also POSTed but has no dedicated column — it is preserved in the `raw` column. The `[v2]` fields require `schema_version` ≥ 2.
+
+Every request carries `Authorization: Bearer <telemetry_ingest_token>` when the token is non-empty (the bundled default token is non-empty, so this header is sent by default). A deployed endpoint should validate it (see "Harden" below).
 
 Example:
 
 ```bash
 curl -sS -X POST "$TELEMETRY_ENDPOINT" \
   -H 'Content-Type: application/json' \
-  --data '{"client_id":"9f3a...","plugin_version":"0.3.0","os":"Darwin","schema_version":1,"terminal_state":"done","tier":"standard","duration_min":42,"satisfaction":"yes","correctness":"yes"}'
+  -H "Authorization: Bearer $TELEMETRY_INGEST_TOKEN" \
+  --data '{"client_id":"9f3a...","plugin_version":"0.6.0","os":"Darwin","schema_version":2,"terminal_state":"done","tier":"standard","duration_min":42,"satisfaction":"yes","correctness":"yes"}'
 ```
 
 ## Deploy
@@ -80,6 +96,9 @@ curl -sS -X POST "$TELEMETRY_ENDPOINT" \
 
 ## Harden before public exposure
 
-This reference validates only the payload shape. Before exposing the endpoint,
-add: an ingest token or signed request check, a body-size cap, and rate limiting.
-The store is write-only and forward-only; there is no read/delete path here.
+This reference validates only the payload shape. The client already sends
+`Authorization: Bearer <telemetry_ingest_token>` on every request (the bundled
+default token is public/write-only by design), so before exposing the endpoint,
+**validate that ingest token** (reject requests whose bearer token doesn't match
+your configured value) — plus add a body-size cap and rate limiting. The store is
+write-only and forward-only; there is no read/delete path here.

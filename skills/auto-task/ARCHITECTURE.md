@@ -59,7 +59,13 @@ flowchart TD
     P5Commit --> P5Push{push?<br/>only allowed prompt mid-run}
     P5Push -- yes --> P5PR[git push -u origin HEAD<br/>gh pr create]
     P5Push -- hold --> Done2([phase=done, no PR])
-    P5PR --> Done([phase=done, pr_url recorded])
+    P5PR --> P6{bot_review_autofix<br/>enabled?}
+    P6 -- yes --> P6Do[Phase 6 — post-PR bot-comment review<br/>poll bot comments, triage,<br/>auto-apply safe fixes via full<br/>verify → review → gate → commit → push loop<br/>MAY add gate-reviewed commits]
+    P6 -- no --> P7
+    P6Do --> P7{preview applicable?<br/>has_preview_deployment /<br/>autodetect + PR}
+    P7 -- yes --> P7Do[Phase 7 — preview verification<br/>resolve preview URL, run URL-ACs,<br/>record PASS/FAIL/INCONCLUSIVE verdict]
+    P7 -- no --> Done
+    P7Do --> Done([phase=done, verdict recorded])
 
     %% Loop-rule global exits
     P3 -. no progress / out-of-scope /<br/>blocker / flakiness .-> Surface([Surfacing protocol<br/>save state, write status, wait])
@@ -82,8 +88,10 @@ On a NEW run, before branch setup, Phase 1 also runs a best-effort **per-run ver
 | 4 Code review | **`auto-task-code-review` skill** (no substitutes) | **no** | only follow-ups, no Blockers/Required | `auto-task-fix` → re-`auto-task-verify` → re-review |
 | Gate B | `task-execution-verifier` Agent (adversarial) | **no** | "No adversarial findings" or only follow-ups | resets `code_review.passed=false`, back to Phase 4 |
 | 5 Handover | `auto-task-commit` skill + `gh pr create` | **YES — single commit** | PR opened (or user holds push) | gates fail → surface (do not bypass hook) |
+| 6 Bot-comment review (opt-in) | `pr-bot-comments.sh` + full verify → `auto-task-code-review` → gate → commit loop | **YES — gate-reviewed bot-fix commits** (only when `bot_review_autofix`) | bot comments triaged; safe fixes applied + pushed, rest parked | fork-PR / no-push → fail-open skip |
+| 7 Preview verification (gated) | preview URL resolution + URL-AC checks (`playwright`/`curl`) | no | verdict PASS/FAIL/INCONCLUSIVE recorded (or handoff/timeout) | no URL → skip gracefully; FAIL → done-with-negative-verdict |
 
-Only **Phase 5** commits. Phases 2–4 accumulate one growing uncommitted diff against the base branch.
+Phases 2–4 accumulate one growing uncommitted diff against the base branch. **Phase 5 produces the single authored commit; the opt-in Phase 6 may add further authored commits, each individually gate-reviewed** (the only exceptions to "one commit" beyond the main-sync merge). Post-PR Phases 6–7 run only when a push happened.
 
 ---
 
@@ -105,9 +113,11 @@ Tier can only **escalate** — never auto-de-escalate. Every change is logged to
 
 The pipeline is fully resumable. State is updated at every phase transition and every loop iteration. `<branch>` mirrors `git branch --show-current` verbatim (slashes preserved), so the gate and Stop hooks resolve the same path.
 
+The block below is **abridged** for readability — the full schema (including `title`, `estimate`, `actuals`, `quality`, `checks`, `requirements`, `settings`, `bot_review`, and `preview`) lives in `SKILL.md` → "State file".
+
 ```json
 {
-  "phase": "define|execute|self-verify|gate-a|review|gate-b|handover|done",
+  "phase": "define|execute|self-verify|gate-a|review|gate-b|handover|bot-review|preview|done",
   "expected_next_action": "auto-continue|user-approval|user-push-prompt|null",
   "approved": true,
   "description": "<verbatim task input>",
@@ -283,9 +293,9 @@ State is saved. The user gets a short status message: **why stopped** + **what's
 
 ## Invariants (the contract)
 
-- **Single commit.** Only Phase 5 commits — guaranteed by the pre-commit hook + the skill's per-phase "NO COMMIT" rule.
+- **Single authored commit (+ documented exceptions).** Phase 5 produces the one authored commit — guaranteed by the pre-commit hook + the skill's per-phase "NO COMMIT" rule. The only additional commits permitted are the main-sync merge commit and (opt-in) the Phase-6 bot-fix commits, each of which is individually gate-reviewed before it lands.
 - **`.auto-task/` never committed.** Excluded via the common-dir exclude (`$(git rev-parse --git-common-dir)/info/exclude`), pre-stage-cleaned at every commit. A leaked commit means a bug — surface, do not silently rewrite history.
-- **One human gate** between approval and PR. Plus one allowed prompt in Phase 5 (push/PR/hold).
+- **One human gate** between approval and PR. Plus one allowed prompt in Phase 5 (push/PR/hold). When a push happens, the post-PR phases may legitimately surface as documented yields (a Phase-6 bot-flagged blocker, or a Phase-7 preview handoff/timeout where verification is still owed) — these are yields, not new gates.
 - **Acceptance Criteria are load-bearing.** No gate can pass without literal execution of its bound AC rows.
 - **The reviewed diff is the committed diff.** The code-review gate records a hash of `git diff <base>`; the commit is blocked unless the diff still hashes identically, so post-review edits can't sneak in uncommitted-by-review.
 - **Effort can only escalate.** Manual de-escalation requires editing `Effort:` in `.auto-task/<branch>/PLAN.md`.
@@ -318,7 +328,7 @@ Run state is keyed by branch under `.auto-task/<branch>/`, and the gate + Stop h
 | `~/.claude/skills/auto-task-code-review/SKILL.md` | **Mandatory** tool for Phase 4 |
 | `~/.claude/skills/auto-task-commit/SKILL.md` | Composed by Phase 5 |
 | `~/.claude/CLAUDE.md` | Global rules: commit-message ban, code-review-skill rule, non-yielding, DoD |
-| `~/.claude/settings.json` | Pre-commit hooks (gate enforcement + AI-attribution ban), `git push` deny, `gh pr create` ask |
+| `~/.claude/settings.json` | Where the hooks are wired on the `install.sh`/manual fallback (marketplace installs use `hooks/hooks.json`): gate enforcement, AI-attribution ban, anti-stall, checkout-drift. The `git push` deny / `gh pr create` ask permissions are **opt-in, not shipped** (see "Recommended permissions"). |
 | `<project>/.auto-task/<branch>/STATE.json` | Per-run state machine (resumable) |
 | `<project>/.auto-task/<branch>/PLAN.md` | Per-run plan + Approach + AC + Effort + Critique |
 | `<git-common-dir>/info/exclude` | Per-clone `.auto-task/` exclusion — `.git/info/exclude` in a normal checkout, the shared common dir from any worktree (never modifies repo `.gitignore`) |

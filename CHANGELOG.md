@@ -19,6 +19,10 @@ Two post-PR capabilities. **Preview-deployment auto-learn**: the pipeline alread
 - **Anti-stall Stop-hook signature** (`hooks/prevent-mid-protocol-stall.sh`) now includes `bot_review.polls` alongside `preview.polls`, so the Phase-6 bot-comment poll wait is recognized as *progressing* rather than misread as a frozen run. Backward-compatible (absent → `0`, inert on existing runs). This is the only hook change — `enforce-gates.sh` / `record-outcome.sh` / `auto-task-stats.sh` are phase-agnostic and gate/record the new `bot-review` phase with no change.
 - **STATE schema** gains a `bot_review` object, a `bot-review` phase value, and a `preview.learned` field; the single-commit rule documents a second exception (Phase-6 bot-fix commits, each gate-reviewed) and the yield-point table + NON-YIELDING contract cover the new post-PR ordering (Phase 6 bot-review → Phase 7 preview).
 
+### Fixed
+
+- **Repo-wide documentation/consistency sweep.** Corrected stale counts and claims across the docs to match the current code: README (eight skills / seven core hooks / current version / assertion count / SessionStart-notice claim), `marketplace.json` keywords (added `pull-request` to match `plugin.json`), main `SKILL.md` hook attributions (Stop/gate hooks registered via `hooks/hooks.json`, not `settings-fragment.json`/`~/.claude/settings.json`), the `actuals` STATE schema (`model`/`claude_code_version`/`tokens_by_skill`), the "only one hook reads `preview`" note (`send-telemetry.sh` also reads `.preview.verdict`), the remote-telemetry payload description (a superset of the local row), and the `checks.sh` row transform. Sibling skills now suggest the namespaced `/auto-task-*` commands instead of bare `/implement`,`/verify`,`/commit`,`/fix`. Hook usage/comment fixes in `settings.sh`, `send-telemetry.sh`, `token-usage.sh`. Brought `ARCHITECTURE.md` + `AUTONOMOUS-MODE.md` up to the current 7-phase pipeline, and synced `server/README.md`'s telemetry-payload docs. The `install.sh` / `settings-fragment.json` fallback installs now wire the `record-outcome.sh` + `send-telemetry.sh` Stop hooks that `hooks/hooks.json` already registers. Also collapsed a duplicate `## [Unreleased]` header (the stale v0.1.0 section is now `## [0.1.0]`). No behavior change to the running pipeline.
+
 ## [0.6.0]
 
 Sharpens the opt-in telemetry's **change-type signal** into a bounded, dashboard-groupable enum and fixes a latent data-loss bug in the reference receiver. All telemetry stays opt-in, off by default, and anonymous by construction — no new field leaves the machine.
@@ -363,7 +367,7 @@ First version that is actually installable as a marketplace plugin (the v0.1.0 m
 - **`skills/auto-task/SKILL.md`** — component-preflight now documents that siblings are namespaced (`auto-task:<name>`) under a marketplace install and bare under the `install.sh` fallback; the orchestrator invokes whichever form is registered.
 - **`settings-fragment.json`** — relabeled fallback-only; replaced the non-existent `${CLAUDE_PLUGIN_DIR}` (and the non-expanding `${CLAUDE_PLUGIN_ROOT}`) with an explicit absolute-path placeholder, since plugin path variables do not expand in a hand-merged `settings.json`.
 
-## [Unreleased] — v0.1.0 (pre-release)
+## [0.1.0]
 
 Initial extraction of the `auto-task` skill from `~/.claude/skills/auto-task/` into a self-contained, shareable Claude Code plugin. See `PACKAGING_PLAN.md` for the open work items that remain before a real v0.1.0 release.
 

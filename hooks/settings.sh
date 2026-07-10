@@ -353,6 +353,6 @@ case "$sub" in
   set)  cmd_set "$@" ;;
   all)  cmd_all ;;
   init) cmd_init "${1:-}" ;;
-  *)    echo "settings.sh: unknown subcommand '$sub' (use: path|get|all|init|keys)" >&2 ;;
+  *)    echo "settings.sh: unknown subcommand '$sub' (use: path|get|present|set|all|init|keys)" >&2 ;;
 esac
 exit 0

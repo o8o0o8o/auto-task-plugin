@@ -44,6 +44,8 @@
 #   AUTO_TASK_STATE_FILE=<path>           # use this STATE.json verbatim (skip git resolution)
 #   AUTO_TASK_HOME=<dir>                  # relocate the install-id / settings root
 #   AUTO_TASK_SETTINGS_FILE / AUTO_TASK_GLOBAL_SETTINGS_FILE  # forwarded to settings.sh
+#   AUTO_TASK_REPO_DIR=<dir>             # repo root passed to repo-metrics.sh
+#   AUTO_TASK_TOKEN_USAGE_JSON=<path>   # use this token-usage JSON verbatim (skip token-usage.sh)
 
 set -uo pipefail
 
@@ -147,9 +149,11 @@ fi
 [ -n "$client_id" ] || exit 0   # could not obtain an id -> skip (fail open)
 
 # --- Resolve plugin version (never empty) -------------------------------------
-# Prefer the sibling hooks.json (always ships next to this hook); then the
-# plugin manifest via CLAUDE_PLUGIN_ROOT (exported into hooks) or relative to
-# this script; finally "unknown".
+# The version lives in the plugin manifest (.claude-plugin/plugin.json), resolved
+# via CLAUDE_PLUGIN_ROOT (exported into hooks) or relative to this script; finally
+# "unknown". NOTE: the sibling hooks.json carries no `version` key, so the probe
+# below is vestigial (always empty) and falls through to the manifest — kept only
+# to tolerate a future hooks.json that might grow a version field.
 plugin_version=""
 if [ -f "$SCRIPT_DIR/hooks.json" ]; then
   plugin_version="$(jq -r '.version // empty' "$SCRIPT_DIR/hooks.json" 2>/dev/null || echo "")"
