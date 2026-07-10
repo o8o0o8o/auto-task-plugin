@@ -2,6 +2,25 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.6.0]
+
+Sharpens the opt-in telemetry's **change-type signal** into a bounded, dashboard-groupable enum and fixes a latent data-loss bug in the reference receiver. All telemetry stays opt-in, off by default, and anonymous by construction — no new field leaves the machine.
+
+### Added
+
+- **`deps/` branch type** in the Phase-1 branch picker (`skills/auto-task/SKILL.md`). Dependency add/remove/bump work now routes to `deps/` instead of `chore/`, so `task_type: deps` is actually producible instead of hiding inside `chore`.
+- **`raw` forward-compat column** in the reference receiver (`server/schema.sql` + `server/ingest.mjs`) — persists the full JSON payload exactly as received, so nested or future fields (e.g. `tokens_by_skill`) survive before they get a dedicated column. This is the column the [0.4.0] notes promised but never actually added.
+- **`tests/ingest-columns.test.sh`** — a drift-guard test asserting `server/ingest.mjs` `COLUMNS` stays in lockstep with `server/schema.sql`'s scalar columns (and that the `task_type` enum comment lists `deps`/`other`), so the receiver can't silently fall behind the client payload again.
+
+### Changed
+
+- **`task_type` normalized to a bounded enum** (`hooks/send-telemetry.sh`): `{feat, fix, deps, refactor, docs, chore, cleanup, other}`. The branch `<type>` prefix is lower-cased and mapped; any unrecognized or slash-less prefix folds to `other`; an empty/absent branch stays `null`. Still the prefix only, never the slug — anonymity unchanged. README documents the enum + a per-label description table + the "no per-run free text" note. `tests/send-telemetry.test.sh` gains the normalization cases (case-fold, unknown→other, slash-less→other) alongside the existing `feat→feat` / no-slug-leak assertions.
+- **Reference ingest handler synced to the v2 payload** (`server/ingest.mjs`): its `COLUMNS` list was still the v1 set and silently dropped every v2 field (`task_type`, `difficulty`/`risk`, repo-metrics, `files_changed`, `comment`, `model`, …) on INSERT. It now covers the full scalar schema in declaration order and coerces `is_monorepo` (a JSON boolean) to 0/1 alongside `flaky`/`tests_added`. Undeployed reference — this prevents silent data loss on a future deploy.
+
+### Notes
+
+- No `schema_version` bump: `task_type`'s value domain is tightened (not a new field) and `raw` is a receiver-side column, so the client payload shape is unchanged and older rows keep parsing.
+
 ## [0.5.0]
 
 Expands the opt-in remote telemetry into a richer, anonymous **v2 payload** with per-skill **token-cost attribution** and **zero-config preview auto-detection**, and folds in the clarifying-questions ticket-comment feature. All telemetry stays opt-in, off by default, and anonymous by construction.
