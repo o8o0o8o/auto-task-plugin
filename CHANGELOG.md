@@ -2,6 +2,20 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.1]
+
+Hardening release from a full self-audit — no new pipeline capabilities, all existing tests green (enforcement spine 90 → 100 assertions). Fixes two enforcement-hook gaps, tightens the phase-state contract, and makes the optional history reminder reachable on a marketplace install.
+
+### Fixed
+
+- **`block-ai-attribution.sh` no longer over-blocks** (`hooks/block-ai-attribution.sh`). The AI-attribution marker scan now runs only when the command is a `git commit` or `gh pr create|edit` (a commit message / PR body writer), using commit detection that mirrors `enforce-gates.sh`. Previously it fired on every Bash command in every session, so innocuous commands that merely mentioned a marker (`git log --grep`, `grep -rn`, editing docs/tests) were hard-blocked. No loss of real coverage — the scan only ever caught markers inline in the command text, and every such case is a commit/PR command.
+- **`enforce-gates.sh` enforces review-staleness during a merge** (`hooks/enforce-gates.sh`, `skills/auto-task/SKILL.md`). The former `MERGE_HEAD` exemption skipped the review-staleness hash wholesale, so a Phase-5 conflict resolution could commit un-reviewed authored edits on the strength of stale gate booleans. The hash is now enforced during a merge too; Phase 5 step 7 is reordered so the conflict resolution is re-reviewed and `reviewed_diff_sha` refreshed (and Gate B re-run on STANDARD/HEAVY) *before* the merge commit, making the re-review mechanical rather than a prose reminder. A clean auto-merge commits via `git merge` (no `git commit` verb) and never reaches the hook, so only conflict finalizes are affected.
+
+### Changed
+
+- **Explicit `phase` writes across the core pipeline** (`skills/auto-task/SKILL.md`). The orchestrator now sets `phase` on entry to each phase (`execute`/`self-verify`/`gate-a`/`review`/`gate-b`/`handover`), with an authoritative per-phase value list in the state section. Previously only `define` and the post-PR states were written explicitly, so `phase` could sit stale at `define` through the whole pipeline — breaking `/auto-task` resume and risking a false anti-stall trip.
+- **History reminder is reachable on marketplace installs** (`hooks/inject-history-reminder.sh`, `hooks/hooks.json`, `hooks/settings.sh`, `settings-fragment.json`, `README.md`). `inject-history-reminder.sh` is now wired in `hooks.json` and gated by a new `history_reminder_enabled` setting (default `false`) instead of an opt-in `settings.json` snippet — enabling it is `settings.sh set history_reminder_enabled true`, which works for both marketplace and `install.sh` installs (the old snippet pointed at a per-version cache path `${CLAUDE_PLUGIN_ROOT}` cannot expand into `settings.json`). It stays silent unless enabled and outside auto-task branches.
+
 ## [0.7.0]
 
 Two post-PR capabilities. **Preview-deployment auto-learn**: the pipeline already detected deploys after a PR but never remembered the answer — it now persists the detection result so the check becomes deterministic. **Post-PR bot-comment review** (opt-in): after the PR opens, collect Cursor/GitHub review-bot comments and conservatively auto-apply the safe fixes. Both default to their prior behavior (auto-learn only fires when `has_preview_deployment` is unset; bot-review is off unless `bot_review_autofix` is set).
