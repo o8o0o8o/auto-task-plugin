@@ -1,5 +1,5 @@
 {
-  "_comment": "FALLBACK / REFERENCE ONLY. The recommended install is the marketplace flow (see README); it auto-wires the seven core hooks via hooks/hooks.json, so you do NOT need this file for them. Plugin path variables like CLAUDE_PLUGIN_ROOT are substituted ONLY inside plugin-loaded hook configs (hooks/hooks.json) — they do NOT expand when pasted into ~/.claude/settings.json. So the placeholder /ABSOLUTE/PATH/TO/auto-task-plugin below must be replaced with the real absolute path to your clone (this is exactly what install.sh prints for you, so prefer copying install.sh's output). Merge into ~/.claude/settings.json — do NOT replace the file; preserve existing permissions, enabledPlugins, etc.",
+  "_comment": "FALLBACK / REFERENCE ONLY. The recommended install is the marketplace flow (see README); it auto-wires ALL hooks via hooks/hooks.json — the seven always-on hooks plus the UserPromptSubmit history reminder, which is wired but stays gated OFF until you set `history_reminder_enabled` true via settings.sh — so you do NOT need this file for them. Plugin path variables like CLAUDE_PLUGIN_ROOT are substituted ONLY inside plugin-loaded hook configs (hooks/hooks.json) — they do NOT expand when pasted into ~/.claude/settings.json. So the placeholder /ABSOLUTE/PATH/TO/auto-task-plugin below must be replaced with the real absolute path to your clone (this is exactly what install.sh prints for you, so prefer copying install.sh's output). Merge into ~/.claude/settings.json — do NOT replace the file; preserve existing permissions, enabledPlugins, etc.",
 
   "hooks": {
     "PreToolUse": [
@@ -28,6 +28,14 @@
           { "type": "command", "command": "/ABSOLUTE/PATH/TO/auto-task-plugin/hooks/check-version.sh" }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "/ABSOLUTE/PATH/TO/auto-task-plugin/hooks/inject-history-reminder.sh" }
+        ]
+      }
     ]
   },
 
@@ -37,17 +45,5 @@
       "deny": ["Bash(git push:*)", "Bash(git push)"],
       "ask": ["Bash(gh pr create:*)", "Bash(gh pr merge:*)"]
     }
-  },
-
-  "_optional_userpromptsubmit": {
-    "_comment": "Uncomment this block if you want non-bundled tools (third-party reviewers, free-form review prompts) to be informed when an auto-task history folder exists for the current branch. Off by default to avoid token overhead on unrelated prompts.",
-    "UserPromptSubmit": [
-      {
-        "matcher": "",
-        "hooks": [
-          { "type": "command", "command": "/ABSOLUTE/PATH/TO/auto-task-plugin/hooks/inject-history-reminder.sh" }
-        ]
-      }
-    ]
   }
 }

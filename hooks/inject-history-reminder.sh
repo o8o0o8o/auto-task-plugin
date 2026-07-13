@@ -4,13 +4,24 @@
 # "Read-before-review contract" and reads CONTEXT.md / TRACE.md before issuing
 # findings.
 #
-# Registered as an OPTIONAL UserPromptSubmit hook (off by default — see
-# settings-fragment.json). Stdout from a UserPromptSubmit hook is injected into
-# the model's context. This hook is purely informational: it never blocks, and
-# it stays silent when no auto-task history exists for the branch so unrelated
-# prompts pay no token cost.
+# Registered as a UserPromptSubmit hook (wired in hooks.json / settings-fragment.json).
+# It is OPT-IN and OFF BY DEFAULT: it stays silent unless the setting
+# `history_reminder_enabled` is true (see settings.sh). Being wired-but-gated —
+# rather than enabled only by pasting a snippet into ~/.claude/settings.json — is
+# deliberate: `${CLAUDE_PLUGIN_ROOT}` does not expand inside settings.json and a
+# marketplace plugin lives in an opaque, per-version cache dir, so a pasted
+# absolute path is unreachable/fragile there. Gating on a settings key makes
+# enabling it (`settings.sh set history_reminder_enabled true`) work identically
+# for marketplace and install.sh installs.
+#
+# Stdout from a UserPromptSubmit hook is injected into the model's context. This
+# hook is purely informational: it never blocks, and even when enabled it stays
+# silent when no auto-task history exists for the branch, so prompts pay no token
+# cost outside auto-task branches.
 
 set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 
 # Resolve the project root that owns .auto-task/<branch>/. Start from
 # CLAUDE_PROJECT_DIR (the session's project root) or $PWD, then resolve that to
@@ -59,6 +70,16 @@ have_state=false;   [ -f "$dir/STATE.json" ] && have_state=true
 
 # Nothing meaningful on disk — stay silent.
 if [ "$have_context" = false ] && [ "$have_trace" = false ] && [ "$have_state" = false ]; then
+  exit 0
+fi
+
+# Opt-in gate (checked last, only when we would otherwise emit, so disabled or
+# non-auto-task prompts pay only cheap git + filesystem checks, never a settings
+# read). Silent unless `history_reminder_enabled` is true. Fail-safe: if
+# settings.sh is unreachable or errs, treat as disabled (matches the default-off)
+# and stay silent.
+if [ ! -f "$SCRIPT_DIR/settings.sh" ] \
+   || [ "$(bash "$SCRIPT_DIR/settings.sh" get history_reminder_enabled 2>/dev/null || echo false)" != "true" ]; then
   exit 0
 fi
 

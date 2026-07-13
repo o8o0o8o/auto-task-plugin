@@ -225,31 +225,42 @@ fi
 # hash — for an unchanged tree, producing a spurious staleness block. The skill
 # records reviewed_diff_sha with this SAME flag set; the two must stay in lockstep.
 #
-# MERGE_HEAD exemption: this SAME staleness check would wrongly block the
-# Phase-5 handover main-sync. After the single reviewed commit, auto-task merges
-# origin/<default> into the branch so the PR is conflict-free; on a resolved
-# conflict that merge is finalized with `git commit`, which re-enters this hook.
-# But the merge legitimately changes `git diff <base>` by pulling in upstream
-# main — which is NOT un-reviewed authored work — so the hash no longer matches
-# reviewed_diff_sha and the staleness rule would fire spuriously. When a merge is
-# IN PROGRESS (MERGE_HEAD present) we therefore skip ONLY this hash comparison.
-# This is deliberately narrow: every boolean gate — review passed / correct tool /
-# clean-after-fix (checked above) and gate_b (checked below) — is OUTSIDE this
-# merge guard, so all of them still run and still hold during a merge; a merge
-# cannot be used to slip past an unpassed review. The skill compensates for the skipped
-# staleness by requiring a full re-review of any conflict resolution before push.
-# The guard is source-agnostic (it does not verify the merge is origin/<default>);
-# that is intentional — knowing the source robustly here is fragile, and the
-# re-review requirement, not this hook, is what bounds authored edits.
+# Staleness is ENFORCED DURING A MERGE TOO (this closes a former exemption that
+# skipped the check wholesale while MERGE_HEAD was present and thereby let
+# un-reviewed authored edits ride in on a merge commit — the one place a
+# fail-closed gate had a fail-open crack). Why enforcing here is correct, not
+# spurious:
+#   - A CLEAN auto-merge (`git merge --no-edit`, no conflicts) auto-commits with
+#     NO `git commit` verb, so it never matches the commit detector above and
+#     never reaches this hook — there is nothing to exempt.
+#   - The ONLY merge that reaches here is a CONFLICT finalize (`git commit
+#     --no-edit` with MERGE_HEAD present) — i.e. exactly when authored resolution
+#     edits exist and MUST be re-reviewed. The skill re-reviews the resolved tree
+#     and refreshes reviewed_diff_sha to `hash(git diff <base>)` of that tree
+#     BEFORE this commit (Phase 5 step 7), so a correct run MATCHES here, while a
+#     run that skipped the re-review (stale sha from before the merge) is BLOCKED.
+#     The re-review is thus a MECHANICAL requirement, not prose the model must
+#     remember.
+# reviewed_diff_sha is the full `git diff <base>` hash and legitimately includes
+# the merged-in upstream after a refresh — that is fine: the sha only detects tree
+# change; the review SCOPE stays the run's own delta (see SKILL Phase 5 step 7).
+# merge_in_progress now only TAILORS the block message. Backward-compatible:
+# skipped only when base or reviewed_diff_sha is absent (legacy runs), never a
+# spurious allow. Boolean gates (review passed / tool / clean-after-fix above,
+# gate_b below) are unchanged and still hold during a merge.
 DIFF_FLAGS='--no-color --no-ext-diff --no-textconv --no-renames --diff-algorithm=myers --src-prefix=a/ --dst-prefix=b/'
 merge_in_progress=0
 if git -C "$project_dir" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
   merge_in_progress=1
 fi
-if [ "$merge_in_progress" -eq 0 ] && [ -n "$base" ] && [ -n "$reviewed_sha" ]; then
+if [ -n "$base" ] && [ -n "$reviewed_sha" ]; then
   current_sha="$(cd "$project_dir" && git diff $DIFF_FLAGS "$base" 2>/dev/null | git hash-object --stdin 2>/dev/null || true)"
   if [ -n "$current_sha" ] && [ "$current_sha" != "$reviewed_sha" ]; then
-    printf 'Blocked by auto-task-plugin: the working-tree diff changed since the last clean code-review pass.\n  reviewed_diff_sha: %s\n  current diff sha:  %s   (git diff %s)\nCode was modified after gates.code_review went clean, so the review no longer covers what you are about to commit.\nRe-run the auto-task-code-review skill on the current diff, drive it to a clean pass, then refresh gates.code_review.reviewed_diff_sha before committing.\n' "$reviewed_sha" "$current_sha" "$base" >&2
+    if [ "$merge_in_progress" -eq 1 ]; then
+      printf 'Blocked by auto-task-plugin: a merge is in progress and the working-tree diff does not match the last clean code-review pass.\n  reviewed_diff_sha: %s\n  current diff sha:  %s   (git diff %s)\nThe merged / conflict-resolved tree has not been re-reviewed. BEFORE finalizing the merge commit: re-run the auto-task-code-review skill on the post-merge diff, drive it to a clean pass, refresh gates.code_review.reviewed_diff_sha to the resolved tree (and on STANDARD/HEAVY reset gates.gate_b.passed=false and re-run Gate B).\n' "$reviewed_sha" "$current_sha" "$base" >&2
+    else
+      printf 'Blocked by auto-task-plugin: the working-tree diff changed since the last clean code-review pass.\n  reviewed_diff_sha: %s\n  current diff sha:  %s   (git diff %s)\nCode was modified after gates.code_review went clean, so the review no longer covers what you are about to commit.\nRe-run the auto-task-code-review skill on the current diff, drive it to a clean pass, then refresh gates.code_review.reviewed_diff_sha before committing.\n' "$reviewed_sha" "$current_sha" "$base" >&2
+    fi
     exit 2
   fi
 fi

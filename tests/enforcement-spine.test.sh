@@ -74,22 +74,27 @@ expect "Staleness: post-review edit BLOCKS commit"        "$(gate)" "2"
 printf 'export const n = 2;\nexport const m = 3;\n' > app.js
 expect "Staleness: revert to reviewed diff ALLOWS"        "$(gate)" "0"
 
-# ---- MERGE_HEAD staleness exemption (Phase-5 main-sync merge) ----------------
-# A post-reviewed-commit merge of origin/<default> changes `git diff <base>`, so
-# finalizing a conflicted merge with `git commit` at phase=handover would hit the
-# staleness block. The exemption skips ONLY the hash check while a merge is in
-# progress, and ONLY that — every boolean gate must still hold.
+# ---- MERGE_HEAD staleness: ENFORCED during a merge (H1 fix) ------------------
+# A conflict finalize (`git commit --no-edit` with MERGE_HEAD) is the ONLY merge
+# that reaches this hook (a clean auto-merge commits via `git merge`, no `commit`
+# verb). It carries authored resolution edits, so the staleness check is NOT
+# skipped during a merge: a stale reviewed_diff_sha BLOCKS, and the merge commit
+# is admitted only once the resolved tree is re-reviewed and the sha refreshed to
+# match it. Boolean gates still hold throughout.
 printf 'export const n = 2;\nexport const m = 3;\nexport const UPSTREAM = 7;\n' > app.js
-expect "MergeExempt: stale diff BLOCKS with no merge"     "$(gate)" "2"
+expect "Merge: stale diff BLOCKS with no merge"           "$(gate)" "2"
 git rev-parse HEAD > .git/MERGE_HEAD   # simulate an in-progress merge
-expect "MergeExempt: stale diff ALLOWED during merge"     "$(gate)" "0"
+expect "Merge: stale diff BLOCKS during merge (no re-review)" "$(gate)" "2"
+setstate "$(printf '.gates.code_review.reviewed_diff_sha="%s"' "$(sha)")"   # re-review refreshed the sha to the merged tree
+expect "Merge: refreshed sha ADMITS the merge commit"     "$(gate)" "0"
 setstate '.gates.code_review.passed=false'
-expect "MergeExempt: booleans still enforced in merge"    "$(gate)" "2"
+expect "Merge: boolean gates still enforced during merge" "$(gate)" "2"
 setstate '.gates.code_review.passed=true'
 rm -f .git/MERGE_HEAD                   # merge concluded
-expect "MergeExempt: stale diff BLOCKS again post-merge"  "$(gate)" "2"
+setstate "$(printf '.gates.code_review.reviewed_diff_sha="%s"' "$RSHA")"    # sha back to the pre-merge reviewed tree
+expect "Merge: stale diff BLOCKS again post-merge"        "$(gate)" "2"
 printf 'export const n = 2;\nexport const m = 3;\n' > app.js   # back to reviewed diff
-expect "MergeExempt: reviewed diff ALLOWED after merge"   "$(gate)" "0"
+expect "Merge: reviewed diff ALLOWED after merge"         "$(gate)" "0"
 # ------------------------------------------------------------------------------
 
 setstate '.phase="handover"|.expected_next_action="user-push-prompt"'
@@ -204,6 +209,17 @@ expect "Frozen poll: RELEASE #3 (backstop intact)"       "$(stopS)" "allow"
 echo "================ AI-attribution block ================"
 expect "Attr: Co-Authored-By Claude BLOCKED"              "$(attr '{"tool_input":{"command":"git commit -m \"x\n\nCo-Authored-By: Claude <x@y>\""}}')" "2"
 expect "Attr: clean commit ALLOWED"                       "$(attr '{"tool_input":{"command":"git commit -m clean"}}')" "0"
+# Scoping: PR-body writers are still enforced ...
+expect "Attr: gh pr create --body marker BLOCKED"         "$(attr '{"tool_input":{"command":"gh pr create --title t --body \"x Co-Authored-By: Claude <a@b>\""}}')" "2"
+expect "Attr: gh pr edit --body marker BLOCKED"           "$(attr '{"tool_input":{"command":"gh pr edit 5 --body \"🤖 Generated with [Claude Code]\""}}')" "2"
+expect "Attr: git -C <path> commit marker BLOCKED"        "$(attr '{"tool_input":{"command":"git -C /x commit -m \"Co-Authored-By: Claude\""}}')" "2"
+expect "Attr: raw-fallback commit marker BLOCKED"         "$(attr '{"x":"git commit -m \"Co-Authored-By: Claude\""}')" "2"
+# ... but non-commit / non-PR commands that merely MENTION a marker are no longer
+# false-positive-blocked (the H2 fix). Previously each of these exited 2.
+expect "Attr: git log --grep marker NOT blocked (scoped)" "$(attr '{"tool_input":{"command":"git log --grep=\"Co-Authored-By: Claude\""}}')" "0"
+expect "Attr: grep for marker NOT blocked (scoped)"       "$(attr '{"tool_input":{"command":"grep -rn \"Co-Authored-By: Claude\" ."}}')" "0"
+expect "Attr: git status + marker mention NOT blocked"    "$(attr '{"tool_input":{"command":"git status # Co-Authored-By: Claude"}}')" "0"
+expect "Attr: gh pr view marker NOT blocked (not create/edit)" "$(attr '{"tool_input":{"command":"gh pr view 5 # 🤖 Generated"}}')" "0"
 
 echo "================ Fail-open / fail-closed edges ================"
 git checkout -q feat/widget
@@ -319,14 +335,23 @@ expect "WT-iso-cwd-gate: .cwd retarget BLOCKS ungated (hook \$PWD neutral)"     
 # (D) warn/stop/inject on an ACTIVE worktree run (approved, not done). State from (C) is active.
 wiwarn(){ local o; o="$( cd "$WIWT" && CLAUDE_PROJECT_DIR="$WI" bash "$WARN" </dev/null 2>&1 )"; [ -n "$o" ] && echo warn || echo silent; }
 wistop(){ local o; o="$( cd "$WIWT" && CLAUDE_PROJECT_DIR="$WI" bash "$STOP" </dev/null 2>/dev/null )"; [ -z "$o" ] && { echo allow; return; }; printf '%s' "$o" | jq -r '.decision // "allow"' 2>/dev/null; }
-wiinject(){ ( cd "$WIWT" && CLAUDE_PROJECT_DIR="$WI" bash "$INJECT" </dev/null 2>/dev/null ); }
+# History reminder is opt-in (P1 fix): wired but gated by `history_reminder_enabled`
+# (default false). Enabled → emits; disabled → silent. AUTO_TASK_HOME/…_SETTINGS_FILE
+# make the settings lookup hermetic (never touches the real ~/.claude).
+HR_ON="$WI/hr-on.json";  printf '{"history_reminder_enabled":true}\n'  > "$HR_ON"
+HR_OFF="$WI/hr-off.json"; printf '{"history_reminder_enabled":false}\n' > "$HR_OFF"
+wiinject(){    ( cd "$WIWT" && AUTO_TASK_HOME="$WI" AUTO_TASK_SETTINGS_FILE="$HR_ON"  CLAUDE_PROJECT_DIR="$WI" bash "$INJECT" </dev/null 2>/dev/null ); }
+wiinjectOff(){ ( cd "$WIWT" && AUTO_TASK_HOME="$WI" AUTO_TASK_SETTINGS_FILE="$HR_OFF" CLAUDE_PROJECT_DIR="$WI" bash "$INJECT" </dev/null 2>/dev/null ); }
 # AC#5: no bogus drift warning — the worktree branch owns the active run.
 expect "WT-iso-warn: SILENT (no false drift warning)"                           "$(wiwarn)" "silent"
 # AC#6: anti-stall restored — a mid-pipeline turn-end BLOCKS.
 expect "WT-iso-stop: mid-pipeline turn-end BLOCKED (anti-stall restored)"        "$(wistop)" "block"
 # AC#9: read-before-review reminder names the WORKTREE branch, not silent/main.
 wiinj="$(wiinject)"; case "$wiinj" in *"feat/iso"*) wiinjr=ok ;; *) wiinjr="silent-or-wrong" ;; esac
-expect "WT-iso-inject: history reminder names the worktree branch"              "$wiinjr" "ok"
+expect "WT-iso-inject: history reminder names the worktree branch (enabled)"    "$wiinjr" "ok"
+# P1 gate: the same hook stays SILENT when history_reminder_enabled is off (default).
+wiinjOff="$(wiinjectOff)"; [ -z "$wiinjOff" ] && wiinjOffr=silent || wiinjOffr="leaked"
+expect "WT-iso-inject-off: SILENT when history_reminder_enabled=false"          "$wiinjOffr" "silent"
 # Nested-repo protection still holds from a MAIN-neutral cwd (different common-dir → no retarget).
 NEST2="$WI/vendor/embedded"; mkdir -p "$NEST2"
 ( cd "$NEST2" && git init -q && git config user.email t@t.t && git config user.name t && printf 'z\n'>g && git add g && git commit -qm n ) >/dev/null 2>&1
