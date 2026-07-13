@@ -2,6 +2,14 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.2]
+
+Bug-fix release. Corrects the preview-deployment auto-learn so a *failure to detect* is never mistaken for a *confirmed absence* — the false negative that silently disabled preview verification on projects that do have a preview.
+
+### Fixed
+
+- **Preview auto-learn never persists a negative** (`skills/auto-task/SKILL.md`, `README.md`). Phase-7 auto-learn previously ran `settings.sh set has_preview_deployment false` whenever no preview URL was found within the timeout. But the detection layer (`pr-deploy-url.sh` and the `gh` deployment-API path) returns empty+exit-0 for BOTH "checked, no preview" and "couldn't check" — no `gh`/auth/PR, missing `jq`, an API error, or a preview on a custom domain outside the host-suffix list. The orchestrator couldn't tell these apart, so a transient or environmental detection miss was persisted as a definitive `false` and, via the explicit-`false` branch, permanently disabled preview verification for that project. Auto-learn now persists **only a positive** (`true` on detection); a non-detection records `skipped-learned-none` with `learned: null`, leaves `has_preview_deployment` unset, and re-attempts detection on each subsequent undecided post-PR run — so a slow deploy bot or a degraded check is a transient miss, never a permanent `false`. Genuine no-preview repos stop the per-run re-check by setting an explicit `false` (honored and never overwritten). Positive-persist and explicit-value handling are unchanged. Docs + behavioral-spec only; no shell/JSON logic changed.
+
 ## [0.7.1]
 
 Hardening release from a full self-audit — no new pipeline capabilities, all existing tests green (enforcement spine 90 → 100 assertions). Fixes two enforcement-hook gaps, tightens the phase-state contract, and makes the optional history reminder reachable on a marketplace install.
