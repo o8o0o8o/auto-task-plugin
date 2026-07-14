@@ -2,7 +2,9 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.9.0]
+
+Reliability release for the Phase-1 "forward to the ticket owner" comment. The comment existed but was skippable prose; it is now a mandatory two-step clarify router — the model can no longer silently drop the forward option. Composes with 0.8.0's `VOICE.md` comment voice (voice shapes the comment's prose; this shapes when/how it surfaces).
 
 ### Changed
 
