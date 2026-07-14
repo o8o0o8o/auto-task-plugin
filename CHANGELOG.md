@@ -2,6 +2,14 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.0]
+
+Feature release. The comments the pipeline drafts — the Phase-1 ticket comment, the Phase-5 PR title/body, and the Phase-7 preview verdict comment — are now written in the user's own writing voice when a `VOICE.md` is available, falling back to the built-in default style otherwise.
+
+### Added
+
+- **Comment voice from `VOICE.md`** (`skills/auto-task/SKILL.md`, `README.md`). A new `## Comment voice` section is the single source of truth for how task/PR comments read; the three comment surfaces reference it instead of each specifying tone. It resolves the first **non-empty** `VOICE.md` in precedence order — project-local `<repo>/.claude/VOICE.md` first, then global `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/VOICE.md` — so an empty project-local file falls **through** to the global one, and built-in defaults apply only when neither level has usable content. The voice shapes **free prose only** (ticket-comment question wording, PR `## Summary` bullets, `## Run notes`, PR title, preview verdict sentence); it never overrides hard constraints — the no-AI-attribution rule, the ticket comment's no-names/no-greetings/functional-only structural contract, or the PR body's structured tables/checklist/headings/diagram. Fail-open and silent: a missing/empty/unreadable file just means defaults, and it adds no new gate, yield, or prompt and never alters `expected_next_action`. Docs/behavioral-spec only; no shell or JSON logic changed.
+
 ## [0.7.2]
 
 Bug-fix release. Corrects the preview-deployment auto-learn so a *failure to detect* is never mistaken for a *confirmed absence* — the false negative that silently disabled preview verification on projects that do have a preview.
