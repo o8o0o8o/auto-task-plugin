@@ -2,6 +2,12 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **Two-step clarify router — the paste-ready ticket comment is now a first-class choice** (`skills/auto-task/SKILL.md`, `README.md`, `tests/clarify-router.test.sh`). The Phase-1 "forward to the ticket owner" comment existed only as prose rendered *alongside* the questions, with no test and no hook, so the model routinely skipped it (the comment appeared only when the user explicitly asked for it). The clarify surface is now a **two-step clarify router**: when there are open questions it FIRST asks how to handle them — `Answer them here` vs `Give me a comment to forward` — and only shows the questions on the answer-here branch; the forward branch renders the paste-ready comment and **pauses** the run (a new additive `clarify_forward_pending` STATE marker + resume detection record the owner's answers as `asked-forwarded` on resume, instead of re-presenting the router). The approach-selection fold routes through the same `CLARIFY-ROUTER`. Contract prose reconciled accordingly (NON-YIELDING "single batch" wording, the old "no new prompt/yield" claim, three new yield-point-table rows, the banner-surface list, the history `resolution` enum). No hook or runtime-code change — the router is another `AskUserQuestion` and the pause is a normal `approved:false` turn-end the Stop hook already allows. A new `tests/clarify-router.test.sh` structurally guards the router markers + reconciled contract (the repo's first prose-guard test).
+
 ## [0.7.2]
 
 Bug-fix release. Corrects the preview-deployment auto-learn so a *failure to detect* is never mistaken for a *confirmed absence* — the false negative that silently disabled preview verification on projects that do have a preview.
