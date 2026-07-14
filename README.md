@@ -1,6 +1,6 @@
 # auto-task-plugin
 
-End-to-end autonomous task workflow for Claude Code. Takes a task description from intake to pull request with one human gate at plan approval and mechanical enforcement of every protocol invariant after that.
+End-to-end autonomous task workflow for Claude Code. Takes a task description from intake to pull request with one human gate at plan approval and mechanical enforcement of every protocol invariant after that. The plan-approval gate is **optional per repo** — the `require_plan_approval` setting (on by default) can be turned off to run fully unattended from intake, while high-risk runs still pause and clarifying questions still surface.
 
 ## What it ships
 
@@ -92,13 +92,13 @@ Pass `--copy` instead of the default to copy files (no symlinks), or `--uninstal
 /auto-task <plain-English task description>
 ```
 
-The skill creates a branch, sets up the per-branch history folder at `.auto-task/<branch>/`, runs Phase 1 reconnaissance (read-only — Playwright, Context7, Figma, etc.; any link in the card is loaded **two-tier** — an ordinary fetch first, a Playwright fallback when that returns no usable data — and videos like Loom get screenshots + transcript, with `hooks/extract-links.sh` classifying the links as a mechanical assist, and a focused test under `tests/`), asks clarifying questions, selects an implementation approach when more than one is viable (generating and scoring candidates, surfacing close calls to you), builds an Acceptance Criteria table, critiques the plan and auto-repairs its structural gaps, and presents a plan for your approval.
+The skill creates a branch, sets up the per-branch history folder at `.auto-task/<branch>/`, runs Phase 1 reconnaissance (read-only — Playwright, Context7, Figma, etc.; any link in the card is loaded **two-tier** — an ordinary fetch first, a Playwright fallback when that returns no usable data — and videos like Loom get screenshots + transcript, with `hooks/extract-links.sh` classifying the links as a mechanical assist, and a focused test under `tests/`), asks clarifying questions, selects an implementation approach when more than one is viable (generating and scoring candidates, surfacing close calls to you), builds an Acceptance Criteria table, critiques the plan and auto-repairs its structural gaps, and presents a plan for your approval (unless you've disabled the approval gate — see `require_plan_approval` under "Project settings").
 
 **Forward clarifying questions to the ticket owner.** When Phase 1 asks you clarifying questions (or folds an approach choice to you), it also renders the same questions as a **paste-ready ticket comment** right beside the inline prompt — short, human-like, no names, no greetings, functionality only. You either **answer here** in the prompt, or **copy the comment** into the ticket for whoever actually owns it. It's an alternative, not an extra step: no new prompt and no new stop are added.
 
 **Every run has a title.** Phase 1 derives a concise **run title** from your task and surfaces it so you can tell sessions apart at a glance — it prefixes every sub-agent's status label (the running-agent line reads `<title> · Gate B adversarial verify`) and leads each phase message with a `▶ auto-task: <title> — Phase N` banner. It's purely cosmetic — derived locally, no tracker integration, and it changes no gate or control flow.
 
-After you type `approved` / `proceed` / `yes`, the pipeline runs unattended through:
+After you type `approved` / `proceed` / `yes` — or immediately, when `require_plan_approval` is off and the run isn't high-risk (the plan is auto-approved with no wait) — the pipeline runs unattended through:
 
 - **Phase 2** Execute — invokes the bundled `auto-task-implement` skill; drift-checks each checkpoint against the plan's Blast Radius.
 - **Phase 3** Self-verify — invokes `auto-task-verify`; runs every Acceptance Criterion bound to the `self-verify` gate.
@@ -208,6 +208,13 @@ Recognized keys (v1):
 | `telemetry_endpoint` | `""` | HTTPS ingest URL the anonymized row is POSTed to. Must be `https://…`. |
 | `telemetry_ingest_token` | `""` | Optional bearer token sent as `Authorization: Bearer …` (e.g. the dashboard's `INGEST_TOKEN`). Empty → no auth header. |
 | `telemetry_satisfaction_prompt` | `true` | When telemetry is on, whether Phase 5 asks a satisfaction/correctness question at the push prompt. |
+| `require_plan_approval` | `true` | Whether Phase 1 **waits** for human plan approval. Default `true` = present plan → stop → wait (today's behavior). `false` = auto-approve routine plans, run unattended from intake. Even when `false`: a high-risk run (risk-disclaimer: HEAVY / irreversible / auth-payments) still pauses, and clarifying questions still surface. See "Optional plan-approval gate" below. |
+
+### Optional plan-approval gate
+
+By default `/auto-task` stops once, at the end of Phase 1, and waits for you to approve the plan. Set `require_plan_approval: false` (per-project or globally) to skip that wait: routine (LIGHT/STANDARD, non-disclaimer) plans are **auto-approved** and the run proceeds straight to execution. Two guardrails hold even with the gate off — **(a)** a run that trips the mandatory risk disclaimer (HEAVY tier, irreversible/schema/data change, or an auth/payments/data-integrity/multi-tenant surface) **still pauses** for explicit approval; **(b)** clarifying questions still surface for any genuinely unresolvable ambiguity. Disabling removes only the approval *wait*, nothing else about the pipeline.
+
+You don't have to edit settings by hand: the **first time** you approve a plan in a repo where this was never set, Phase 1 asks once whether to disable the gate going forward and remembers your answer (dismissing the ask leaves the gate on). To set it explicitly: `bash hooks/settings.sh set require_plan_approval false` (or `true`).
 
 ### Post-PR bot-comment review (opt-in)
 

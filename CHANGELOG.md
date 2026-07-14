@@ -2,6 +2,19 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.0]
+
+Makes the Phase-1 plan-approval gate **optional per repo** — for teams that want `/auto-task` to run fully unattended from intake — without weakening the safety floor.
+
+### Added
+
+- **`require_plan_approval` setting (default `true`)** (`hooks/settings.sh`, `skills/auto-task/SKILL.md`, `tests/settings.test.sh`, `README.md`). A new repo-level setting (project- or global-scoped, resolved through the existing `defaults ⊔ global ⊔ project` merge) that controls whether Phase 1 **waits** for human plan approval. Default `true` reproduces today's behavior exactly. Set `false` to auto-approve routine plans and continue straight to execution. Two guardrails hold even when it is `false`: **(a)** a run that triggers the mandatory risk disclaimer (HEAVY tier / irreversible / auth-payments) still pauses for explicit approval; **(b)** clarifying questions still surface for genuine unresolvable ambiguity — disabling removes only the approval *wait*. No hook code changed: the disabled-gate path reuses the identical `approved:true → auto-continue` transition, so the Stop hook and pre-commit gate hook are untouched.
+- **One-time opt-out ask.** On the first *manual* approval in a repo where the setting was never explicitly decided, Phase 1 asks once (via `AskUserQuestion`, using the same `present`/`set` machinery as telemetry consent) whether to disable the gate for future runs, and persists the answer so it is never asked again. Fail-safe: dismissing the ask leaves the gate on; both "keep" and "disable" persist an explicit value.
+
+### Changed
+
+- **Yield-point contract + docs reflect the optional gate** (`skills/auto-task/SKILL.md`, `README.md`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`). The NON-YIELDING CONTRACT, "One human gate" operating principle, the `expected_next_action` transition table (the plan-presentation row now splits into gate-on / auto-approve / high-risk-override / opt-out rows), the Recognized-keys table, and the plugin/marketplace descriptions all note that the approval wait is optional while clarifying questions and the high-risk stop are not.
+
 ## [0.7.2]
 
 Bug-fix release. Corrects the preview-deployment auto-learn so a *failure to detect* is never mistaken for a *confirmed absence* — the false negative that silently disabled preview verification on projects that do have a preview.

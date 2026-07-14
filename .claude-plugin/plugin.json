@@ -1,8 +1,8 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "auto-task",
-  "version": "0.7.2",
-  "description": "End-to-end autonomous task workflow for Claude Code. One human gate at plan approval; everything after runs unattended until success, a hard blocker, or test flakiness.",
+  "version": "0.8.0",
+  "description": "End-to-end autonomous task workflow for Claude Code. One human gate at plan approval (optional per repo via require_plan_approval; high-risk runs always pause); everything after runs unattended until success, a hard blocker, or test flakiness.",
   "author": {
     "name": "Sergey Labut"
   },

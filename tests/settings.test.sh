@@ -206,6 +206,34 @@ expect "init --global created a file" "$( [ -f "$GFILE" ] && echo yes || echo no
 expect "init --global path is the global file" "$(basename "$(dirname "$GFILE")")/$(basename "$GFILE")" "auto-task/settings.json"
 expect "init --global seeded telemetry_enabled" "$(jq -r .telemetry_enabled "$GFILE")" "false"
 
+# --- require_plan_approval: default-ON, honored, set round-trip ---------------
+# The plan-approval gate defaults ON (true = current behavior). Disabling is an
+# explicit repo-level opt-out; the once-per-repo opt-out ask uses the same
+# present/set machinery as telemetry consent.
+expect "require_plan_approval default true" \
+  "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get require_plan_approval)" "true"
+expect "keys lists require_plan_approval" \
+  "$(bash "$SH" keys | grep -c '^require_plan_approval$')" "1"
+expect "all includes require_plan_approval default" \
+  "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" all | jq -r .require_plan_approval)" "true"
+# explicit false in a file is honored (not default-swapped) and marked present
+printf '{"require_plan_approval":false}' > "$T/rpa.json"
+expect "explicit false honored"   "$(AUTO_TASK_SETTINGS_FILE="$T/rpa.json" bash "$SH" get require_plan_approval)" "false"
+expect "explicit false present"   "$(AUTO_TASK_SETTINGS_FILE="$T/rpa.json" bash "$SH" present require_plan_approval)" "true"
+# write-path round trip (the mechanism the opt-out branches use): set false, then
+# get==false AND present==true so the one-time ask never re-fires; set true likewise.
+RPA="$T/rpa-set.json"
+expect "never-asked -> present false" \
+  "$(AUTO_TASK_SETTINGS_FILE="$T/absent-rpa.json" bash "$SH" present require_plan_approval)" "false"
+AUTO_TASK_SETTINGS_FILE="$RPA" bash "$SH" set require_plan_approval false >/dev/null
+expect "set false -> get false"     "$(AUTO_TASK_SETTINGS_FILE="$RPA" bash "$SH" get require_plan_approval)" "false"
+expect "set false -> present true"  "$(AUTO_TASK_SETTINGS_FILE="$RPA" bash "$SH" present require_plan_approval)" "true"
+AUTO_TASK_SETTINGS_FILE="$RPA" bash "$SH" set require_plan_approval true >/dev/null
+expect "set true -> get true"       "$(AUTO_TASK_SETTINGS_FILE="$RPA" bash "$SH" get require_plan_approval)" "true"
+expect "set true -> present true"   "$(AUTO_TASK_SETTINGS_FILE="$RPA" bash "$SH" present require_plan_approval)" "true"
+# init seeds it at the default
+expect "init seeded require_plan_approval" "$(jq -r .require_plan_approval "$F")" "true"
+
 echo "--------------------------------------------------------"
 echo "settings.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

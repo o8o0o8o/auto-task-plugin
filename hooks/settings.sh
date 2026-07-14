@@ -88,6 +88,7 @@ default_for() {
     telemetry_ingest_token)       printf '%s' "$AUTO_TASK_TELEMETRY_DEFAULT_TOKEN" ;;
     telemetry_satisfaction_prompt) printf 'true' ;;
     history_reminder_enabled)     printf 'false' ;;
+    require_plan_approval)        printf 'true' ;;
     *)                            printf '' ;;   # unknown key -> empty (fail-open)
   esac
 }
@@ -115,11 +116,12 @@ defaults_json() {
     telemetry_endpoint: $ep,
     telemetry_ingest_token: $tok,
     telemetry_satisfaction_prompt: true,
-    history_reminder_enabled: false
+    history_reminder_enabled: false,
+    require_plan_approval: true
   }'
 }
 
-known_keys="has_preview_deployment preview_autodetect preview_url preview_wait_mode preview_timeout_min preview_poll_interval_sec preview_bypass_header preview_post_verdict_comment bot_review_autofix bot_review_timeout_min bot_review_poll_interval_sec bot_review_bots telemetry_enabled telemetry_endpoint telemetry_ingest_token telemetry_satisfaction_prompt history_reminder_enabled"
+known_keys="has_preview_deployment preview_autodetect preview_url preview_wait_mode preview_timeout_min preview_poll_interval_sec preview_bypass_header preview_post_verdict_comment bot_review_autofix bot_review_timeout_min bot_review_poll_interval_sec bot_review_bots telemetry_enabled telemetry_endpoint telemetry_ingest_token telemetry_satisfaction_prompt history_reminder_enabled require_plan_approval"
 
 # --- Path resolution ---------------------------------------------------------
 hash_str() {
