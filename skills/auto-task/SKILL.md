@@ -301,6 +301,33 @@ Per-project, per-user configuration for the pipeline. **Optional and fully defau
 
 Unknown keys present in the file are preserved by `all` (forward-compatible) and returned verbatim by `get`, so the schema can grow without a helper change.
 
+## Comment voice
+
+Every user-facing **comment** this pipeline drafts — the Phase-1 paste-ready **ticket comment**, the Phase-5 **PR title + body**, and the Phase-7 **preview verdict** PR comment — is prose someone else reads on a ticket or a PR. When the user has a house writing voice, those comments should sound like it. This section is the single source of truth for that; the three comment surfaces reference it rather than re-specifying it.
+
+**Resolve a voice guide (`VOICE.md`) in this precedence — first *non-empty* file wins:**
+
+1. **Project-local:** `<repo-root>/.claude/VOICE.md`, where `<repo-root>` is `git rev-parse --show-toplevel` (in a linked worktree, the worktree root). Read it with the Read tool.
+2. **Global:** `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/VOICE.md`.
+
+Fall-through, not first-*present*: if the project-local file is **absent, empty, whitespace-only, or unreadable**, continue to the global file. Only when **both** levels yield no usable content do you fall back to built-in defaults. (So an empty project-local `.claude/VOICE.md` never masks a populated global one.)
+
+**Apply the resolved voice:**
+
+- **Found a non-empty VOICE.md** → treat it as the tone/phrasing guide for the comment's **free prose**: the ticket-comment question wording, the PR `## Summary` bullets and `## Run notes`, the PR title, and the preview verdict sentence. Match its voice; do not quote or mention the file.
+- **Found none** → use the built-in default style contract already specified at each surface (this is the pre-VOICE behavior, unchanged).
+
+**Hard constraints always outrank voice.** VOICE.md shapes *how the prose reads*, never *what may appear*. It does **not** override, relax, or reinterpret:
+
+- the **no-AI-attribution** rule (no `Co-Authored-By: Claude`, no "🤖 Generated with…", no AI-authorship marker) on any commit message, PR title, PR body, **or PR comment** — including the Phase-7 preview verdict comment;
+- the **ticket-comment structural contract** (no names, no greetings/salutation, strictly-business functional questions only);
+- the **PR body's machine-structured content** — the required section headings, the task-breakdown/AC tables, the AC checklist, and the Mermaid change diagram stay verbatim and structural. Voice touches narrative prose, not tables, checklists, headings, or diagrams;
+- the **per-surface length/brevity limits** — the ticket comment's "keep it short / tightly phrased" rule and the PR title's "under 70 chars" cap. A verbose or essayistic voice does not license a bloated ticket comment or an over-length PR title; trim to fit the limit while keeping the voice.
+
+If the resolved voice would push a comment to violate any of the above, the constraint wins and the voice yields.
+
+**Fail-open, silent, presentation-only.** Resolving or reading VOICE.md must never block, slow, or error a run — a missing/empty/unreadable file just means "use defaults." Never surface anything to the user about voice resolution, never prompt about it: this adds **no new gate, no new yield, no new `AskUserQuestion`**, and it never alters `expected_next_action`. It changes only the wording of comments the pipeline already emits.
+
 ## Pipeline
 
 ### Phase 1 — Define (HUMAN GATE)
@@ -515,6 +542,7 @@ Process (mandatory six-stage gate — do them in order, do not skip stages):
    - **No names.** Do not address anyone and do not sign off.
    - **No greetings / no "hi" / no salutation** and no closing pleasantries.
    - **Strictly business — functionality only.** Each line is a concrete functional/behavioral question about what the thing should do; drop process/meta framing ("I'm the AI running auto-task…"), confidence hedges, and decision-impact commentary meant for the developer.
+   - **Voice.** Draft the question wording in the resolved **Comment voice** (see the `## Comment voice` section above). If a `VOICE.md` resolves, the questions should read in that voice; if none does, keep the plain teammate tone shown in the example. The rules above — no names, no greetings, functional-only, **and keep it short** — are hard constraints; they bind regardless of the voice.
 
    Example shape (adapt to the actual questions; do not copy verbatim):
    ```
@@ -1186,7 +1214,9 @@ This is the **only phase that commits**. By the time you reach it, the working t
    <items from state.followups, if any>
    ```
 
-   Per the global rule in `~/.claude/CLAUDE.md`: do NOT add a `Co-Authored-By: Claude` trailer, a `🤖 Generated with [Claude Code]` line, or any other AI-attribution marker to the PR body or title.
+   Write the PR's **free-prose** parts — the title, the `## Summary` bullets, and `## Run notes` — in the resolved **Comment voice** (see the `## Comment voice` section). The machine-structured parts (every `##` heading, the task-breakdown / AC tables, the AC checklist, the Mermaid diagram) stay verbatim and structural — voice does not touch them.
+
+   Per the global rule in `~/.claude/CLAUDE.md`: do NOT add a `Co-Authored-By: Claude` trailer, a `🤖 Generated with [Claude Code]` line, or any other AI-attribution marker to the PR body or title. This is a hard constraint that outranks any `VOICE.md`.
 
    The PR body does NOT reference `.auto-task/<branch>/CONTEXT.md` or anything under `.auto-task/` — those paths are local-only and would be broken links for anyone reading the PR on GitHub. Reviewers who want the full context fetch the branch and read `.auto-task/<branch>/CONTEXT.md` locally; the `/auto-task-code-review` skill is expected to do this automatically (see "Read-before-review contract").
 
@@ -1277,7 +1307,7 @@ Read the live settings again (do not trust only the Phase-1 snapshot — the use
    - Write `preview` to state with the verdict, url, `deployment_sha`, and `checks[]`. Append the checks to `state.checks[]` (tagged `gate: "preview"`) so the manifest stays complete.
    - Append a `## Preview verification` section to `.auto-task/<branch>/CONTEXT.md` (URL, deployment SHA, verdict, per-check results, any INCONCLUSIVE reason). Save any screenshots under `artifacts/preview-*.png` and a transcript under `artifacts/preview-verdict.txt`.
    - Append a TRACE entry: `operation: auto-task:phase-7-preview`, `outcome: <pass|fail|inconclusive|pending>`, summary covers the URL, verdict, any surfaced reason, and (when auto-learn persisted a positive) the `has_preview_deployment: true` it wrote — a non-detection persists nothing.
-   - **Optional PR comment.** Only if `preview_post_verdict_comment === true`: post the verdict as a PR comment via `gh pr comment` (an external write — off by default). Otherwise report the verdict only to the user + CONTEXT.md.
+   - **Optional PR comment.** Only if `preview_post_verdict_comment === true`: post the verdict as a PR comment via `gh pr comment` (an external write — off by default). Write the comment's prose in the resolved **Comment voice** (see the `## Comment voice` section); the verdict itself (PASS/FAIL/INCONCLUSIVE) and any evidence links stay factual. Otherwise report the verdict only to the user + CONTEXT.md.
    - **Terminal state.** A **completed** verification is terminal: on PASS, FAIL, or INCONCLUSIVE set `phase: "done"`, `expected_next_action: null`, and give the user the final summary (PR URL + the preview verdict + where artifacts live) — so `record-outcome.sh` records the run and telemetry never misclassifies a decided verdict as a perpetual stall. An **incomplete** verification stays in-flight: on `pending` (timeout) or `awaiting` (handoff), leave `phase: "preview"` with `expected_next_action: "user-approval"` (surfaced) — the run is not `done` until a resume finishes the check (re-check once the deploy lands). The distinction is completion, not success: a FAIL is done (nothing more to do automatically; the fix is a new run), whereas a `pending`/`awaiting` genuinely has verification still owed.
 
 **No preview infra?** With `preview_autodetect` at its `true` default, Phase 7 auto-learn is *attempted* on each undecided post-PR run, but a repo whose PRs get no deploy comment resolves no URL, so Phase 7 records `skipped-learned-none`, **persists nothing**, and ends exactly as if preview were off — no failure, no stall, no extra prompt. Auto-learn never writes a negative, so the setting stays unset and the run re-attempts detection next time (a slow or one-off-degraded check can never leave a permanent wrong `false`). The cost of that safety is a bounded re-check each post-PR run on a genuine no-preview repo — **set `has_preview_deployment: false` explicitly to skip instantly with no polling from then on** (an explicit value is honored and never overwritten). A repo that opens no PR (e.g. this plugin lands directly on `main`) never enters Phase 6 or Phase 7 at all. To opt out of auto-learn entirely, set `preview_autodetect: false` (or set `has_preview_deployment` explicitly either way).
