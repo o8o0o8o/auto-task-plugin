@@ -321,7 +321,7 @@ Fall-through, not first-*present*: if the project-local file is **absent, empty,
 
 - the **no-AI-attribution** rule (no `Co-Authored-By: Claude`, no "🤖 Generated with…", no AI-authorship marker) on any commit message, PR title, PR body, **or PR comment** — including the Phase-7 preview verdict comment;
 - the **ticket-comment structural contract** (no names, no greetings/salutation, strictly-business functional questions only);
-- the **PR body's machine-structured content** — the required section headings, the task-breakdown/AC tables, the AC checklist, and the Mermaid change diagram stay verbatim and structural. Voice touches narrative prose, not tables, checklists, headings, or diagrams;
+- the **PR body's machine-structured content** — the required section headings, the task-breakdown/AC tables, the AC checklist, the Mermaid change diagram, and the `## Visual changes` before/after table stay verbatim and structural. Voice touches narrative prose, not tables, checklists, headings, diagrams, or embedded images;
 - the **per-surface length/brevity limits** — the ticket comment's "keep it short / tightly phrased" rule and the PR title's "under 70 chars" cap. A verbose or essayistic voice does not license a bloated ticket comment or an over-length PR title; trim to fit the limit while keeping the voice.
 
 If the resolved voice would push a comment to violate any of the above, the constraint wins and the voice yields.
@@ -643,6 +643,7 @@ When triggered:
    - Current visible behavior of the relevant element/flow.
    - Console errors and failed network requests on the affected page.
    - DOM/computed-style facts that disambiguate the task.
+   - **Baseline "before" screenshot (UI-visual tasks — MANDATORY when a target is reachable).** If the change alters anything a user *sees* (layout, spacing, color, size, component appearance, a visible flow), this is the ONLY moment the pre-change state is renderable — capture it now. Use Playwright: `browser_navigate` to the target, drive the app to the exact state the change touches (open the dialog, expand the panel, reach the screen), then `browser_take_screenshot` → save as `.auto-task/<branch>/recon/screenshot-before.png`. Prefer a tight element/region shot over a full page so the delta is legible. Record in the Recon notes which state was captured. If no target is reachable (recon skipped per the target-selection rule), note under PLAN.md Unknowns that no baseline could be captured — this becomes a Phase 5 hard blocker for the visual pair (see the change-diagram step), so flag it early.
    - Current library API shape / version-specific syntax when an external dependency is touched.
    - Design metadata (component names, tokens, layout dimensions) when a Figma reference is provided.
    - Stop as soon as the observation is sufficient to write a concrete plan. This is reconnaissance, not a full audit.
@@ -698,6 +699,7 @@ Rules each row MUST satisfy:
 5. **Complete** — together, the AC rows cover every behavior the task description promises. If the task description mentions UX behavior X but no row checks X, the AC is incomplete.
 6. **Verification method is binding** — the `Verification method` you write is a *commitment*, not a hint. A later phase may NOT substitute a weaker proxy (a `grep`, a unit test, code-reading, or a local fixture) for a method declared as live / manual / Playwright / real-data. If a criterion can only be witnessed on a running app, a live URL, or against real external data, its `Verification method` MUST say so and its `Gate` MUST be `gate-a` (or a Phase-7 preview check) — never `self-verify` with a proxy standing in. This is the specific failure this contract exists to prevent: "I traced the wiring / fixtures pass" is NOT "I saw it work." (This restates and sharpens rule 4: a `self-verify` method must be one `auto-task-verify` actually runs; a live-only criterion is `gate-a`/Phase-7, not proxied.)
 7. **Data precondition is explicit** — if a criterion's real-world outcome depends on external or runtime data that the code alone does not determine (Salesforce/CMS product config, a feature flag's live value, a third-party API's data, seeded DB rows), the row MUST name that precondition (add a short `Data precondition:` note to the `Verification method` cell). Local fixtures alone CANNOT mark such a row PASS — a fixture proves the code path, not that the criterion holds on the data users actually have. It requires the live/preview check against **representative real data**; absent that, it is INCONCLUSIVE (see the INCONCLUSIVE floor below), never PASS.
+8. **Visual-by-default for UI changes** — when a criterion is about something a user *sees* (layout, spacing, size, color, component appearance, a visible flow), the PRIMARY row's `Verification method` MUST be a Playwright observation of the rendered result — e.g. `playwright: navigate to /settings, open the confirm dialog, screenshot, assert action button computed height = 48px` — with `Gate = gate-a`. A code proxy (grep for a class, an RTL `data-*` assertion) is allowed only as a *secondary* row that supplements the visual check, never as the sole evidence for a visual outcome. Rationale: a proxy like "`data-size="default"` is present" can pass while the pixels are still wrong; the reviewer (and this run's PR) needs the actual rendered before/after, which this AC is what feeds. This is rule 6 applied to pixels: a visual outcome is live-only, so it is `gate-a`, never `self-verify` with a proxy. If no target is reachable so Playwright cannot render the change, say so in the row's `Expected result` and treat it as a Phase 5 hard blocker (see the change-diagram step) rather than silently downgrading to a proxy.
 
 After writing the table, run a self-check before stopping:
 
@@ -876,7 +878,7 @@ Invoke the `auto-task-verify` skill on the **uncommitted working-tree diff** (`g
 
 **MCP usage in verification is open.** Any MCP available to the session may be used during self-verify and the gates if it's the most direct way to execute a Verification method or confirm an observation. Common picks:
 
-- **playwright** — live UI / browser-driven AC checks (selector present, no console errors, screenshot diff, network call returns expected payload).
+- **playwright** — live UI / browser-driven AC checks (selector present, no console errors, screenshot diff, network call returns expected payload). **For any visual AC (rule 8 above), the screenshot you take to verify the criterion IS the "after" image the PR embeds** — drive the app to the same state the Phase 1 baseline captured, `browser_take_screenshot`, and save as `.auto-task/<branch>/recon/screenshot-after.png` (same crop/viewport as `screenshot-before.png` so the pair is comparable). Do not take a throwaway shot for the assertion and a second one for the PR — one shot serves both.
 - **ide** — `getDiagnostics` to assert no new type/lint errors in the touched files.
 - **claude_ai_Context7** — confirm an external library API the code now calls actually behaves the way the plan assumed.
 - **plugin_figma_figma** — visual reference comparison for design-driven ACs.
@@ -1015,6 +1017,7 @@ This is the **only phase that commits**. By the time you reach it, the working t
    | Schema / data-model change | `erDiagram` | Entities + relationships. Annotate new fields/tables in a `Note:` line below the diagram. |
    | File-tree reorganization, large rename/move | `flowchart` tree (top-down) | Before tree on the left, After on the right via two `subgraph`s. |
    | Bug fix in an existing flow | `sequenceDiagram` or `flowchart` | Show the flow once; annotate the broken step (`Note over X: was: <bad>`) next to the fixed step. |
+   | **Visual / UI / CSS change** (layout, spacing, size, color, component appearance, a visible flow) | **— (no Mermaid; embed before/after screenshots)** | The rendered before/after pair carries the delta a box diagram cannot. See "Visual changes" below. A Mermaid box diagram of a CSS change is noise — do NOT emit one for the visual concern. |
    | Pure config / docs / dep bump / typo / formatting-only | — (skip) | Write a single bullet under `## Change diagram` instead: `Skipped — <type>-only change, no flow/structure shift.` Log to state. |
 
    **Before/After convention.** When the prior state matters, show it. Two patterns are acceptable:
@@ -1038,12 +1041,24 @@ This is the **only phase that commits**. By the time you reach it, the working t
 
    **Render check.** Mermaid syntax errors break the PR-body render. Sanity-check the diagram for unmatched brackets, unquoted node labels that contain spaces, reserved words, and trailing semicolons (Mermaid is whitespace-sensitive). If unsure, simplify rather than ship a broken render. If a richer canvas is genuinely needed (multi-page architecture, design-system diagram), use the `figma-generate-diagram` skill — load it first per its own MANDATORY-prerequisite rule — to produce a FigJam diagram and link the resulting URL under `## Change diagram` instead of embedding Mermaid.
 
-   **Persist the source.** Save the chosen diagram (or the skip line) to `.auto-task/<branch>/recon/change-diagram.mmd` so it can be regenerated on resume. Log a `state.history` entry: `{ phase: "handover-diagram", type: "<flowchart|sequenceDiagram|stateDiagram-v2|erDiagram|skipped>", reason: "<one line>", at: "ISO-8601" }`.
+   **Visual changes (embedded before/after — replaces Mermaid for visual concerns).** When the change is visual (the diagram-type table's "Visual / UI / CSS change" row), the reviewer needs to *see* it, so the PR carries a rendered **before/after pair** under a `## Visual changes` section instead of a Mermaid diagram for that concern. (If the PR also has a structural concern — e.g. a refactor shipped alongside the CSS tweak — that concern still gets its Mermaid diagram; the two coexist. But a *pure* visual change gets screenshots and no Mermaid.)
+
+   1. **Inputs.** `recon/screenshot-before.png` (Phase 1 baseline) and `recon/screenshot-after.png` (Phase 3 verification shot). Both must exist and share the same crop/viewport. If the "before" was never captured (no reachable target at Phase 1) or the "after" could not be produced, you have no visual proof for a change the reviewer must see visually — this is a **hard blocker**: surface to the user per Loop rule clause 3 (external blocker) with what's missing and why (unreachable target, app won't launch, no GitHub browser session). Do NOT fall back to a Mermaid box diagram or a text-only note for a visual change — the whole point is the rendered delta.
+
+   2. **Upload to GitHub user-attachments (needs an authenticated browser session).** GitHub has no public REST/`gh` endpoint for attachment upload — the `https://github.com/user-attachments/assets/…` URLs are minted only through the web UI's own flow, which requires a logged-in browser session (cookies + CSRF), NOT the `gh` token. Use the authenticated **Playwright** session to upload the way a human does:
+      - `browser_navigate` to the PR (or, before the PR exists, any comment box on the repo — a draft you will not submit), focus the comment textarea, and `browser_file_upload` the PNG into it.
+      - Wait for GitHub to finish uploading and inject the `![name](https://github.com/user-attachments/assets/<id>)` markdown into the textarea; read that URL out via `browser_snapshot` / `browser_evaluate`.
+      - Repeat for the second image. **Do NOT submit the comment** — clear the draft after capturing both URLs. The uploaded assets persist independently of the draft.
+      - **If Playwright is not logged into GitHub** (the upload control is absent, or the upload never resolves to a `user-attachments` URL): this is a **hard blocker** — surface to the user per Loop rule clause 3 with "visual proof can't be uploaded: Playwright browser has no authenticated GitHub session." Do not degrade to committing the images or a text note; the user chose blocking over silent degradation.
+
+   3. **Persist the URLs.** Save the two `user-attachments` URLs to `.auto-task/<branch>/recon/visual-changes.json` (`{ "before": "<url>", "after": "<url>", "state": "<what UI state was captured>" }`) so the PR-body step and any resume can embed them without re-uploading. Log a `state.history` entry `{ phase: "handover-visual", result: "embedded|blocked", before: "<url|null>", after: "<url|null>", at: "ISO-8601" }`.
+
+   **Persist the source.** Save the chosen diagram (or the skip line, or — for a pure visual change — the line `Visual change — before/after embedded under ## Visual changes, no Mermaid.`) to `.auto-task/<branch>/recon/change-diagram.mmd` so it can be regenerated on resume. Log a `state.history` entry: `{ phase: "handover-diagram", type: "<flowchart|sequenceDiagram|stateDiagram-v2|erDiagram|visual|skipped>", reason: "<one line>", at: "ISO-8601" }`.
 
 3. **Collect verification artifacts.** Before writing CONTEXT.md, gather the proofs of completion that confirm the fix/feature actually works, and save them under `.auto-task/<branch>/artifacts/`. These are gitignored — they exist for local review, future `/auto-task-code-review` sessions, and your own audit trail. Examples per task shape:
    - **Tests added/touched.** Save `<test-runner> <changed-test-paths> 2>&1` output as `artifacts/tests.txt`. Include exit code on the last line.
    - **Type / lint / build.** Save the final passing run as `artifacts/typecheck.txt`, `artifacts/lint.txt`, `artifacts/build.txt` (only the runs whose ACs reference them).
-   - **UI / visual changes.** Save the playwright screenshots (before + after if a "before" was captured during Phase 1 recon) as `artifacts/screenshot-before.png` / `artifacts/screenshot-after.png`.
+   - **UI / visual changes.** Copy the playwright before/after screenshots (`recon/screenshot-before.png` / `recon/screenshot-after.png`, captured in Phase 1 + Phase 3) into `artifacts/screenshot-before.png` / `artifacts/screenshot-after.png` as local proof. The GitHub-hosted `user-attachments` URLs that get embedded in the PR body live in `recon/visual-changes.json` (written by the change-diagram step) — the PR body references those URLs, never the local files.
    - **Network / API changes.** Save `curl -i` transcripts or playwright network logs as `artifacts/request-<n>.txt`.
    - **Performance changes.** Save the lab measurement (Lighthouse, PSI, vitals output) as `artifacts/perf-before.json` / `artifacts/perf-after.json`.
    - **Diff snapshot.** Always save `git diff <base> > artifacts/final-diff.patch` so a reviewer can replay the change without pulling the branch.
@@ -1153,7 +1168,7 @@ This is the **only phase that commits**. By the time you reach it, the working t
    Output of `git diff --cached --name-status <base>` at the moment of staging, grouped by status (Added / Modified / Deleted / Renamed). Include line counts per file (`--numstat` summary). Full unified diff is in `artifacts/final-diff.patch`.
 
    ## Change diagram
-   The Mermaid diagram from step 2, inlined here so this file is self-contained.
+   The Mermaid diagram from step 2, inlined here so this file is self-contained. For a pure visual change, write the skip line and, since this file is local, reference the on-disk pair: `Visual change — before: recon/screenshot-before.png, after: recon/screenshot-after.png (hosted URLs in recon/visual-changes.json).`
 
    ## Artifacts saved
    One bullet per file under `.auto-task/<branch>/artifacts/` with a one-line "what it shows": `artifacts/tests.txt — pnpm test packages/ui/__tests__/Foo.test.ts (exit 0, 24 passing)`.
@@ -1210,6 +1225,12 @@ This is the **only phase that commits**. By the time you reach it, the working t
    ```mermaid
    <diagram from step 2, or the skip line>
    ```
+   <For a pure visual change this section holds the skip line "Visual change — before/after embedded under ## Visual changes, no Mermaid." and the rendered pair goes in the next section.>
+
+   ## Visual changes
+   <ONLY for UI-visual changes (else omit this heading entirely). A before/after table using the user-attachments URLs from recon/visual-changes.json:
+   `| Before | After |` / `|---|---|` / `| ![before](<before-url>) | ![after](<after-url>) |`
+   followed by a one-line caption of what state is shown (e.g. "ConfirmDialog action buttons — settings screen, mobile viewport").>
 
    ## Task breakdown — planned vs. done
    <the intent-vs-reality view — the first thing an async reviewer should read. A table `| # | Planned (from the approved plan) | Status | Done in fact |`, one row per state.requirements[] plus extra rows for drift-added and dropped work. Status ∈ ✅ done · ⚠️ changed · ❌ dropped · ➕ added. "Done in fact" cites the AC evidence proving it (link artifacts/ac-<#>-evidence.* where saved); for ⚠️ changed write "planned X → did Y (reason)", for ➕ added name the drift event that introduced it, for ❌ dropped the descope reason. Sourcing: planned rows + status + dropped ← state.requirements[]; ⚠️ changed and ➕ added ← state.history drift events; evidence ← AC results. End with the coverage tally `N requirements — C done / K dropped · all_complete=<bool>` from requirements-coverage.sh. This subsumes the former standalone Requirements-coverage block — do not also emit that.>
@@ -1236,7 +1257,7 @@ This is the **only phase that commits**. By the time you reach it, the working t
    <items from state.followups, if any>
    ```
 
-   Write the PR's **free-prose** parts — the title, the `## Summary` bullets, and `## Run notes` — in the resolved **Comment voice** (see the `## Comment voice` section). The machine-structured parts (every `##` heading, the task-breakdown / AC tables, the AC checklist, the Mermaid diagram) stay verbatim and structural — voice does not touch them.
+   Write the PR's **free-prose** parts — the title, the `## Summary` bullets, and `## Run notes` — in the resolved **Comment voice** (see the `## Comment voice` section). The machine-structured parts (every `##` heading, the task-breakdown / AC tables, the AC checklist, the Mermaid diagram, the `## Visual changes` before/after table) stay verbatim and structural — voice does not touch them.
 
    Per the global rule in `~/.claude/CLAUDE.md`: do NOT add a `Co-Authored-By: Claude` trailer, a `🤖 Generated with [Claude Code]` line, or any other AI-attribution marker to the PR body or title. This is a hard constraint that outranks any `VOICE.md`.
 
@@ -1347,7 +1368,7 @@ Read the live settings again (do not trust only the Phase-1 snapshot — the use
     ├── PLAN.md                   # approved plan + Approach + Critique + AC + Pre-flight + Recon
     ├── CONTEXT.md                # Phase 5 handover artifact (regenerated each Phase 5)
     ├── TRACE.md                  # append-only operation log (this section's contract)
-    ├── recon/                    # Phase 1 reconnaissance outputs + change-diagram.mmd
+    ├── recon/                    # Phase 1 reconnaissance outputs + change-diagram.mmd + before/after screenshots + visual-changes.json
     ├── fixes/                    # per-fix patch notes / lessons (written by auto-task-fix)
     └── artifacts/                # proofs of completion (tests, screenshots, diffs, logs)
 ```

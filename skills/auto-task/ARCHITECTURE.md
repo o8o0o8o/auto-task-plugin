@@ -153,7 +153,7 @@ The block below is **abridged** for readability — the full schema (including `
     ├── PLAN.md               # plan + Approach + Critique + Acceptance Criteria + Pre-flight + Recon
     ├── CONTEXT.md            # Phase 5 handover artifact (regenerated each Phase 5)
     ├── TRACE.md              # append-only operation log
-    ├── recon/                # Phase 1 reconnaissance + change-diagram.mmd
+    ├── recon/                # Phase 1 reconnaissance + change-diagram.mmd + before/after screenshots + visual-changes.json (hosted URLs)
     ├── fixes/                # per-fix patch notes (auto-task-fix lessons)
     └── artifacts/            # proofs of completion (tests, screenshots, diffs, logs)
 ```
