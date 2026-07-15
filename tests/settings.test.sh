@@ -69,6 +69,18 @@ expect "all: default number kept" "$(printf '%s' "$ALL" | jq -r .preview_timeout
 expect "keys lists has_preview_deployment" \
   "$(bash "$SH" keys | grep -c '^has_preview_deployment$')" "1"
 
+# --- visual-assets keys (v0.12.0): first-class defaults + discoverable --------
+expect "visual_assets_enabled default false" \
+  "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get visual_assets_enabled)" "false"
+expect "visual_assets_visibility default public" \
+  "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get visual_assets_visibility)" "public"
+expect "visual_assets_repo default empty" \
+  "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get visual_assets_repo)" ""
+expect "keys lists all 3 visual_assets_* keys" \
+  "$(bash "$SH" keys | grep -c '^visual_assets_')" "3"
+expect "defaults_json (all) includes visual_assets_visibility" \
+  "$(bash "$SH" all | jq -r .visual_assets_visibility)" "public"
+
 # --- path lives OUTSIDE the repo, under AUTO_TASK_HOME, stable across cwds ----
 # Build a temp git repo with a linked worktree; the resolved path must be identical
 # from the main tree, the worktree, and a subdirectory — and must sit under HOME.

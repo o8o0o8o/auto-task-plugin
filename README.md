@@ -206,6 +206,9 @@ Recognized keys (v1):
 | `bot_review_timeout_min` | `10` | Max minutes to poll for bot comments after the PR opens. |
 | `bot_review_poll_interval_sec` | `30` | Seconds between bot-comment polls. |
 | `bot_review_bots` | `""` | Extra bot logins to treat as review bots (space/comma-separated), beyond the built-in list + any `[bot]`/`type:Bot` account. |
+| `visual_assets_enabled` | `false` | Opt-in: embed **before/after screenshots** in PRs for visual changes (pushed to a dedicated GitHub assets repo). Off by default; `/auto-task` asks once per repo (only on UI-scoped runs) before enabling. Off → verification still runs locally; the PR gets a local-artifact + preview note instead. See "Visual PR proof" below. |
+| `visual_assets_repo` | `""` | `owner/repo` the screenshots are pushed to. Empty → auto-derive `<pr-owner>/auto-task-assets` (auto-created). Assets live under `<pr-repo>/<branch>/…`, pruned on PR merge/close. |
+| `visual_assets_visibility` | `"public"` | `public` → inline images via `raw.githubusercontent`; `private` → member-only blob-view links (raw URLs from a private repo don't render inline); `auto` → match the project repo's visibility. |
 | `telemetry_enabled` | `false` | Opt-in for **remote** anonymous telemetry. Default OFF. See "Remote telemetry" below. |
 | `telemetry_endpoint` | `""` | HTTPS ingest URL the anonymized row is POSTed to. Must be `https://…`. |
 | `telemetry_ingest_token` | `""` | Optional bearer token sent as `Authorization: Bearer …` (e.g. the dashboard's `INGEST_TOKEN`). Empty → no auth header. |
@@ -214,6 +217,12 @@ Recognized keys (v1):
 ### Post-PR bot-comment review (opt-in)
 
 Set `bot_review_autofix: true` and `/auto-task` adds **Phase 6** after the PR opens: it polls (bounded, default 10 min) for comments left by review bots — Cursor, CodeRabbit, Sourcery, GitHub Copilot review, and any `[bot]`-suffix / GitHub `type:Bot` account (extend via `bot_review_bots`) — via `hooks/pr-bot-comments.sh`, which merges the PR's issue comments, inline review threads, and review summaries into one de-duplicated set. It triages them **conservatively**: only high-confidence, in-scope findings that don't contradict a decision you already made are auto-applied, each routed through the same verify → `auto-task-code-review` → gate → commit → push loop as any other change (so every bot-fix commit is fully re-reviewed before it can land — the pre-commit gate is unchanged). Everything else is parked as a follow-up and reported. It runs exactly one collection round (it does not chase comments its own fix-push re-triggers); a fork-PR / protected-branch push failure is fail-open (parked, never a hard stop). Off by default — enabling it lets the pipeline push bot-derived fixes to your PR branch.
+
+### Visual PR proof (opt-in)
+
+For UI/visual changes, `/auto-task` verifies on **local dev first** (reusing a running dev server, or improvising a bounded, disposable render — Storybook / a test harness / a static build / a mock server — and mocking or seeding only what's needed to reach the *real* UI), then re-checks on the preview when one exists. A UI it can't reach even after improvising is recorded **INCONCLUSIVE** (never a proxied pass), never a hard stop. Playwright sessions and any disposable render are closed when done.
+
+Set `visual_assets_enabled: true` (off by default; `/auto-task` asks once per repo on UI-scoped runs) and the run also embeds a **before/after screenshot pair** in the PR. Because GitHub has no `gh`/REST attachment-upload endpoint, images are hosted in a dedicated **assets repo** (`visual_assets_repo`, default auto-derived `<owner>/auto-task-assets`, auto-created): a **public** repo (default) → inline images via `raw.githubusercontent`; a **private** repo → member-only blob-view links (`visual_assets_visibility: private`, or `auto` to match the project so private-UI screenshots are never made public). Screenshots stay tight (element crops) and are pruned on PR merge/close. Embedding is best-effort presentation — if it can't push (fork PR, no permission, etc.) the PR just carries a local-artifact + preview note; it never blocks the run.
 
 ### Preview verification (opt-in + auto-learn)
 
