@@ -2,6 +2,14 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.11.0]
+
+Feature release. Visual PRs now carry rendered **before/after screenshots** instead of a Mermaid box diagram that only restates the summary. Playwright becomes the default for acceptance-criteria and verification on any change a user can see. Composes with 0.10.0's verification-honesty rules: a visual outcome is live-only, so it is `gate-a` (never a `self-verify` proxy).
+
+### Added
+
+- **Before/after screenshots for visual changes, Playwright-by-default for UI ACs** (`skills/auto-task/SKILL.md`, `skills/auto-task/ARCHITECTURE.md`). A Mermaid box diagram of a CSS/layout change carried no visual information — the reviewer could not *see* the delta. For any change a user sees (layout, spacing, size, color, component appearance, a visible flow), the pipeline now: (1) captures a baseline **"before"** screenshot via Playwright during Phase 1 recon (the only moment pre-change state is renderable) → `recon/screenshot-before.png`; (2) makes a Playwright render check the **primary** acceptance criterion (new AC rule 8, `Gate = gate-a`, an application of 0.10.0's rule 6 to pixels) — a grep/RTL `data-*` proxy is allowed only as a supplementary row, never as sole evidence for a visual outcome, since a proxy can pass while the pixels are wrong; (3) reuses the Phase 3 verification shot as the **"after"** image → `recon/screenshot-after.png`; (4) adds a **"Visual / UI / CSS change"** row to the change-diagram step that embeds the rendered before/after pair and skips Mermaid entirely for a pure visual change; (5) uploads both images to GitHub's `user-attachments` store via the authenticated Playwright browser session (there is no `gh`/REST endpoint for attachment upload — the URLs are minted only through the web UI's own flow) → URLs persisted to `recon/visual-changes.json`; (6) embeds them under a new structural `## Visual changes` before/after table in the PR body, excluded from the `VOICE.md` prose rewrite. Missing visual proof — no reachable target to capture a baseline, or no authenticated GitHub browser session to upload — is a **hard blocker** that surfaces to the user (Loop rule clause 3), never a silent downgrade to a box diagram. Docs/behavioral-spec only; no shell or JSON logic changed, all 16 hook tests unaffected.
+
 ## [0.10.0]
 
 Verification-honesty release. Closes the failure mode from the DTG run (PR #388): a live/UI acceptance criterion could be marked PASS on the strength of a proxy (grep, unit test, code-reading, or a local fixture) rather than being observed against a running app or real data. Adds an AC-level `INCONCLUSIVE` outcome and the rules that make "I traced the wiring" stop counting as "I saw it work."
