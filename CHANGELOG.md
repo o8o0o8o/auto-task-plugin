@@ -2,6 +2,14 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.14.0]
+
+Ships a **bundled shared Cloudinary** so the opt-in visual-proof feature (before/after PR screenshots) works out of the box for everyone — no per-user Cloudinary setup required to try it.
+
+### Changed
+
+- **Bundled Cloudinary defaults** (`hooks/settings.sh`, `skills/auto-task/SKILL.md`, `README.md`, `tests/settings.test.sh`, `tests/local-dev-verify.test.sh`). `cloudinary_cloud_name` and `cloudinary_upload_preset` now default to a bundled shared (disposable) Cloudinary account instead of empty, so enabling `visual_assets_enabled` embeds screenshots with zero extra config. Mirrors the telemetry pattern: the master switch stays **opt-in** (`visual_assets_enabled: false`, once-per-repo consent) — only the *host* is pre-provisioned. Overridable per-project/global via the settings keys or the `AUTO_TASK_CLOUDINARY_DEFAULT_CLOUD` / `AUTO_TASK_CLOUDINARY_DEFAULT_PRESET` env vars; self-hosters are advised to use their own account with a restricted preset for real/heavy use (the shared cloud is a common free-tier pool, and an unsigned preset is world-writable). Consent copy + docs updated to reflect out-of-the-box behavior.
+
 ## [0.13.0]
 
 Replaces the GitHub **assets-repo** image host (0.12.0) with **Cloudinary** unsigned upload as the sole visual-asset host. The assets-repo approach only worked when the runner could create/push a repo under the PR-repo owner — it silently degraded for fork PRs and permission-limited orgs, and forced a public/private/auto visibility dance where a private project fell back to non-rendering blob links. Cloudinary unsigned upload needs only two public identifiers (no `gh`, no repo, no API secret), works from any checkout including a fork PR, and renders **inline for public and private projects alike** via GitHub's Camo proxy.

@@ -72,16 +72,18 @@ expect "keys lists has_preview_deployment" \
 # --- visual-assets keys (v0.12.0): first-class defaults + discoverable --------
 expect "visual_assets_enabled default false" \
   "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get visual_assets_enabled)" "false"
-expect "cloudinary_cloud_name default empty" \
-  "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get cloudinary_cloud_name)" ""
-expect "cloudinary_upload_preset default empty" \
-  "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get cloudinary_upload_preset)" ""
+expect "cloudinary_cloud_name defaults to bundled shared cloud" \
+  "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get cloudinary_cloud_name)" "idy02pku"
+expect "cloudinary_upload_preset defaults to bundled preset" \
+  "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get cloudinary_upload_preset)" "ml_default"
+expect "cloudinary_cloud_name honors env override" \
+  "$(AUTO_TASK_CLOUDINARY_DEFAULT_CLOUD=custom AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get cloudinary_cloud_name)" "custom"
 expect "keys lists the single visual_assets_* key (master switch only)" \
   "$(bash "$SH" keys | grep -c '^visual_assets_')" "1"
 expect "keys lists both cloudinary_* keys" \
   "$(bash "$SH" keys | grep -c '^cloudinary_')" "2"
 expect "defaults_json (all) includes cloudinary_cloud_name" \
-  "$(bash "$SH" all | jq -r .cloudinary_cloud_name)" ""
+  "$(bash "$SH" all | jq -r .cloudinary_cloud_name)" "idy02pku"
 
 # --- path lives OUTSIDE the repo, under AUTO_TASK_HOME, stable across cwds ----
 # Build a temp git repo with a linked worktree; the resolved path must be identical

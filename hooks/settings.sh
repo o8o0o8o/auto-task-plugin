@@ -66,6 +66,11 @@ set -uo pipefail
 #     token committed here will trip secret scanners — expected for a public key.)
 AUTO_TASK_TELEMETRY_DEFAULT_ENDPOINT="${AUTO_TASK_TELEMETRY_DEFAULT_ENDPOINT:-https://auto-task-plugin-admin.vercel.app/api/ingest}"
 AUTO_TASK_TELEMETRY_DEFAULT_TOKEN="${AUTO_TASK_TELEMETRY_DEFAULT_TOKEN:-5defb6fff07f96a5fc534b1976f496ad5ff3754fb8f182075d06ef05add901e7}"
+# Bundled shared Cloudinary (disposable account) so opt-in visual embedding works
+# out of the box for everyone; override with your own account via these env vars
+# or the cloudinary_* settings keys.
+AUTO_TASK_CLOUDINARY_DEFAULT_CLOUD="${AUTO_TASK_CLOUDINARY_DEFAULT_CLOUD:-idy02pku}"
+AUTO_TASK_CLOUDINARY_DEFAULT_PRESET="${AUTO_TASK_CLOUDINARY_DEFAULT_PRESET:-ml_default}"
 
 # --- Built-in defaults (SINGLE SOURCE OF TRUTH) ------------------------------
 # Keep this list and the `defaults_json` object below in lockstep.
@@ -84,8 +89,8 @@ default_for() {
     bot_review_poll_interval_sec) printf '30' ;;
     bot_review_bots)              printf '' ;;
     visual_assets_enabled)        printf 'false' ;;
-    cloudinary_cloud_name)        printf '' ;;
-    cloudinary_upload_preset)     printf '' ;;
+    cloudinary_cloud_name)        printf '%s' "$AUTO_TASK_CLOUDINARY_DEFAULT_CLOUD" ;;
+    cloudinary_upload_preset)     printf '%s' "$AUTO_TASK_CLOUDINARY_DEFAULT_PRESET" ;;
     telemetry_enabled)            printf 'false' ;;
     telemetry_endpoint)           printf '%s' "$AUTO_TASK_TELEMETRY_DEFAULT_ENDPOINT" ;;
     telemetry_ingest_token)       printf '%s' "$AUTO_TASK_TELEMETRY_DEFAULT_TOKEN" ;;
@@ -101,6 +106,8 @@ defaults_json() {
   jq -n \
     --arg ep "$AUTO_TASK_TELEMETRY_DEFAULT_ENDPOINT" \
     --arg tok "$AUTO_TASK_TELEMETRY_DEFAULT_TOKEN" \
+    --arg cloud "$AUTO_TASK_CLOUDINARY_DEFAULT_CLOUD" \
+    --arg preset "$AUTO_TASK_CLOUDINARY_DEFAULT_PRESET" \
     '{
     has_preview_deployment: false,
     preview_autodetect: true,
@@ -115,8 +122,8 @@ defaults_json() {
     bot_review_poll_interval_sec: 30,
     bot_review_bots: "",
     visual_assets_enabled: false,
-    cloudinary_cloud_name: "",
-    cloudinary_upload_preset: "",
+    cloudinary_cloud_name: $cloud,
+    cloudinary_upload_preset: $preset,
     telemetry_enabled: false,
     telemetry_endpoint: $ep,
     telemetry_ingest_token: $tok,

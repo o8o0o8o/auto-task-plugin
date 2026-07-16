@@ -106,8 +106,8 @@ assert_ge "$SKILL" 1 "Opt-in gate"
 
 # --- AC10/AC16: settings keys are first-class (defaults + discoverable) ---
 assert_eq_cmd "false" "visual_assets_enabled default"    bash "$SETTINGS" get visual_assets_enabled
-assert_eq_cmd ""      "cloudinary_cloud_name default"    bash "$SETTINGS" get cloudinary_cloud_name
-assert_eq_cmd ""      "cloudinary_upload_preset default" bash "$SETTINGS" get cloudinary_upload_preset
+assert_eq_cmd "idy02pku"   "cloudinary_cloud_name default (bundled)"    bash "$SETTINGS" get cloudinary_cloud_name
+assert_eq_cmd "ml_default" "cloudinary_upload_preset default (bundled)" bash "$SETTINGS" get cloudinary_upload_preset
 va_hit="$(bash "$SETTINGS" keys 2>/dev/null | grep -c '^visual_assets_')"; va_hit="${va_hit:-0}"
 cl_hit="$(bash "$SETTINGS" keys 2>/dev/null | grep -c '^cloudinary_')"; cl_hit="${cl_hit:-0}"
 if [ "$va_hit" -eq 1 ] && [ "$cl_hit" -eq 2 ]; then PASS=$((PASS+1)); else
