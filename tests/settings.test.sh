@@ -248,6 +248,15 @@ expect "override worktree_stale_days_feat->45" "$(AUTO_TASK_SETTINGS_FILE="$PW" 
 expect "present worktree_stale_days_feat"      "$(AUTO_TASK_SETTINGS_FILE="$PW" bash "$SH" present worktree_stale_days_feat)" "true"
 expect "present unset worktree key -> false"   "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" present worktree_stale_days_feat)" "false"
 
+# --- external_actions_* defaults + override --------------------------------
+expect "default external_actions_mode"            "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get external_actions_mode)" "ask"
+expect "default external_actions_timeout_min"     "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get external_actions_timeout_min)" "30"
+expect "default external_actions_poll_interval_sec" "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get external_actions_poll_interval_sec)" "60"
+expect "all: external_actions_mode present"       "$(bash "$SH" all | jq -r 'has("external_actions_mode")')" "true"
+expect "known: external_actions_mode listed"      "$( bash "$SH" keys | grep -qx 'external_actions_mode' && echo ok || echo no )" "ok"
+printf '{"external_actions_mode":"runbook"}' > "$T/ext.json"
+expect "override external_actions_mode->runbook"  "$(AUTO_TASK_SETTINGS_FILE="$T/ext.json" bash "$SH" get external_actions_mode)" "runbook"
+
 echo "--------------------------------------------------------"
 echo "settings.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

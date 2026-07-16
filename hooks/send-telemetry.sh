@@ -49,7 +49,7 @@
 
 set -uo pipefail
 
-SCHEMA_VERSION=2
+SCHEMA_VERSION=3
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 settings_sh="$SCRIPT_DIR/settings.sh"
@@ -228,6 +228,7 @@ payload="$(jq -c \
       checks_run: ((.checks // []) | length),
       checks_failed: ((.checks // []) | map(select(.result=="fail")) | length),
       preview_verdict: (.preview.verdict // null),
+      external_status: (.external.status // null),
       satisfaction: (.quality.satisfaction // null),
       correctness: (.quality.correctness // null),
       comment: ((.quality.comment // null) | if type == "string" then .[0:500] else . end),

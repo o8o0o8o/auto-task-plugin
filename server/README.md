@@ -57,12 +57,13 @@ wall-clock timestamp. Fields:
 | `requirements_count` | number | Dissected-requirement count. [v2] |
 | `drift_events` | number | Blast-radius drift events. [v2] |
 | `preview_verdict` | string \| null | `PASS\|FAIL\|INCONCLUSIVE`, null if no preview phase. [v2] |
+| `external_status` | string \| null | Phase-8 external-change status (`declared\|awaiting-external\|applied-verified\|applied-unverified\|failed\|none\|skipped-disabled`); `none` when a run evaluated external actions and had none to apply, `null` when the `external` object is absent (older runs / no external phase reached). [v3] |
 | `tokens_input` / `tokens_output` | number \| null | Cache-excluded input / output tokens. [v2] |
 | `files_changed` | number | Files in the run diff. [v2] |
 | `comment` | string \| null | Optional Phase-5 free-text note (≤500 chars) — the one **user-authored, non-derived** field; consent-gated. [v2] |
 | `repo_files_bucket`, `primary_language`, `is_monorepo`, `churn_ratio`, `hotspot_concentration`, `dirs_touched`, `max_depth` | mixed | Anonymized repo-shape block from `repo-metrics.sh` (coarse buckets/numbers only — no paths). [v2] |
 
-`tokens_by_skill` is also POSTed but has no dedicated column — it is preserved in the `raw` column. The `[v2]` fields require `schema_version` ≥ 2.
+`tokens_by_skill` is also POSTed but has no dedicated column — it is preserved in the `raw` column. The `[v2]` fields require `schema_version` ≥ 2; the `[v3]` fields (`external_status`) require `schema_version` ≥ 3.
 
 Every request carries `Authorization: Bearer <telemetry_ingest_token>` when the token is non-empty (the bundled default token is non-empty, so this header is sent by default). A deployed endpoint should validate it (see "Harden" below).
 

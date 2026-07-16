@@ -133,7 +133,8 @@ row="$(jq -c '
       diff_loc: (((.quality.diff.loc_added // 0) + (.quality.diff.loc_removed // 0))),
       first_pass_ac: (.quality.planning.first_pass_ac // null),
       checks_run: ((.checks // []) | length),
-      checks_failed: ((.checks // []) | map(select(.result=="fail")) | length)
+      checks_failed: ((.checks // []) | map(select(.result=="fail")) | length),
+      external_status: (.external.status // null)
     }
 ' "$state" 2>/dev/null || true)"
 
