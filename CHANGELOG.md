@@ -2,6 +2,15 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.13.0]
+
+Replaces the GitHub **assets-repo** image host (0.12.0) with **Cloudinary** unsigned upload as the sole visual-asset host. The assets-repo approach only worked when the runner could create/push a repo under the PR-repo owner — it silently degraded for fork PRs and permission-limited orgs, and forced a public/private/auto visibility dance where a private project fell back to non-rendering blob links. Cloudinary unsigned upload needs only two public identifiers (no `gh`, no repo, no API secret), works from any checkout including a fork PR, and renders **inline for public and private projects alike** via GitHub's Camo proxy.
+
+### Changed
+
+- **Cloudinary unsigned upload replaces the GitHub assets repo** (`skills/auto-task/SKILL.md`, `hooks/settings.sh`, `README.md`, `tests/settings.test.sh`, `tests/local-dev-verify.test.sh`). Phase-5 embedding now uploads the before/after PNGs to Cloudinary (`curl -F file=@… -F upload_preset=… https://api.cloudinary.com/v1_1/<cloud>/image/upload`) and embeds the returned `secure_url` inline. Settings: **removed** `visual_assets_repo` and `visual_assets_visibility`; **added** `cloudinary_cloud_name` + `cloudinary_upload_preset` (both public, non-secret; default `''`). `visual_assets_enabled` stays the opt-in master switch, and the Phase-1 consent ask is reworded for Cloudinary + made config-honest (on enable, if either Cloudinary key is unset it says so and embedding stays inert rather than promising an embed it can't deliver). All failure modes — unconfigured, transport error, or a response with **no `secure_url`** (misconfigured/disabled preset) — fall back to a local-artifact note and never STOP.
+- **Two deliberate trade-offs, documented:** (1) an unsigned upload preset is **world-writable** — the settings docs + consent copy recommend restricting it (allowed formats/size, fixed folder, moderation); (2) unsigned upload **cannot delete**, so screenshots **persist** on Cloudinary (the old "prune on PR merge/close" is gone) — the free tier is ample for KB-scale crops.
+
 ## [0.12.0]
 
 Reworks the v0.11.0 visual-verification feature into a **local-dev-first, never-blocking, opt-in** flow. Fixes the "doesn't work correctly" behavior: v0.11.0 hard-blocked runs on missing visual proof and embedded images via a fragile authenticated-browser upload. Now the pipeline verifies on local dev first (resourcefully), degrades to INCONCLUSIVE/notes instead of stopping, and embeds screenshots via an opt-in dedicated GitHub assets repo.

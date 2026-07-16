@@ -84,8 +84,8 @@ default_for() {
     bot_review_poll_interval_sec) printf '30' ;;
     bot_review_bots)              printf '' ;;
     visual_assets_enabled)        printf 'false' ;;
-    visual_assets_repo)           printf '' ;;
-    visual_assets_visibility)     printf 'public' ;;
+    cloudinary_cloud_name)        printf '' ;;
+    cloudinary_upload_preset)     printf '' ;;
     telemetry_enabled)            printf 'false' ;;
     telemetry_endpoint)           printf '%s' "$AUTO_TASK_TELEMETRY_DEFAULT_ENDPOINT" ;;
     telemetry_ingest_token)       printf '%s' "$AUTO_TASK_TELEMETRY_DEFAULT_TOKEN" ;;
@@ -115,8 +115,8 @@ defaults_json() {
     bot_review_poll_interval_sec: 30,
     bot_review_bots: "",
     visual_assets_enabled: false,
-    visual_assets_repo: "",
-    visual_assets_visibility: "public",
+    cloudinary_cloud_name: "",
+    cloudinary_upload_preset: "",
     telemetry_enabled: false,
     telemetry_endpoint: $ep,
     telemetry_ingest_token: $tok,
@@ -125,7 +125,7 @@ defaults_json() {
   }'
 }
 
-known_keys="has_preview_deployment preview_autodetect preview_url preview_wait_mode preview_timeout_min preview_poll_interval_sec preview_bypass_header preview_post_verdict_comment bot_review_autofix bot_review_timeout_min bot_review_poll_interval_sec bot_review_bots visual_assets_enabled visual_assets_repo visual_assets_visibility telemetry_enabled telemetry_endpoint telemetry_ingest_token telemetry_satisfaction_prompt history_reminder_enabled"
+known_keys="has_preview_deployment preview_autodetect preview_url preview_wait_mode preview_timeout_min preview_poll_interval_sec preview_bypass_header preview_post_verdict_comment bot_review_autofix bot_review_timeout_min bot_review_poll_interval_sec bot_review_bots visual_assets_enabled cloudinary_cloud_name cloudinary_upload_preset telemetry_enabled telemetry_endpoint telemetry_ingest_token telemetry_satisfaction_prompt history_reminder_enabled"
 
 # --- Path resolution ---------------------------------------------------------
 hash_str() {

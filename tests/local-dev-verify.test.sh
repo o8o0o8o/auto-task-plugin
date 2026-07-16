@@ -6,8 +6,8 @@
 # reworks this: verify on local dev first (then preview), never hard-block
 # (unreachable UI -> INCONCLUSIVE, embed failure -> note), mock/cut-corners to
 # reach the REAL UI (scoped so it never replaces the visual observation), close
-# Playwright sessions when done, and embed via an OPT-IN, visibility-aware
-# dedicated GitHub assets repo instead of user-attachments.
+# Playwright sessions when done, and embed via an OPT-IN Cloudinary unsigned
+# upload (cloud_name + upload_preset) instead of user-attachments or an assets repo.
 #
 # This pins the load-bearing literals so the rework can't silently regress.
 # What it does NOT cover: runtime behavior (needs a live `/auto-task` run).
@@ -81,19 +81,23 @@ assert_ge "$SKILL" 1 "disposable render"
 # --- AC6 / R5: close Playwright sessions when done ---
 assert_ge "$SKILL" 2 "browser_close"
 
-# --- AC7 / R6: assets-repo mechanism REPLACES user-attachments everywhere ---
+# --- AC7 / R6: Cloudinary REPLACES the GitHub assets-repo AND user-attachments everywhere ---
 assert_absent "$SKILL" "user-attachments"
-assert_ge "$SKILL" 1 "raw.githubusercontent.com/<assets_repo>"
-assert_ge "$SKILL" 2 "visual_assets_repo"
+assert_absent "$SKILL" "raw.githubusercontent"
+assert_absent "$SKILL" "visual_assets_repo"
+assert_absent "$SKILL" "visual_assets_visibility"
+assert_absent "$SKILL" "member-only blob-view links"
+assert_ge "$SKILL" 1 "api.cloudinary.com"
 
-# --- AC11/AC14: visibility-aware embedding (public inline / private links) ---
-assert_ge "$SKILL" 1 "visual_assets_visibility"
-assert_ge "$SKILL" 1 "member-only blob-view links"
-assert_ge "$SKILL" 1 "default branch"
+# --- AC11/AC14: single inline embed via Cloudinary secure_url (public + private) ---
+assert_ge "$SKILL" 1 "cloudinary_cloud_name"
+assert_ge "$SKILL" 1 "cloudinary_upload_preset"
+assert_ge "$SKILL" 1 "secure_url"
+assert_ge "$SKILL" 1 "unsigned"
 
 # --- AC15: embedding failure modes fall back to a note, never a STOP ---
 assert_ge "$SKILL" 1 "fall back to a note, NEVER a STOP"
-assert_ge "$SKILL" 1 "fork PR"
+assert_ge "$SKILL" 1 "no secure_url"
 
 # --- AC17/AC18 / R9: explicit per-project opt-in, off by default, gated ---
 assert_ge "$SKILL" 1 "Visual-assets consent check"
@@ -101,11 +105,13 @@ assert_ge "$SKILL" 1 "visual_assets_enabled"
 assert_ge "$SKILL" 1 "Opt-in gate"
 
 # --- AC10/AC16: settings keys are first-class (defaults + discoverable) ---
-assert_eq_cmd "false"  "visual_assets_enabled default"    bash "$SETTINGS" get visual_assets_enabled
-assert_eq_cmd "public" "visual_assets_visibility default" bash "$SETTINGS" get visual_assets_visibility
-keys_hit="$(bash "$SETTINGS" keys 2>/dev/null | grep -c 'visual_assets_')"; keys_hit="${keys_hit:-0}"
-if [ "$keys_hit" -eq 3 ]; then PASS=$((PASS+1)); else
-  FAIL=$((FAIL+1)); echo "FAIL: expected 3 visual_assets_* keys via 'settings.sh keys', got $keys_hit"; fi
+assert_eq_cmd "false" "visual_assets_enabled default"    bash "$SETTINGS" get visual_assets_enabled
+assert_eq_cmd ""      "cloudinary_cloud_name default"    bash "$SETTINGS" get cloudinary_cloud_name
+assert_eq_cmd ""      "cloudinary_upload_preset default" bash "$SETTINGS" get cloudinary_upload_preset
+va_hit="$(bash "$SETTINGS" keys 2>/dev/null | grep -c '^visual_assets_')"; va_hit="${va_hit:-0}"
+cl_hit="$(bash "$SETTINGS" keys 2>/dev/null | grep -c '^cloudinary_')"; cl_hit="${cl_hit:-0}"
+if [ "$va_hit" -eq 1 ] && [ "$cl_hit" -eq 2 ]; then PASS=$((PASS+1)); else
+  FAIL=$((FAIL+1)); echo "FAIL: expected 1 visual_assets_* + 2 cloudinary_* keys, got $va_hit / $cl_hit"; fi
 
 # --- README documents the feature ---
 assert_ge "$README" 1 "visual_assets_enabled"
