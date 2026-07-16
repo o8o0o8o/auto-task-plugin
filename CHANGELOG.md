@@ -2,6 +2,15 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.17.1]
+
+Documentation sync — corrected stale doc↔code cross-references (no behavior change to the pipeline). Landed via `/auto-task`.
+
+### Fixed
+
+- **`README.md`:** telemetry `telemetry_endpoint` / `telemetry_ingest_token` default cells now read `*(bundled)*` (they ship pre-wired via `hooks/settings.sh`) instead of `""`, which had implied nothing was sent by default. Skill count `eight → nine` (×2; `auto-task-gc` is installed), core-hook count `seven → eight` (matches the enumerated Core-hooks list), and the Status version pin `v0.8.0 → v0.17.0`. Added the missing `history_reminder_enabled` row to the settings table.
+- **`skills/auto-task/SKILL.md`:** the Rules cross-reference to the Acceptance-Criteria contract now says "all ten rules" (the contract lists ten, not seven); added a pointer note under the "Recognized keys" table for the `history_reminder_enabled` + `worktree_*` keys documented in the README / `auto-task-gc` skill.
+
 ## [0.17.0]
 
 Adds a **worktree/disk space-control mechanism** so auto-task's per-run worktrees (each carrying a full `node_modules`) no longer accumulate to tens of GB unmanaged.
