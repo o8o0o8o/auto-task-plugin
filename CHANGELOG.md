@@ -2,6 +2,20 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.17.0]
+
+Adds a **worktree/disk space-control mechanism** so auto-task's per-run worktrees (each carrying a full `node_modules`) no longer accumulate to tens of GB unmanaged.
+
+### Added
+
+- **SessionStart cleanup nudge** (`hooks/suggest-cleanup.sh`, `tests/suggest-cleanup.test.sh`). A cheap, **local-only** (no `du`, no `gh`), fail-open hook that — throttled to once per `worktree_cleanup_throttle_hours` **per clone** — suggests running `/auto-task-gc` when ≥1 worktree looks reclaimable (merged, or clean-and-stale past its per-type threshold). It never deletes and never blocks; gated off by `worktree_cleanup_nudge: false`.
+- **`/auto-task-gc` skill + engine** (`skills/auto-task-gc/SKILL.md`, `hooks/auto-task-gc.sh`, `tests/auto-task-gc.test.sh`). On-demand: `/auto-task-gc` **reports** each worktree's size (`du`), age, type, and merge status (local ancestry **and** `gh` for squash-merged PRs) read-only; `--prune --yes` removes reclaimable worktrees, **preserving branch refs**, pruning the matching `.auto-task/<branch>/` (+ empty parents), skipping dirty worktrees unless `worktree_cleanup_prune_dirty` (then WIP-committing tracked+untracked first), and never touching the current/main worktree. Deletion requires an explicit `--yes` (engine-level guard, not just the skill), and gitignored files inside a removed worktree go with it (documented caveat).
+- **Per-type retention settings** (`hooks/settings.sh`, `tests/settings.test.sh`): `worktree_cleanup_nudge` (true), `worktree_cleanup_throttle_hours` (24), `worktree_cleanup_prune_dirty` (false), and `worktree_stale_days_<type>` — `feat`/`refactor` 30, `fix`/`default` 14, `chore`/`deps`/`docs`/`cleanup` 7 — all shipped as defaults and user-overridable.
+
+### Changed
+
+- Wired `suggest-cleanup.sh` into SessionStart (`hooks/hooks.json`, `settings-fragment.json`), added `auto-task-gc` to `install.sh`, and documented the mechanism (`README.md`, `skills/auto-task/SKILL.md` worktree-lifecycle note now points at `/auto-task-gc`).
+
 ## [0.16.0]
 
 Makes the before/after visual proof a **first-class, required Acceptance Criterion** rather than an implicit verification step.
