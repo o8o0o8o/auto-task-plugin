@@ -92,7 +92,17 @@ Define-phase scoring (see Phase 1 rubric) produces Difficulty (D) and Risk (R), 
 ## Inputs
 
 - `/auto-task <description>` — start a new run. `<description>` is the task to solve.
-- `/auto-task` (no args) — resume an existing run from `.auto-task/<branch>/STATE.json`. If no state file exists, tell the user to provide a description.
+- `/auto-task` (no args) — resume an existing run. Because a run lives in its own worktree keyed to a branch, and this session may not be on that branch, the resume path is **worktree-aware** (see "Resume (no-args) dispatch" below) — it does not blindly assume the current branch's `.auto-task/<branch>/STATE.json` is the one you meant.
+
+### Resume (no-args) dispatch
+
+On `/auto-task` with no arguments, decide which run to continue by consulting the bundled enumeration engine `hooks/auto-task-resume-list.sh` (locate it with the standard three-probe pattern; `CLAUDE_PLUGIN_ROOT` is empty in the Bash-tool env). Run `bash "$engine" --resume-mode`, which prints one of three words computed from the full set of runs across every worktree + the current toplevel. The current worktree's own run takes precedence — if you are sitting in a resumable run, `/auto-task` continues *that*, never a picker:
+
+- **`direct`** — the current worktree's own run is resumable. Resume the **single current-branch run** exactly as before: read `.auto-task/<branch>/STATE.json` for the current branch and continue from its `phase`. This preserves the original, zero-friction behavior (no picker, no extra prompt) and holds even when other resumable runs exist elsewhere — which is also what makes the picker hand-off terminate rather than loop.
+- **`picker`** — the current worktree has **no** resumable run of its own, but resumable runs exist in other worktrees. Do NOT guess. Invoke the **`auto-task-resume`** skill (the run picker), which lists every run, lets the user choose, positions the session into the chosen worktree, and hands back here — where `--resume-mode` now returns `direct` and resumes it. (Invoke whichever name is registered this session — `auto-task:auto-task-resume` under a marketplace install, or `auto-task-resume` under the symlink fallback.)
+- **`none`** — no resumable run anywhere. Keep the original message: tell the user to provide a description (`/auto-task <description>`).
+
+Fail-open: if the engine cannot be located or errors, fall back to the original current-branch behavior (resume `.auto-task/<branch>/STATE.json` if present, else ask for a description) — the picker is a convenience, never a hard dependency.
 
 ## State file
 

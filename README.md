@@ -10,6 +10,7 @@ End-to-end autonomous task workflow for Claude Code. Takes a task description fr
 - **`task-execution-verifier` agent** — read-only verifier spawned at Gate A (completeness) and Gate B (adversarial). Fresh context per spawn.
 - **`auto-task-stats` skill** — standalone, read-only maintainer tool (NOT part of the pipeline). Reports local run-outcome telemetry: completion rate, where runs stall, per-tier fix/review effort, Gate B coverage. See "Run telemetry (opt-in)" below. Invoke as `/auto-task:auto-task-stats` (marketplace) or `/auto-task-stats` (install.sh fallback).
 - **`auto-task-gc` skill** — standalone disk/worktree cleanup tool (NOT part of the pipeline). Reports each auto-task worktree's size, age, and merge status, then safely reclaims the merged/stale ones on confirmation (branch refs preserved, matching `.auto-task/<branch>/` pruned). Retention is per branch type and fully defaulted/overridable. See "Worktree space control" below. Invoke as `/auto-task:auto-task-gc` (marketplace) or `/auto-task-gc` (install.sh fallback).
+- **`auto-task-resume` skill** — standalone run picker (NOT part of the pipeline). Lists every auto-task run across your worktrees — state, title, effort, last activity — in a clean table, lets you pick one, and continues it from where it left off. Fixes the `claude --resume` gap (that resumes a *conversation*, not a *run*). Backed by the read-only `hooks/auto-task-resume-list.sh` engine (`tests/auto-task-resume-list.test.sh`). See "Resuming runs" below. Invoke as `/auto-task:auto-task-resume` (marketplace) or `/auto-task-resume` (install.sh fallback).
 - **Core hooks**, all wired automatically by the plugin install (`hooks/hooks.json`) —
   - `block-ai-attribution.sh` (PreToolUse on Bash): refuses commits and PR bodies containing `Co-Authored-By: Claude`, `🤖 Generated`, etc.
   - `enforce-gates.sh` (PreToolUse on Bash): blocks `git commit` during an auto-task run unless `gates.code_review.passed`, `gates.code_review.tool === "skill:auto-task-code-review"`, `gates.code_review.clean_pass_after_last_fix`, and Gate B's gate (or skip reason) are all satisfied. It also enforces **review staleness** — if `git diff <base>` no longer hashes to the recorded `gates.code_review.reviewed_diff_sha`, code changed after the review went clean and the commit is blocked until a re-review. It also carries the **checkout-drift block** — a `git commit` while the working tree sits on a branch other than an active in-place run's branch is blocked (previously a silent fail-open). Fails closed: with `jq` missing or `STATE.json` unparseable during an active run, it blocks rather than letting the commit through.
@@ -31,7 +32,7 @@ This repo is its own plugin marketplace. From inside Claude Code:
 /plugin install auto-task@auto-task-plugin
 ```
 
-That copies the plugin into your plugin cache and **auto-wires everything** — the nine skills, the `task-execution-verifier` agent, and all eight core hooks (`hooks/hooks.json`). No `settings.json` editing, no symlinks, no `install.sh`.
+That copies the plugin into your plugin cache and **auto-wires everything** — the ten skills, the `task-execution-verifier` agent, and all eight core hooks (`hooks/hooks.json`). No `settings.json` editing, no symlinks, no `install.sh`.
 
 Plugin skills are namespaced under the plugin name, so you invoke the orchestrator as:
 
@@ -74,7 +75,7 @@ cd ~/.claude/auto-task-plugin
 ./install.sh
 ```
 
-It symlinks the nine skills into `~/.claude/skills/` and the verifier agent into `~/.claude/agents/`, then prints a settings snippet with absolute paths for the hooks. Merge that snippet into `~/.claude/settings.json` — preserve your existing keys, append to the `hooks.PreToolUse` / `hooks.Stop` arrays if they already exist. The skills load without the merge, but the gate-enforcement and anti-stall hooks won't fire. With this path the skills are invoked by their bare names (`/auto-task`), not namespaced.
+It symlinks the ten skills into `~/.claude/skills/` and the verifier agent into `~/.claude/agents/`, then prints a settings snippet with absolute paths for the hooks. Merge that snippet into `~/.claude/settings.json` — preserve your existing keys, append to the `hooks.PreToolUse` / `hooks.Stop` arrays if they already exist. The skills load without the merge, but the gate-enforcement and anti-stall hooks won't fire. With this path the skills are invoked by their bare names (`/auto-task`), not namespaced.
 
 Pass `--copy` instead of the default to copy files (no symlinks), or `--uninstall` to remove the links. To update: `git pull` inside the clone (symlinks pick up changes automatically; if you used `--copy`, re-run `./install.sh`). The SessionStart update-notice fires under either install path — `check-version.sh` self-locates its manifest (via `${CLAUDE_PLUGIN_ROOT}` under the marketplace install, or relative to its own path for the `install.sh`/symlink layout).
 
@@ -146,7 +147,30 @@ The pipeline stops mid-flight only when the Loop rule fires:
 3. External blocker (missing creds, broken infra, undecided design).
 4. Test flakiness (non-deterministic failure).
 
-You get a status with **why stopped** + **current state** + **suggested next move**. Resume with `/auto-task`.
+You get a status with **why stopped** + **current state** + **suggested next move**. Resume with `/auto-task` (or `/auto-task-resume` to pick from all runs — see below).
+
+## Resuming runs (`/auto-task-resume`)
+
+Each run lives in its own git worktree keyed to a branch (`.auto-task/<branch>/STATE.json` **inside that worktree**). Two consequences: `claude --resume` resumes a *conversation session*, not a run, so it can drop you somewhere with no run in sight; and bare `/auto-task` (no args) only knows about the run on the branch you happen to be on. When several runs are in flight across worktrees, neither lands you where you meant to go.
+
+**`/auto-task-resume`** is the picker that fixes this. It enumerates every run on the clone (scanning each `git worktree list` path for a `STATE.json` — a bare worktree with no state is never listed), prints a clean table, and lets you choose:
+
+```
+  auto-task runs — my-app  (4 found)
+  ────────────────────────────────────────────────────────────────────────
+   #     STATE       TITLE                                  EFFORT  LAST
+  ────────────────────────────────────────────────────────────────────────
+   1) ● gate-b      Apply & verify external CMS changes    standard 39m ago
+   2) ○ done        Sync comments, code & docs             light   3h ago
+   3) ● review      Worktree cleanup nudge                 standard 18h ago  · current
+   4) ● execute     Add reCAPTCHA to order approval        heavy   2d ago    · orphan
+  ────────────────────────────────────────────────────────────────────────
+  ● resumable   ○ done   ⚠ unreadable    markers: · current (you're here) · orphan (worktree pruned)
+```
+
+Pick a run with an arrow-key prompt (it offers only the resumable runs — done and current ones stay in the table for context), and it enters that run's worktree and hands off to the standard resume, continuing from the recorded phase. An **orphaned** run (state survives but its worktree was pruned) is offered a one-step recreate (`git worktree add`) first. It's read-only discovery — nothing is written or removed without your say-so.
+
+Bare **`/auto-task`** (no args) also uses this now: it consults the engine's `--resume-mode` and shows the picker when runs exist beyond your current branch, resumes directly when the only run is your current branch's, or asks for a description when there are none.
 
 ## Read-before-review contract
 

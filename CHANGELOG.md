@@ -2,6 +2,19 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+Adds a **resume-run picker** so you can see and continue any auto-task run across your worktrees — closing the gap where `claude --resume` resumes a *conversation* (not a run) and bare `/auto-task` only sees the current branch.
+
+### Added
+
+- **`/auto-task-resume` skill + engine** (`skills/auto-task-resume/SKILL.md`, `hooks/auto-task-resume-list.sh`, `tests/auto-task-resume-list.test.sh`). The read-only engine enumerates every run by scanning each `git worktree list` path for a `.auto-task/**/STATE.json` (a bare worktree with no state is never listed), and emits a clean human table (default), a `--json` array (full key set per run, explicit nulls on the degraded path), and a `--resume-mode` decision (`none`/`direct`/`picker`). It is fail-open (exit 0 even on a truncated/unparseable STATE.json → a `parse_ok:false` row), tolerant of schema drift, marks `is_current` (the run you're in) and `worktree_present` (false = an orphan whose worktree was pruned), and sorts most-recent-first. The skill prints the table, offers an arrow-key `AskUserQuestion` of the resumable, non-current runs (done/current shown for context only), positions the session into the chosen run's worktree (`EnterWorktree`), and hands off to the standard resume — it recreates an orphaned run's worktree (`git worktree add`) on confirmation first.
+
+### Changed
+
+- **`skills/auto-task/SKILL.md`:** bare `/auto-task` (no args) is now **worktree-aware** — it consults the engine's `--resume-mode` and shows the picker when resumable runs exist beyond the current branch, resumes the **single current-branch run** directly (unchanged behavior) when that's the only one, and otherwise asks for a description. Fail-open to the original current-branch behavior if the engine can't be located.
+- Added `auto-task-resume` to `install.sh` (the tenth skill) and documented the picker in `README.md` ("Resuming runs").
+
 ## [0.17.1]
 
 Documentation sync — corrected stale doc↔code cross-references (no behavior change to the pipeline). Landed via `/auto-task`.
