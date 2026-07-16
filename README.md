@@ -31,7 +31,7 @@ This repo is its own plugin marketplace. From inside Claude Code:
 /plugin install auto-task@auto-task-plugin
 ```
 
-That copies the plugin into your plugin cache and **auto-wires everything** — the eight skills, the `task-execution-verifier` agent, and all seven core hooks (`hooks/hooks.json`). No `settings.json` editing, no symlinks, no `install.sh`.
+That copies the plugin into your plugin cache and **auto-wires everything** — the nine skills, the `task-execution-verifier` agent, and all eight core hooks (`hooks/hooks.json`). No `settings.json` editing, no symlinks, no `install.sh`.
 
 Plugin skills are namespaced under the plugin name, so you invoke the orchestrator as:
 
@@ -74,7 +74,7 @@ cd ~/.claude/auto-task-plugin
 ./install.sh
 ```
 
-It symlinks the eight skills into `~/.claude/skills/` and the verifier agent into `~/.claude/agents/`, then prints a settings snippet with absolute paths for the hooks. Merge that snippet into `~/.claude/settings.json` — preserve your existing keys, append to the `hooks.PreToolUse` / `hooks.Stop` arrays if they already exist. The skills load without the merge, but the gate-enforcement and anti-stall hooks won't fire. With this path the skills are invoked by their bare names (`/auto-task`), not namespaced.
+It symlinks the nine skills into `~/.claude/skills/` and the verifier agent into `~/.claude/agents/`, then prints a settings snippet with absolute paths for the hooks. Merge that snippet into `~/.claude/settings.json` — preserve your existing keys, append to the `hooks.PreToolUse` / `hooks.Stop` arrays if they already exist. The skills load without the merge, but the gate-enforcement and anti-stall hooks won't fire. With this path the skills are invoked by their bare names (`/auto-task`), not namespaced.
 
 Pass `--copy` instead of the default to copy files (no symlinks), or `--uninstall` to remove the links. To update: `git pull` inside the clone (symlinks pick up changes automatically; if you used `--copy`, re-run `./install.sh`). The SessionStart update-notice fires under either install path — `check-version.sh` self-locates its manifest (via `${CLAUDE_PLUGIN_ROOT}` under the marketplace install, or relative to its own path for the `install.sh`/symlink layout).
 
@@ -212,9 +212,10 @@ Recognized keys (v1):
 | `cloudinary_cloud_name` | *(bundled)* | Cloudinary cloud name uploads go to. Defaults to a **bundled shared** disposable cloud so opt-in embedding works out of the box; override with your own (or `AUTO_TASK_CLOUDINARY_DEFAULT_CLOUD`). Not a secret — it's in every delivery URL. |
 | `cloudinary_upload_preset` | *(bundled)* | The **unsigned** upload preset. Defaults to the bundled preset; override with your own (or `AUTO_TASK_CLOUDINARY_DEFAULT_PRESET`). Not a secret. An unsigned preset is world-writable, so self-hosters should restrict their own (allowed formats/size, fixed folder, moderation). |
 | `telemetry_enabled` | `false` | Opt-in for **remote** anonymous telemetry. Default OFF. See "Remote telemetry" below. |
-| `telemetry_endpoint` | `""` | HTTPS ingest URL the anonymized row is POSTed to. Must be `https://…`. |
-| `telemetry_ingest_token` | `""` | Optional bearer token sent as `Authorization: Bearer …` (e.g. the dashboard's `INGEST_TOKEN`). Empty → no auth header. |
+| `telemetry_endpoint` | *(bundled)* | HTTPS ingest URL the anonymized row is POSTed to. **Defaults to the bundled central collector** (shipped in `hooks/settings.sh`); override to self-host. Must be `https://…` — a non-https/empty value sends nothing. |
+| `telemetry_ingest_token` | *(bundled)* | Bearer token sent as `Authorization: Bearer …`. **Defaults to the bundled PUBLIC write-only key** (world-readable by design; a leak only permits junk writes). Override to self-host, or clear it to send no auth header. |
 | `telemetry_satisfaction_prompt` | `true` | When telemetry is on, whether Phase 5 asks a satisfaction/correctness question at the push prompt. |
+| `history_reminder_enabled` | `false` | Opt-in `UserPromptSubmit` hook (`inject-history-reminder.sh`) that tells non-bundled tools an `.auto-task/<branch>/` history folder exists for the current branch. Wired in every install but OFF by default; enable with `settings.sh set history_reminder_enabled true`. Emits nothing outside auto-task branches. |
 | `worktree_cleanup_nudge` | `true` | Whether the SessionStart hook nudges you (non-destructively) when reclaimable auto-task worktrees accumulate. Set `false` to silence it. See "Worktree space control" below. |
 | `worktree_cleanup_throttle_hours` | `24` | Minimum hours between cleanup nudges, **per clone**. |
 | `worktree_cleanup_prune_dirty` | `false` | Whether `/auto-task-gc --prune --yes` may reclaim a **dirty** worktree — by WIP-committing its uncommitted work (tracked + untracked) to its branch first. Off by default: dirty worktrees are kept. |
@@ -368,4 +369,4 @@ MIT — see `LICENSE`.
 
 ## Status
 
-**v0.8.0 — pre-release.** The install path has been verified in a throwaway directory. The enforcement spine (state-machine ↔ hooks) has an automated integration test — `tests/enforcement-spine.test.sh`, 100 assertions covering the full STANDARD + LIGHT lifecycle, gate ordering, review-staleness (including enforcement during a merge and under hostile git config), raw-mode commit detection, the Stop-hook stall-breaker, the AI-attribution block, the fail-open/fail-closed edges, per-worktree / subdirectory / nested-repo state resolution, the worktree-isolated-run resolution with `CLAUDE_PROJECT_DIR` pinned to the main checkout, the checkout-drift block + warning (`enforce-gates.sh` + `warn-checkout-drift.sh`), and the `check-version.sh --plain` per-run-check behavior. What is **not** yet exercised end-to-end is the *model-follows-the-prose* path: the `task-execution-verifier` agent (Gate A/B) and the orchestrator's phase-driving have a real protocol but have not been run inside a live `/auto-task` against a real task — treat those as functional but not yet battle-tested. File issues on GitHub.
+**v0.17.0 — pre-release.** The install path has been verified in a throwaway directory. The enforcement spine (state-machine ↔ hooks) has an automated integration test — `tests/enforcement-spine.test.sh`, 100 assertions covering the full STANDARD + LIGHT lifecycle, gate ordering, review-staleness (including enforcement during a merge and under hostile git config), raw-mode commit detection, the Stop-hook stall-breaker, the AI-attribution block, the fail-open/fail-closed edges, per-worktree / subdirectory / nested-repo state resolution, the worktree-isolated-run resolution with `CLAUDE_PROJECT_DIR` pinned to the main checkout, the checkout-drift block + warning (`enforce-gates.sh` + `warn-checkout-drift.sh`), and the `check-version.sh --plain` per-run-check behavior. What is **not** yet exercised end-to-end is the *model-follows-the-prose* path: the `task-execution-verifier` agent (Gate A/B) and the orchestrator's phase-driving have a real protocol but have not been run inside a live `/auto-task` against a real task — treat those as functional but not yet battle-tested. File issues on GitHub.
