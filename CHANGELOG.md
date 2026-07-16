@@ -2,7 +2,7 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.19.0]
 
 Adds a **resume-run picker** so you can see and continue any auto-task run across your worktrees — closing the gap where `claude --resume` resumes a *conversation* (not a run) and bare `/auto-task` only sees the current branch.
 
