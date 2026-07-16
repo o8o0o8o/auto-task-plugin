@@ -88,6 +88,9 @@ default_for() {
     bot_review_timeout_min)       printf '10' ;;
     bot_review_poll_interval_sec) printf '30' ;;
     bot_review_bots)              printf '' ;;
+    external_actions_mode)        printf 'ask' ;;
+    external_actions_timeout_min) printf '30' ;;
+    external_actions_poll_interval_sec) printf '60' ;;
     visual_assets_enabled)        printf 'false' ;;
     cloudinary_cloud_name)        printf '%s' "$AUTO_TASK_CLOUDINARY_DEFAULT_CLOUD" ;;
     cloudinary_upload_preset)     printf '%s' "$AUTO_TASK_CLOUDINARY_DEFAULT_PRESET" ;;
@@ -132,6 +135,9 @@ defaults_json() {
     bot_review_timeout_min: 10,
     bot_review_poll_interval_sec: 30,
     bot_review_bots: "",
+    external_actions_mode: "ask",
+    external_actions_timeout_min: 30,
+    external_actions_poll_interval_sec: 60,
     visual_assets_enabled: false,
     cloudinary_cloud_name: $cloud,
     cloudinary_upload_preset: $preset,
@@ -154,7 +160,7 @@ defaults_json() {
   }'
 }
 
-known_keys="has_preview_deployment preview_autodetect preview_url preview_wait_mode preview_timeout_min preview_poll_interval_sec preview_bypass_header preview_post_verdict_comment bot_review_autofix bot_review_timeout_min bot_review_poll_interval_sec bot_review_bots visual_assets_enabled cloudinary_cloud_name cloudinary_upload_preset telemetry_enabled telemetry_endpoint telemetry_ingest_token telemetry_satisfaction_prompt history_reminder_enabled worktree_cleanup_nudge worktree_cleanup_throttle_hours worktree_cleanup_prune_dirty worktree_stale_days_default worktree_stale_days_feat worktree_stale_days_refactor worktree_stale_days_fix worktree_stale_days_chore worktree_stale_days_deps worktree_stale_days_docs worktree_stale_days_cleanup"
+known_keys="has_preview_deployment preview_autodetect preview_url preview_wait_mode preview_timeout_min preview_poll_interval_sec preview_bypass_header preview_post_verdict_comment bot_review_autofix bot_review_timeout_min bot_review_poll_interval_sec bot_review_bots external_actions_mode external_actions_timeout_min external_actions_poll_interval_sec visual_assets_enabled cloudinary_cloud_name cloudinary_upload_preset telemetry_enabled telemetry_endpoint telemetry_ingest_token telemetry_satisfaction_prompt history_reminder_enabled worktree_cleanup_nudge worktree_cleanup_throttle_hours worktree_cleanup_prune_dirty worktree_stale_days_default worktree_stale_days_feat worktree_stale_days_refactor worktree_stale_days_fix worktree_stale_days_chore worktree_stale_days_deps worktree_stale_days_docs worktree_stale_days_cleanup"
 
 # --- Path resolution ---------------------------------------------------------
 hash_str() {

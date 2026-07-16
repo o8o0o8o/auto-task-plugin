@@ -238,11 +238,17 @@ expect "comment capped at 500 chars" "$(printf '%s' "$Pt" | jq -r '.comment | le
 # absent comment -> null
 expect "comment null when unset" "$(printf '%s' "$P" | jq -r '.comment')" "null"
 
-# --- 13c. schema v2 fields present + anonymized (task_type is prefix only) ----
-expect "schema_version is 2"        "$(printf '%s' "$P" | jq -r '.schema_version')" "2"
-for k in difficulty risk task_type requirements_count drift_events tokens_input tokens_output tokens_by_skill files_changed preview_verdict model claude_code_version; do
-  expect "v2 field present: $k" "$(printf '%s' "$P" | jq -r "has(\"$k\")")" "true"
+# --- 13c. schema v3 fields present + anonymized (task_type is prefix only) ----
+expect "schema_version is 3"        "$(printf '%s' "$P" | jq -r '.schema_version')" "3"
+for k in difficulty risk task_type requirements_count drift_events tokens_input tokens_output tokens_by_skill files_changed preview_verdict external_status model claude_code_version; do
+  expect "v3 field present: $k" "$(printf '%s' "$P" | jq -r "has(\"$k\")")" "true"
 done
+# external_status: null when no external object, echoed verbatim when present
+expect "external_status null by default" "$(printf '%s' "$P" | jq -r '.external_status')" "null"
+ES="$T/state-ext.json"; jq '.external={"status":"applied-verified"}' "$STATE" > "$ES"
+Pes="$(AUTO_TASK_HOME="$HOME_DIR" AUTO_TASK_STATE_FILE="$ES" AUTO_TASK_SETTINGS_FILE="$T/on.json" \
+  AUTO_TASK_TELEMETRY_DRYRUN=1 AUTO_TASK_TELEMETRY_IGNORE_SENTINEL=1 bash "$SH" 2>/dev/null)"
+expect "external_status echoed"          "$(printf '%s' "$Pes" | jq -r '.external_status')" "applied-verified"
 # task_type carries ONLY the branch <type> prefix, never the slug
 STT="$T/state-tt.json"; jq '.branch="feat/super-secret-project-name"' "$STATE" > "$STT"
 Ptt="$(AUTO_TASK_HOME="$HOME_DIR" AUTO_TASK_STATE_FILE="$STT" AUTO_TASK_SETTINGS_FILE="$T/on.json" \

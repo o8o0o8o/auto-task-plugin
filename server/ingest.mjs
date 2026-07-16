@@ -30,7 +30,7 @@ const COLUMNS = [
   "model", "claude_code_version",
   "terminal_state", "tier", "tier_initial", "difficulty", "risk", "escalations", "task_type",
   "fix_iterations", "review_iterations", "gate_b", "followups", "requirements_count",
-  "drift_events", "preview_verdict",
+  "drift_events", "preview_verdict", "external_status",
   "duration_min", "est_duration_min", "est_tokens", "act_duration_min", "act_tokens",
   "tokens_input", "tokens_output",
   "defects_early", "defects_late", "flaky", "tests_added", "diff_loc", "files_changed",

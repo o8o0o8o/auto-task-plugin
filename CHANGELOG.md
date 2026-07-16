@@ -15,6 +15,24 @@ Adds a **resume-run picker** so you can see and continue any auto-task run acros
 - **`skills/auto-task/SKILL.md`:** bare `/auto-task` (no args) is now **worktree-aware** — it consults the engine's `--resume-mode` and shows the picker when resumable runs exist beyond the current branch, resumes the **single current-branch run** directly (unchanged behavior) when that's the only one, and otherwise asks for a description. Fail-open to the original current-branch behavior if the engine can't be located.
 - Added `auto-task-resume` to `install.sh` (the tenth skill) and documented the picker in `README.md` ("Resuming runs").
 
+## [0.18.0]
+
+Adds **external actions** — first-class handling for tasks that need a change in an external system (CMS, feature flags, a live data migration, a third-party API config) beyond shipping code. Shipping the script is no longer treated as "done": auto-task now applies the external change and verifies it, and a task with an un-applied external change is explicitly **not `done`**.
+
+### Added
+
+- **New Phase 8 — External change application & verification** (`skills/auto-task/SKILL.md`). Runs last (after preview verification) whenever the run declared external actions. Applies the change per `external_actions_mode` — `ask` (default: ask once for permission + credentials, run, verify; fall back to a runbook if declined), `runbook` (never auto-run; emit a paste-ready runbook and wait), or `auto` (pre-authorized) — then re-verifies the external-action ACs + a smoke check. Any **irreversible** action always prompts, even in `auto`; unreachable credentials degrade to a runbook. Partial multi-action failures stop and surface with per-action rollback steps; resuming skips already-applied actions so an irreversible step never runs twice.
+- **New not-done state `awaiting-external`/`declared`** (`phase: "external"`). A task needing an external change never reaches `done` until the change is applied **and** its post-apply verification passes. Until then the PR body, run summary, `CONTEXT.md`, and TRACE all carry a prominent "⚠ TASK NOT DONE until external changes applied" banner; Phase 8 replaces it with an applied+verified confirmation on success.
+- **First-class declaration in Phase 1** — a new Acceptance-Criteria contract rule (rule 11) requires an external-action AC row (`Gate = external`) for any task that needs an external-system change. Detection + the not-done marking are always-on honesty (never gated by a setting); only live auto-execution is governed by `external_actions_mode`.
+- **Three opt-in settings keys** (`hooks/settings.sh`): `external_actions_mode` (`ask`, default), `external_actions_timeout_min` (30), `external_actions_poll_interval_sec` (60). Credentials are never stored in settings/state/trace/artifacts — provided at the prompt or via an env/secret-file reference, with secret-shaped tokens redacted from captured output.
+- **New `external` STATE object** (status/mode/actions/applied/verify/polls), analogous to `preview`/`bot_review`. Additive: absent object → Phase 8 is a no-op and the pipeline behaves exactly as v0.17.1.
+- **Telemetry:** `external_status` added to both the remote payload (`hooks/send-telemetry.sh`, `SCHEMA_VERSION` 2 → 3) and the local outcome row (`hooks/record-outcome.sh`), plus the reference ingest server (`server/schema.sql`, `server/ingest.mjs`, `server/README.md`) as a `[v3]` column. Covered by extended `tests/settings.test.sh` (external_actions_* defaults/override) and `tests/send-telemetry.test.sh` (schema v3 + `external_status` echoed/null).
+
+### Changed
+
+- **Anti-stall signature** (`hooks/prevent-mid-protocol-stall.sh`) now folds in `.external.polls`, so the Phase-8 `auto`-run settle-poll (waiting for an async external apply to propagate) reads as *progressing* (like `preview.polls`/`bot_review.polls`) rather than tripping the frozen-run backstop. (An `awaiting-external` human handoff yields on `user-approval` and does not poll.) Absent on any pre-v0.18 run → inert.
+- **Post-PR phase chain** extended to Phase 6 → 7 → 8; the Phase-5 terminal ladder, yield-point contract table, `phase` enum, and NON-YIELDING contract updated accordingly.
+
 ## [0.17.1]
 
 Documentation sync — corrected stale doc↔code cross-references (no behavior change to the pipeline). Landed via `/auto-task`.

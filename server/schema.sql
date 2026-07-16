@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS runs (
   requirements_count INTEGER,           -- [v2]
   drift_events      INTEGER,            -- [v2]
   preview_verdict   TEXT,               -- PASS|FAIL|INCONCLUSIVE|null [v2]
+  external_status   TEXT,               -- Phase-8 external-change status enum | null [v3]
 
   -- time & tokens (NULL when unmeasured — never 0)
   duration_min      INTEGER,
