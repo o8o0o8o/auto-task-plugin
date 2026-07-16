@@ -104,6 +104,9 @@ assert_ge "$SKILL" 1 "REQUIRED to call a visual change done"
 assert_ge "$SKILL" 1 "ALWAYS clean up after yourself"
 assert_ge "$SKILL" 1 "Temp-scaffold cleanup check"
 assert_ge "$SKILL" 1 "Genuinely impossible"
+# before/after proof is a first-class REQUIRED AC row, enforced by the self-check
+assert_ge "$SKILL" 1 "explicit acceptance-criterion row"
+assert_ge "$SKILL" 1 "before/after-capture-and-confirm row"
 
 # --- AC17/AC18 / R9: explicit per-project opt-in, off by default, gated ---
 assert_ge "$SKILL" 1 "Visual-assets consent check"

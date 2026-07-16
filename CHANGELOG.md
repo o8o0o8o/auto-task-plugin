@@ -2,6 +2,14 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.16.0]
+
+Makes the before/after visual proof a **first-class, required Acceptance Criterion** rather than an implicit verification step.
+
+### Changed
+
+- **Visual proof is now an explicit AC row, enforced by the completeness self-check** (`skills/auto-task/SKILL.md`, `tests/local-dev-verify.test.sh`). Building on rule 10 (v0.15.0), a UI/visual-scoped run's AC table MUST contain a dedicated row — *"before/after of the exact changed state captured, and the rendered result confirms the request/issue"*, `Gate = gate-a` — so capturing the screenshots and confirming the request is satisfied flows through Gate A like any other criterion (Phase-1 baseline = "before", Phase-3 verification shot = "after"). A new AC-table self-check bullet fails the table (blocks the Phase-1 human gate) if that row is missing on a visual run, so the proof can no longer be an unwritten side-effect. Prose-guard test updated.
+
 ## [0.15.0]
 
 Makes **before/after visual proof a Definition-of-Done requirement** for user-visible changes, and mandates cleanup of any temporary scaffolding used to capture it.
