@@ -99,6 +99,12 @@ assert_ge "$SKILL" 1 "unsigned"
 assert_ge "$SKILL" 1 "fall back to a note, NEVER a STOP"
 assert_ge "$SKILL" 1 "no secure_url"
 
+# --- Rule 10: before/after REQUIRED for done + temp-wiring + mandatory cleanup ---
+assert_ge "$SKILL" 1 "REQUIRED to call a visual change done"
+assert_ge "$SKILL" 1 "ALWAYS clean up after yourself"
+assert_ge "$SKILL" 1 "Temp-scaffold cleanup check"
+assert_ge "$SKILL" 1 "Genuinely impossible"
+
 # --- AC17/AC18 / R9: explicit per-project opt-in, off by default, gated ---
 assert_ge "$SKILL" 1 "Visual-assets consent check"
 assert_ge "$SKILL" 1 "visual_assets_enabled"

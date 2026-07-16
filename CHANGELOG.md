@@ -2,6 +2,14 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.15.0]
+
+Makes **before/after visual proof a Definition-of-Done requirement** for user-visible changes, and mandates cleanup of any temporary scaffolding used to capture it.
+
+### Changed
+
+- **Before/after is required for "done" on visual changes; recreating the state is the job, not a blocker; temp wiring must be cleaned up** (`skills/auto-task/SKILL.md`, `tests/local-dev-verify.test.sh`). New AC-contract **rule 10**: a user-visible change is not done without a real before/after pair of the exact changed state (local dev per rule 8, and/or preview per rule 9). "I'd have to change a prop/flag/seed data to see it" is never a reason to skip — the run may temporarily wire props, flip settings, seed data, or add a throwaway story/route/harness to render the real component, **but MUST revert every such temporary edit before Phase 5 staging** so the committed diff contains only the intended change (mechanically bounded by the single-commit rule; a new Phase-5 staging check rejects leftover scaffolding). Only after genuinely exhausting temp-wiring + a disposable harness + the preview may proof be unobtainable — that AC is INCONCLUSIVE, which blocks its gate and surfaces as incomplete rather than silently reporting the visual change "done." Prose-guard test updated to pin the new rule.
+
 ## [0.14.0]
 
 Ships a **bundled shared Cloudinary** so the opt-in visual-proof feature (before/after PR screenshots) works out of the box for everyone — no per-user Cloudinary setup required to try it.
