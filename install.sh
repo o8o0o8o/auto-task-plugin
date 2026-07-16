@@ -17,7 +17,7 @@ CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
 SKILLS_DIR="$CLAUDE_DIR/skills"
 AGENTS_DIR="$CLAUDE_DIR/agents"
 
-SKILLS=(auto-task auto-task-plan auto-task-implement auto-task-verify auto-task-code-review auto-task-commit auto-task-fix auto-task-stats)
+SKILLS=(auto-task auto-task-plan auto-task-implement auto-task-verify auto-task-code-review auto-task-commit auto-task-fix auto-task-stats auto-task-gc)
 AGENTS=(task-execution-verifier.md)
 
 MODE="link"
@@ -155,7 +155,8 @@ Paths below are absolute and point at this clone ($REPO_ROOT).
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "$REPO_ROOT/hooks/check-version.sh" }
+          { "type": "command", "command": "$REPO_ROOT/hooks/check-version.sh" },
+          { "type": "command", "command": "$REPO_ROOT/hooks/suggest-cleanup.sh" }
         ]
       }
     ]

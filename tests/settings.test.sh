@@ -222,6 +222,32 @@ expect "init --global created a file" "$( [ -f "$GFILE" ] && echo yes || echo no
 expect "init --global path is the global file" "$(basename "$(dirname "$GFILE")")/$(basename "$GFILE")" "auto-task/settings.json"
 expect "init --global seeded telemetry_enabled" "$(jq -r .telemetry_enabled "$GFILE")" "false"
 
+# --- worktree-retention keys (space control) --------------------------------
+expect "default worktree_cleanup_nudge"        "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get worktree_cleanup_nudge)" "true"
+expect "default worktree_cleanup_throttle_hours" "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get worktree_cleanup_throttle_hours)" "24"
+expect "default worktree_cleanup_prune_dirty"  "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get worktree_cleanup_prune_dirty)" "false"
+expect "default worktree_stale_days_default"   "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get worktree_stale_days_default)" "14"
+expect "default worktree_stale_days_feat"      "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get worktree_stale_days_feat)" "30"
+expect "default worktree_stale_days_refactor"  "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get worktree_stale_days_refactor)" "30"
+expect "default worktree_stale_days_fix"       "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get worktree_stale_days_fix)" "14"
+expect "default worktree_stale_days_chore"     "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get worktree_stale_days_chore)" "7"
+expect "default worktree_stale_days_deps"      "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get worktree_stale_days_deps)" "7"
+expect "default worktree_stale_days_docs"      "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get worktree_stale_days_docs)" "7"
+expect "default worktree_stale_days_cleanup"   "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get worktree_stale_days_cleanup)" "7"
+# surfaced in merged view + keys + init template
+WALL="$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" all)"
+expect "all: worktree_cleanup_nudge present"   "$(printf '%s' "$WALL" | jq -r 'has("worktree_cleanup_nudge")')" "true"
+expect "all: worktree_stale_days_feat present" "$(printf '%s' "$WALL" | jq -r 'has("worktree_stale_days_feat")')" "true"
+expect "keys lists >=11 worktree_ keys"        "$( [ "$(bash "$SH" keys | grep -c '^worktree_')" -ge 11 ] && echo ok || echo no )" "ok"
+HW="$T/home-wt"; WFILE="$(AUTO_TASK_HOME="$HW" bash "$SH" init)"
+expect "init seeds worktree_stale_days_feat"   "$(jq -r '.worktree_stale_days_feat' "$WFILE")" "30"
+# user override + present
+PW="$T/pw.json"; printf '{}' > "$PW"
+AUTO_TASK_SETTINGS_FILE="$PW" bash "$SH" set worktree_stale_days_feat 45 >/dev/null
+expect "override worktree_stale_days_feat->45" "$(AUTO_TASK_SETTINGS_FILE="$PW" bash "$SH" get worktree_stale_days_feat)" "45"
+expect "present worktree_stale_days_feat"      "$(AUTO_TASK_SETTINGS_FILE="$PW" bash "$SH" present worktree_stale_days_feat)" "true"
+expect "present unset worktree key -> false"   "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" present worktree_stale_days_feat)" "false"
+
 echo "--------------------------------------------------------"
 echo "settings.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

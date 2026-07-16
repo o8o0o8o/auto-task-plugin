@@ -9,6 +9,7 @@ End-to-end autonomous task workflow for Claude Code. Takes a task description fr
 - **Six namespaced sibling skills** — `auto-task-plan`, `auto-task-implement`, `auto-task-verify`, `auto-task-code-review`, `auto-task-commit`, `auto-task-fix`. Forked from the upstream skills and patched to participate in the read-before-review contract. The `auto-task-` prefix keeps them distinct from your existing `/plan`, `/verify`, etc.; under a marketplace install they are further namespaced (`auto-task:auto-task-plan`), and under the `install.sh` fallback they keep the bare `auto-task-plan` form.
 - **`task-execution-verifier` agent** — read-only verifier spawned at Gate A (completeness) and Gate B (adversarial). Fresh context per spawn.
 - **`auto-task-stats` skill** — standalone, read-only maintainer tool (NOT part of the pipeline). Reports local run-outcome telemetry: completion rate, where runs stall, per-tier fix/review effort, Gate B coverage. See "Run telemetry (opt-in)" below. Invoke as `/auto-task:auto-task-stats` (marketplace) or `/auto-task-stats` (install.sh fallback).
+- **`auto-task-gc` skill** — standalone disk/worktree cleanup tool (NOT part of the pipeline). Reports each auto-task worktree's size, age, and merge status, then safely reclaims the merged/stale ones on confirmation (branch refs preserved, matching `.auto-task/<branch>/` pruned). Retention is per branch type and fully defaulted/overridable. See "Worktree space control" below. Invoke as `/auto-task:auto-task-gc` (marketplace) or `/auto-task-gc` (install.sh fallback).
 - **Core hooks**, all wired automatically by the plugin install (`hooks/hooks.json`) —
   - `block-ai-attribution.sh` (PreToolUse on Bash): refuses commits and PR bodies containing `Co-Authored-By: Claude`, `🤖 Generated`, etc.
   - `enforce-gates.sh` (PreToolUse on Bash): blocks `git commit` during an auto-task run unless `gates.code_review.passed`, `gates.code_review.tool === "skill:auto-task-code-review"`, `gates.code_review.clean_pass_after_last_fix`, and Gate B's gate (or skip reason) are all satisfied. It also enforces **review staleness** — if `git diff <base>` no longer hashes to the recorded `gates.code_review.reviewed_diff_sha`, code changed after the review went clean and the commit is blocked until a re-review. It also carries the **checkout-drift block** — a `git commit` while the working tree sits on a branch other than an active in-place run's branch is blocked (previously a silent fail-open). Fails closed: with `jq` missing or `STATE.json` unparseable during an active run, it blocks rather than letting the commit through.
@@ -17,6 +18,7 @@ End-to-end autonomous task workflow for Claude Code. Takes a task description fr
   - `record-outcome.sh` (Stop event): **opt-in, never blocks.** When `.auto-task/outcomes.jsonl` exists and a run reaches `phase: done`, appends one derived JSON row (fields from STATE.json — no network, no new data). A base-keyed sentinel makes it write once per run. Silent no-op unless opted in. Read by `auto-task-stats`. See "Run telemetry (opt-in)".
   - `send-telemetry.sh` (Stop event): **opt-in, off by default, never blocks.** The **remote** counterpart to `record-outcome.sh` — when `telemetry_enabled`+`telemetry_endpoint` are set (see "Remote telemetry"), POSTs an anonymized quality/perf row to your HTTPS endpoint at `phase: done`. Bounded, fail-open, write-once per run. Silent no-op unless opted in.
   - `check-version.sh` (SessionStart): best-effort update notice. Once per 24h it compares the installed version against the published `plugin.json` on GitHub and, if you're behind, prints a one-line reminder to run `/plugin update auto-task@auto-task-plugin`. Fails open and silent when current, offline, or unparseable — this cached SessionStart notice never blocks or slows a session. **Per-run version check:** on top of that notice, `/auto-task` Phase 1 runs a fresh **per-run version check** (the same script via `--plain`, throttle bypassed) at the start of every NEW run and, if you're behind, asks once whether to auto-apply the update (via `hooks/apply-update.sh` — no manual command) or proceed on the current version. It is separately bounded (`--connect-timeout 2 -m 5`) and fully fail-open — it never blocks the run and never touches the SessionStart throttle stamp. Skipped on resume.
+  - `suggest-cleanup.sh` (SessionStart): best-effort, non-destructive worktree-cleanup nudge. Cheap and **local-only** (no `du`, no network) and throttled once per `worktree_cleanup_throttle_hours` **per clone**; when ≥1 auto-task worktree looks reclaimable (merged, or clean-and-stale past its per-type threshold) it prints a one-line suggestion to run `/auto-task-gc`. Never deletes, never blocks; fails open and silent, and is gated off by `worktree_cleanup_nudge: false`. See "Worktree space control".
 - **`inject-history-reminder.sh`** (`UserPromptSubmit`, opt-in): tells non-bundled tools that an `.auto-task/<branch>/` history folder exists for the current branch. **Wired but OFF by default** — it stays silent unless you enable it with `settings.sh set history_reminder_enabled true` (works identically for marketplace and `install.sh`). Even when enabled it emits nothing outside auto-task branches, so unrelated prompts pay no token cost.
 - **`settings-fragment.json`** — fallback only. The marketplace install wires the hooks for you; this snippet is for the offline/dev `install.sh` path (and the optional recommended-permissions block). The history reminder is wired in both install paths and gated by the `history_reminder_enabled` setting — no snippet edit is needed to enable it.
 
@@ -213,6 +215,24 @@ Recognized keys (v1):
 | `telemetry_endpoint` | `""` | HTTPS ingest URL the anonymized row is POSTed to. Must be `https://…`. |
 | `telemetry_ingest_token` | `""` | Optional bearer token sent as `Authorization: Bearer …` (e.g. the dashboard's `INGEST_TOKEN`). Empty → no auth header. |
 | `telemetry_satisfaction_prompt` | `true` | When telemetry is on, whether Phase 5 asks a satisfaction/correctness question at the push prompt. |
+| `worktree_cleanup_nudge` | `true` | Whether the SessionStart hook nudges you (non-destructively) when reclaimable auto-task worktrees accumulate. Set `false` to silence it. See "Worktree space control" below. |
+| `worktree_cleanup_throttle_hours` | `24` | Minimum hours between cleanup nudges, **per clone**. |
+| `worktree_cleanup_prune_dirty` | `false` | Whether `/auto-task-gc --prune --yes` may reclaim a **dirty** worktree — by WIP-committing its uncommitted work (tracked + untracked) to its branch first. Off by default: dirty worktrees are kept. |
+| `worktree_stale_days_default` | `14` | Days a **clean, unmerged** worktree must be untouched (by last-commit date) before it counts as reclaimable — fallback for any type without its own key. |
+| `worktree_stale_days_feat` / `_refactor` | `30` | Per-type stale threshold for `feat/` and `refactor/` branches (longer-lived work). |
+| `worktree_stale_days_fix` | `14` | Per-type stale threshold for `fix/` branches. |
+| `worktree_stale_days_chore` / `_deps` / `_docs` / `_cleanup` | `7` | Per-type stale threshold for short-lived `chore/`, `deps/`, `docs/`, `cleanup/` branches. |
+
+### Worktree space control (`/auto-task-gc`)
+
+Each `/auto-task` run creates a git worktree under `.claude/worktrees/<type>-<slug>` and **keeps it** so its branch and `.auto-task/<branch>/` history stay available. Because every worktree carries a full working tree (often a multi-GB `node_modules`), they accumulate — a busy repo can reach tens of GB.
+
+Two pieces keep that in check, and **nothing deletes without you asking**:
+
+- **A SessionStart nudge** (`hooks/suggest-cleanup.sh`, on by default) — cheap and local-only (no `du`, no network), throttled once per `worktree_cleanup_throttle_hours` **per clone**. When ≥1 worktree looks reclaimable — **merged**, or **clean and stale** past its per-type `worktree_stale_days_<type>` threshold — it prints a one-line suggestion to run `/auto-task-gc`. It never deletes and never blocks; silence it with `worktree_cleanup_nudge: false`.
+- **`/auto-task-gc`** (the `auto-task-gc` skill) — the on-demand tool. `/auto-task-gc` **reports** each worktree's size (`du`), age, type, and merge status (local ancestry **and** `gh` for squash-merged PRs) read-only. `/auto-task-gc --prune` previews the removal plan; `/auto-task-gc --prune --yes` performs it after you confirm. Removal **preserves the branch ref** (committed work is recoverable with `git worktree add <path> <branch>`) and prunes the matching `.auto-task/<branch>/`. Dirty worktrees are kept unless `worktree_cleanup_prune_dirty: true` (then WIP-committed first); the current and main worktrees are never removed; `--all` widens to every clean worktree regardless of merge/age. One caveat: removing a worktree deletes its directory, so **gitignored** files inside it go too (that's the point for `node_modules`, but a local `.env` or other ignored scratch is removed and is *not* captured by the WIP-commit) — the report lists exactly which worktrees will be removed, so run it first.
+
+Retention is **per branch type** so short-lived `chore`/`deps`/`docs`/`cleanup` work is reclaimed sooner than `feat`/`refactor`. Every threshold ships as a default and is overridable, e.g. `bash hooks/settings.sh set worktree_stale_days_feat 45`.
 
 ### Post-PR bot-comment review (opt-in)
 
@@ -338,9 +358,9 @@ Every run now measures itself and reports it in the final summary (and, if telem
 
 The measurement helpers are pure, deterministic, fail-open (they never break a run), and each has a focused test under `tests/`.
 
-## Pruning history
+## Pruning history & worktrees
 
-Per-branch folders under `.auto-task/` never auto-prune. After a branch is merged and deleted, you can `rm -rf .auto-task/<old-branch>/` to keep the tree compact. Nothing in the plugin depends on stale folders being present.
+Per-branch folders under `.auto-task/` never auto-prune during a run. Reclaim them (and the far larger worktree checkouts) with **`/auto-task-gc`**, which removes reclaimable worktrees and prunes their matching `.auto-task/<branch>/` in one pass — see "Worktree space control" above. For a `.auto-task/<branch>/` folder that has no worktree, `rm -rf .auto-task/<old-branch>/` by hand. Nothing in the plugin depends on stale folders being present.
 
 ## License
 
