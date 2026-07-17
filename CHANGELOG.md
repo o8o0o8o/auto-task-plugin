@@ -2,6 +2,15 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.21.0]
+
+Adds a **verifier regression eval harness** (`eval/`) — a maintainer tool that checks whether the `task-execution-verifier` (Gate A completeness) can still tell a genuinely-correct patch from a plausible-but-wrong one, under attention load.
+
+### Added
+
+- **`eval/verifier-eval.js` + `eval/README.md`** — a Claude Code Workflow script (run via the Workflow tool, not CI) that spawns the real model over six labelled fixtures, each pairing a genuinely-correct patch with a plausible-but-wrong one across distinct bug classes (wrong-field access, dead-code-after-return, off-by-a-page index, computed-but-unused value, weakened gating test, narration-only comment). The target Acceptance Criterion is buried at #7 in a 10-AC plan inside a large distractor diff to create attention load. It reports false-positive (wrong patch accepted) / false-negative (correct patch rejected) rates and a PASS/REGRESSION verdict. Dev-only — not installed to users, not part of the `/auto-task` pipeline. First run on v0.20.0's de-anchored verifier: PASS (0/18 false positives, 0/18 false negatives).
+- **`tests/eval-harness-sync.test.sh`** — a hermetic (grep-only) drift guard asserting the de-anchoring "correct-answer expectation (BLIND …)" marker appears in both the embedded eval prompt and `agents/task-execution-verifier.md`, so the eval's copy of the verifier contract can't silently diverge on that step.
+
 ## [0.20.0]
 
 Two verification/telemetry improvements grounded in a research pass on autonomous-agent reliability: the Gate A/B verifier now commits to a correct-answer expectation *before* it reads the diff (de-anchoring), and run telemetry now tracks **merge acceptance** — whether a completed run's PR actually merged, the real success signal that raw completion rate misses.
