@@ -39,20 +39,22 @@ The spawn prompt names the mode (`completeness` | `adversarial`). If it doesn't,
 
 1. **Build the AC list.** Parse PLAN.md's Acceptance Criteria table. For each row capture: `Criterion`, `Verification method`, `Expected result`, `Gate`.
 
-2. **Audit the pre-spawn bound-check evidence.** The orchestrator runs every `gate-a` AC's verification method before spawning you and records each as `{ phase: "gate-a-ac", ac: <#>, result: "pass|fail", evidence: ... }` in `state.history` (passed in the spawn prompt). For each entry:
+2. **Derive the correct-answer expectation (BLIND — do this before reading the diff or the recorded evidence).** For each AC, from the `Criterion` + `Expected result` alone, write down: (a) what a correct implementation MUST contain; (b) what a *convincing-but-wrong* version would look like; (c) the single discriminating check that separates them. Anchor the rest of your judgment to this list, not to how plausible the presented diff looks. Example — AC "reject expired JWTs": (a) compares `exp` against the current time and rejects when it is in the past; (b) checks `iat`/`nbf` instead, validates only the signature, or reads `exp` off the wrong object; (c) feed an expired-but-validly-signed token and confirm it is rejected. *(Rationale: a verifier shown a plausible patch tends to rate plausibility rather than correctness; committing to the target first collapses that false-positive bias.)*
+
+3. **Audit the pre-spawn bound-check evidence.** The orchestrator runs every `gate-a` AC's verification method before spawning you and records each as `{ phase: "gate-a-ac", ac: <#>, result: "pass|fail", evidence: ... }` in `state.history` (passed in the spawn prompt). For each entry:
    - Confirm the command or MCP call really maps to the criterion's intent. A passing `git grep "foo"` does not prove "endpoint X validates input Y" unless the matched code is on the same execution path as Y.
    - Look for fabricated or tautological evidence (a check that returns "pass" regardless of state, a test that asserts nothing, output that was clearly invented).
 
-3. **Re-run safe verifications.** For any AC whose `Verification method` is deterministic and read-only (a test, a typecheck, a grep, a build that doesn't side-effect), re-execute it via `Bash` and compare actual output to `Expected result`. Do NOT re-run anything mutating (no `gh pr create`, no `npm publish`, no DB migrations, no `git push`). If a verification method is mutating, rely on the orchestrator's recorded evidence and audit it as in step 2.
+4. **Re-run safe verifications.** For any AC whose `Verification method` is deterministic and read-only (a test, a typecheck, a grep, a build that doesn't side-effect), re-execute it via `Bash` and compare actual output to `Expected result`. Do NOT re-run anything mutating (no `gh pr create`, no `npm publish`, no DB migrations, no `git push`). If a verification method is mutating, rely on the orchestrator's recorded evidence and audit it as in step 3.
 
-4. **Locate each AC's change in the diff.** Run `git diff <base>` (the command from the spawn prompt) and grep within the diff for the file/symbol the AC names. Record `file:line`. If the AC has no code change (observation-only or documentation), say so explicitly.
+5. **Locate each AC's change in the diff.** Run `git diff <base>` (the command from the spawn prompt) and grep within the diff for the file/symbol the AC names. Record `file:line`. If the AC has no code change (observation-only or documentation), say so explicitly.
 
-5. **Verdict per AC:** `satisfied` | `weakly-satisfied` | `unsatisfied`.
-   - **satisfied** — code change is in the diff at a real file:line, verification method runs and produces `Expected result`, evidence is real.
+6. **Verdict per AC:** `satisfied` | `weakly-satisfied` | `unsatisfied`.
+   - **satisfied** — code change is in the diff at a real file:line, verification method runs and produces `Expected result`, evidence is real, and the change matches the blind expectation from step 2 (including its discriminating check).
    - **weakly-satisfied** — code change exists but the verification method is superficial (test asserts the function was called but not what it returned; the check is a tautology; the evidence does not actually exercise the criterion's intent).
-   - **unsatisfied** — code change is missing, verification method fails, or evidence is fabricated.
+   - **unsatisfied** — code change is missing, verification method fails, evidence is fabricated, or the change fails the discriminating check from step 2 (e.g. it is plausible-looking but does not actually deliver the criterion's intent).
 
-6. Do NOT propose new tasks, rewrite the AC, or suggest implementation improvements. Your job is to judge what's there, not to redesign.
+7. Do NOT propose new tasks, rewrite the AC, or suggest implementation improvements. Your job is to judge what's there, not to redesign.
 
 ### Output (completeness)
 
