@@ -111,6 +111,7 @@ row="$(jq -c '
       at: ($t1 // ""),
       branch: (.branch // ""),
       base: (.base // ""),
+      pr_url: (.pr_url // null),
       task: ((.description // "") | .[0:140]),
       terminal_state: "done",
       tier: (.effort.tier // ""),

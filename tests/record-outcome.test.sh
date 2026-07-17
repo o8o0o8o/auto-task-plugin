@@ -48,7 +48,7 @@ T0="$(days_ago 1)"; T0="${T0%T*}T10:00:00Z"     # a fixed start
 # done-state fixture: tier escalated light->standard, fix=3 review=2, gate_b passed,
 # a gate-b findings history entry, 2 followups, history spanning 27 minutes.
 cat > "$SD/STATE.json" <<EOF
-{"phase":"done","approved":true,"branch":"feat/widget","base":"BASE1",
+{"phase":"done","approved":true,"branch":"feat/widget","base":"BASE1","pr_url":"https://github.com/acme/widgets/pull/42",
  "description":"add a run-outcome telemetry feature to the plugin",
  "effort":{"tier":"standard","history":[{"from":"light","to":"standard","reason":"x","at":"2026-01-01T00:00:00Z"}]},
  "iteration":{"review":2,"fix":3},
@@ -75,6 +75,7 @@ ROW="$(head -1 "$T/.auto-task/outcomes.jsonl")"
 expect "row.terminal_state"    "$(printf '%s' "$ROW" | jq -r '.terminal_state')"   "done"
 expect "row.branch"            "$(printf '%s' "$ROW" | jq -r '.branch')"           "feat/widget"
 expect "row.base"              "$(printf '%s' "$ROW" | jq -r '.base')"             "BASE1"
+expect "row.pr_url"            "$(printf '%s' "$ROW" | jq -r '.pr_url')"           "https://github.com/acme/widgets/pull/42"
 expect "row.tier"              "$(printf '%s' "$ROW" | jq -r '.tier')"             "standard"
 expect "row.tier_initial"      "$(printf '%s' "$ROW" | jq -r '.tier_initial')"     "light"
 expect "row.escalations"       "$(printf '%s' "$ROW" | jq -r '.escalations')"      "1"
@@ -120,6 +121,8 @@ cat > "$SDE/STATE.json" <<'EOF'
 EOF
 expect "empty-base: first run records"               "$(rec "$TE"; rows "$TE")"     "$(printf '0\n1')"
 expect "empty-base: rerun does NOT duplicate"        "$(rec "$TE"; rec "$TE"; rows "$TE")" "$(printf '0\n0\n1')"
+# forward-compat: a legacy STATE without pr_url yields pr_url null (never errors).
+expect "empty-base row.pr_url defaults null"         "$(head -1 "$TE/.auto-task/outcomes.jsonl" | jq -r '.pr_url')" "null"
 rm -rf "$TE"
 
 echo "================ Reader: auto-task-stats.sh ================"
@@ -132,9 +135,9 @@ mkdir -p "$T2/.auto-task"
 # forward-compat regression guard: the reader must tolerate old-schema rows
 # (it reads every field via `// default`) and ignore the removed one.
 cat > "$T2/.auto-task/outcomes.jsonl" <<'EOF'
-{"at":"2026-02-01T10:00:00Z","branch":"feat/a","base":"AAA","terminal_state":"done","tier":"light","tier_initial":"light","escalations":0,"fix_iterations":0,"review_iterations":1,"gate_b":"tier=light","gate_b_bounced":0,"followups":0,"duration_min":12}
-{"at":"2026-02-02T10:00:00Z","branch":"feat/b","base":"BBB","terminal_state":"done","tier":"standard","tier_initial":"light","escalations":1,"fix_iterations":2,"review_iterations":2,"gate_b":"passed","gate_b_bounced":1,"followups":3,"duration_min":40}
-{"at":"2026-02-03T10:00:00Z","branch":"feat/c","base":"CCC","terminal_state":"done","tier":"heavy","tier_initial":"heavy","escalations":0,"fix_iterations":4,"review_iterations":3,"gate_b":"passed","gate_b_bounced":0,"followups":1,"duration_min":95}
+{"at":"2026-02-01T10:00:00Z","branch":"feat/a","base":"AAA","terminal_state":"done","tier":"light","tier_initial":"light","escalations":0,"fix_iterations":0,"review_iterations":1,"gate_b":"tier=light","gate_b_bounced":0,"followups":0,"duration_min":12,"pr_url":"https://github.com/x/y/pull/5"}
+{"at":"2026-02-02T10:00:00Z","branch":"feat/b","base":"BBB","terminal_state":"done","tier":"standard","tier_initial":"light","escalations":1,"fix_iterations":2,"review_iterations":2,"gate_b":"passed","gate_b_bounced":1,"followups":3,"duration_min":40,"pr_url":"https://github.com/x/y/pull/7"}
+{"at":"2026-02-03T10:00:00Z","branch":"feat/c","base":"CCC","terminal_state":"done","tier":"heavy","tier_initial":"heavy","escalations":0,"fix_iterations":4,"review_iterations":3,"gate_b":"passed","gate_b_bounced":0,"followups":1,"duration_min":95,"pr_url":"https://github.com/x/y/pull/8"}
 EOF
 # live in-flight (recent history) and stalled (old history)
 mkdir -p "$T2/.auto-task/feat/inflight" "$T2/.auto-task/feat/stalled"
@@ -145,9 +148,13 @@ cat > "$T2/.auto-task/feat/stalled/STATE.json" <<EOF
 {"phase":"review","approved":true,"branch":"feat/stalled","base":"STL","history":[{"phase":"review","result":"no-progress","summary":"stuck on flaky test","at":"$(days_ago 30)"}]}
 EOF
 
-OUT="$(CLAUDE_PROJECT_DIR="$T2" bash "$STATS" 2>/dev/null)"
+# AUTO_TASK_PR_RESOLVE=0 keeps the reader hermetic: the local PR-opened count is
+# still derived from rows, but no gh/network lookup is attempted.
+OUT="$(AUTO_TASK_PR_RESOLVE=0 CLAUDE_PROJECT_DIR="$T2" bash "$STATS" 2>/dev/null)"
 # (h) all promised sections present and correct.
 expect_has "reader: exit-0 output non-empty"        "$OUT" "auto-task run stats"
+expect_has "reader: merge-acceptance section"       "$OUT" "Merge acceptance"
+expect_has "reader: PR-opened count (local)"        "$OUT" "3 of 3 completed runs opened a PR"
 expect_has "reader: 3 done"                          "$OUT" "3 done"
 expect_has "reader: 1 stalled"                       "$OUT" "1 stalled"
 expect_has "reader: 1 in-flight"                     "$OUT" "1 in-flight"
@@ -164,12 +171,30 @@ mkdir -p "$T2/.auto-task/feat/b"
 cat > "$T2/.auto-task/feat/b/STATE.json" <<'EOF'
 {"phase":"done","approved":true,"branch":"feat/b","base":"BBB","effort":{"tier":"standard","history":[]},"iteration":{"fix":0,"review":0},"history":[{"phase":"handover","result":"done","at":"2026-02-02T10:00:00Z"}],"gates":{"gate_b":{"passed":true}},"followups":[]}
 EOF
-OUT2="$(CLAUDE_PROJECT_DIR="$T2" bash "$STATS" 2>/dev/null)"
+OUT2="$(AUTO_TASK_PR_RESOLVE=0 CLAUDE_PROJECT_DIR="$T2" bash "$STATS" 2>/dev/null)"
 expect_has "dedup match: still 3 done (ledger wins)" "$OUT2" "3 done"
 # same branch, DIFFERENT base → counts separately (branch-reuse not collapsed).
 tmpjson="$(jq '.base="BBB2"' "$T2/.auto-task/feat/b/STATE.json")"; printf '%s' "$tmpjson" > "$T2/.auto-task/feat/b/STATE.json"
-OUT3="$(CLAUDE_PROJECT_DIR="$T2" bash "$STATS" 2>/dev/null)"
+OUT3="$(AUTO_TASK_PR_RESOLVE=0 CLAUDE_PROJECT_DIR="$T2" bash "$STATS" 2>/dev/null)"
 expect_has "dedup base-change: now 4 done (rerun counts)" "$OUT3" "4 done"
+
+# (l) merge-state resolution via a stubbed gh: pull/7 merged, pull/8 closed,
+# pull/5 open → of 2 decided PRs, 1 merged = 50% acceptance. Hermetic (no network).
+STUB="$T2/bin"; mkdir -p "$STUB"
+cat > "$STUB/gh" <<'SH'
+#!/usr/bin/env bash
+[ "$1" = "auth" ] && exit 0            # `gh auth status` → authenticated
+url="$3"                               # `gh pr view <url> --json state --jq .state`
+case "$url" in
+  *pull/7) echo MERGED ;;
+  *pull/8) echo CLOSED ;;
+  *)       echo OPEN ;;
+esac
+SH
+chmod +x "$STUB/gh"
+OUTPR="$(AUTO_TASK_PR_RESOLVE=1 PATH="$STUB:$PATH" CLAUDE_PROJECT_DIR="$T2" bash "$STATS" 2>/dev/null)"
+expect_has "reader: gh-resolved merged count"        "$OUTPR" "Merged 1"
+expect_has "reader: merge-acceptance rate 50%"       "$OUTPR" "Merge-acceptance rate  50%"
 
 # (j) empty-ledger guard: touched but empty, no live runs → friendly message, no crash.
 T3="$(mktemp -d)"
@@ -195,6 +220,11 @@ for k in est_duration_min est_tokens act_duration_min act_tokens \
     FAIL=$((FAIL+1)); printf '  FAIL  %-52s rec=%s stats=%s\n' "lockstep: $k" "$ir" "$is"
   fi
 done
+# pr_url is an identifying field (not a metric) but must be derived by BOTH, or a
+# live-done run's PR would be invisible to merge-acceptance until it is archived.
+ir="$(grep -c 'pr_url:' "$REC_SH" 2>/dev/null || echo 0)"
+is="$(grep -c 'pr_url:' "$STATS_SH" 2>/dev/null || echo 0)"
+expect "lockstep: pr_url derived in both" "$([ "$ir" -ge 1 ] && [ "$is" -ge 1 ] && echo yes || echo no)" "yes"
 
 echo ""
 echo "================ SUMMARY: $PASS passed, $FAIL failed ================"

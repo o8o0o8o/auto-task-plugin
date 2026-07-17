@@ -66,6 +66,7 @@ DERIVE='
       at: ($t1 // ""),
       branch: (.branch // ""),
       base: (.base // ""),
+      pr_url: (.pr_url // null),
       terminal_state: "done",
       tier: (.effort.tier // ""),
       tier_initial: (((.effort.history // []) | first | .from) // (.effort.tier // "")),
@@ -203,6 +204,49 @@ echo "auto-task run stats  (stale threshold: ${STALE_DAYS}d)"
 echo "===================================================="
 printf '%d runs on record — %d done, %d stalled, %d in-flight\n' "$total" "$done_count" "$stalled" "$in_flight"
 printf 'Completion rate    %d%%  (%d/%d terminal; in-flight excluded)\n' "$comp_pct" "$done_count" "$terminal"
+echo ""
+
+# --- Merge acceptance: the REAL success signal ------------------------------
+# A completed run only OPENS a PR; whether it MERGED is decided later, off-machine.
+# The PR-opened count is derived locally from the done rows; merge state is
+# resolved best-effort via `gh` HERE in the reader (never in the no-network
+# record-outcome hook). AUTO_TASK_PR_RESOLVE=0 disables the lookup (tests, offline);
+# it also short-circuits when gh is absent/unauthenticated, so the local
+# "opened a PR" count always prints even when the merge rate cannot.
+pr_urls="$(jq -r '.pr_url // empty' "$rows" 2>/dev/null | sed '/^null$/d;/^$/d')"
+pr_total=0; [ -n "$pr_urls" ] && pr_total="$(printf '%s\n' "$pr_urls" | wc -l | tr -d ' ')"
+resolve="${AUTO_TASK_PR_RESOLVE:-1}"
+echo "Merge acceptance"
+if [ "$pr_total" -eq 0 ]; then
+  echo "  No completed run has opened a PR yet."
+elif [ "$resolve" = "1" ] && command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  merged=0; closed=0; opened=0; unresolved=0
+  while IFS= read -r url; do
+    [ -n "$url" ] || continue
+    st="$(gh pr view "$url" --json state --jq '.state' 2>/dev/null || echo "")"
+    case "$st" in
+      MERGED) merged=$((merged+1)) ;;
+      CLOSED) closed=$((closed+1)) ;;
+      OPEN)   opened=$((opened+1)) ;;
+      *)      unresolved=$((unresolved+1)) ;;
+    esac
+  done <<< "$pr_urls"
+  decided=$((merged + closed))
+  printf '  %d of %d completed runs opened a PR\n' "$pr_total" "$done_count"
+  printf '  Merged %d · closed-unmerged %d · still open %d · unresolved %d\n' "$merged" "$closed" "$opened" "$unresolved"
+  if [ "$decided" -gt 0 ]; then
+    printf '  Merge-acceptance rate  %d%%  (%d/%d decided PRs merged)\n' "$(( merged * 100 / decided ))" "$merged" "$decided"
+  else
+    printf '  Merge-acceptance rate  n/a  (no opened PR has merged or closed yet)\n'
+  fi
+else
+  printf '  %d of %d completed runs opened a PR\n' "$pr_total" "$done_count"
+  if [ "$resolve" = "1" ]; then
+    echo "  (merge state unresolved — gh CLI unavailable or unauthenticated; run from an authenticated gh to populate the acceptance rate)"
+  else
+    echo "  (merge-state resolution disabled via AUTO_TASK_PR_RESOLVE=0)"
+  fi
+fi
 echo ""
 
 echo "Where stalled runs died"
