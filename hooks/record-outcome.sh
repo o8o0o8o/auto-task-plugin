@@ -135,7 +135,12 @@ row="$(jq -c '
       first_pass_ac: (.quality.planning.first_pass_ac // null),
       checks_run: ((.checks // []) | length),
       checks_failed: ((.checks // []) | map(select(.result=="fail")) | length),
-      external_status: (.external.status // null)
+      external_status: (.external.status // null),
+      autonomy: (.settings.resolved.autonomy // null),
+      landing_model: (.settings.resolved.landing_model // null),
+      merge_gate_required: (.gates.merge.required // false),
+      merge_gate_acked: (.gates.merge.acked // false),
+      test_integrity_fail: ((.checks // []) | map(select((.name // "")=="test-integrity" and (.result // "")=="fail")) | length)
     }
 ' "$state" 2>/dev/null || true)"
 

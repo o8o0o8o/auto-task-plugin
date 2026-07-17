@@ -9,7 +9,7 @@
       "name": "auto-task",
       "source": "./",
       "description": "End-to-end autonomous task workflow: define -> execute -> verify -> review -> handover, with one human gate at plan approval.",
-      "version": "0.21.0",
+      "version": "0.22.0",
       "author": {
         "name": "Sergey Labut"
       },

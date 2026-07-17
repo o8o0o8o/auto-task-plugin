@@ -49,6 +49,14 @@
 
 set -uo pipefail
 
+# --- Settings schema version -------------------------------------------------
+# Bumped whenever the settings model changes in a way that warrants re-running the
+# one-time setup (new policy keys, changed telemetry payload). A settings file
+# stamped below this value (or with no stamp) is treated as needing a reset +
+# re-setup by `schema-status` (skill-driven, new-runs-only). Kept out of band from
+# the plugin version so a docs/patch release need not force a settings reset.
+SETTINGS_SCHEMA_VERSION="${AUTO_TASK_SETTINGS_SCHEMA_VERSION:-2}"
+
 # --- Central telemetry collection (BUNDLED defaults) -------------------------
 # These ship WITH the plugin so a user who opts in (telemetry_enabled=true) sends
 # anonymized rows to the project's central collector with NO endpoint/token setup.
@@ -76,6 +84,13 @@ AUTO_TASK_CLOUDINARY_DEFAULT_PRESET="${AUTO_TASK_CLOUDINARY_DEFAULT_PRESET:-ml_d
 # Keep this list and the `defaults_json` object below in lockstep.
 default_for() {
   case "${1:-}" in
+    settings_schema_version)      printf '0' ;;
+    autonomy)                     printf 'supervised' ;;
+    landing_model)                printf 'pr' ;;
+    unattended_external)          printf 'false' ;;
+    risk_gate_threshold)          printf '6' ;;
+    budget_blowout_factor)        printf '3' ;;
+    test_integrity_guard)         printf 'true' ;;
     has_preview_deployment)       printf 'false' ;;
     preview_autodetect)           printf 'true' ;;
     preview_url)                  printf '' ;;
@@ -122,7 +137,15 @@ defaults_json() {
     --arg tok "$AUTO_TASK_TELEMETRY_DEFAULT_TOKEN" \
     --arg cloud "$AUTO_TASK_CLOUDINARY_DEFAULT_CLOUD" \
     --arg preset "$AUTO_TASK_CLOUDINARY_DEFAULT_PRESET" \
+    --argjson schemaver "$SETTINGS_SCHEMA_VERSION" \
     '{
+    settings_schema_version: $schemaver,
+    autonomy: "supervised",
+    landing_model: "pr",
+    unattended_external: false,
+    risk_gate_threshold: 6,
+    budget_blowout_factor: 3,
+    test_integrity_guard: true,
     has_preview_deployment: false,
     preview_autodetect: true,
     preview_url: "",
@@ -160,7 +183,7 @@ defaults_json() {
   }'
 }
 
-known_keys="has_preview_deployment preview_autodetect preview_url preview_wait_mode preview_timeout_min preview_poll_interval_sec preview_bypass_header preview_post_verdict_comment bot_review_autofix bot_review_timeout_min bot_review_poll_interval_sec bot_review_bots external_actions_mode external_actions_timeout_min external_actions_poll_interval_sec visual_assets_enabled cloudinary_cloud_name cloudinary_upload_preset telemetry_enabled telemetry_endpoint telemetry_ingest_token telemetry_satisfaction_prompt history_reminder_enabled worktree_cleanup_nudge worktree_cleanup_throttle_hours worktree_cleanup_prune_dirty worktree_stale_days_default worktree_stale_days_feat worktree_stale_days_refactor worktree_stale_days_fix worktree_stale_days_chore worktree_stale_days_deps worktree_stale_days_docs worktree_stale_days_cleanup"
+known_keys="settings_schema_version autonomy landing_model unattended_external risk_gate_threshold budget_blowout_factor test_integrity_guard has_preview_deployment preview_autodetect preview_url preview_wait_mode preview_timeout_min preview_poll_interval_sec preview_bypass_header preview_post_verdict_comment bot_review_autofix bot_review_timeout_min bot_review_poll_interval_sec bot_review_bots external_actions_mode external_actions_timeout_min external_actions_poll_interval_sec visual_assets_enabled cloudinary_cloud_name cloudinary_upload_preset telemetry_enabled telemetry_endpoint telemetry_ingest_token telemetry_satisfaction_prompt history_reminder_enabled worktree_cleanup_nudge worktree_cleanup_throttle_hours worktree_cleanup_prune_dirty worktree_stale_days_default worktree_stale_days_feat worktree_stale_days_refactor worktree_stale_days_fix worktree_stale_days_chore worktree_stale_days_deps worktree_stale_days_docs worktree_stale_days_cleanup"
 
 # --- Path resolution ---------------------------------------------------------
 hash_str() {
@@ -286,18 +309,72 @@ cmd_keys() { printf '%s\n' "$known_keys" | tr ' ' '\n'; }
 # This is how the orchestrator distinguishes "user has decided" from "never asked"
 # for the once-per-repo telemetry consent prompt — `get` can't, since it always
 # returns the default.
+#   present [--scope project|global] <key>
+# Default (no --scope) is either-scope, unchanged. `--scope project` checks ONLY
+# the project file, `--scope global` ONLY the global file. The project-only form is
+# load-bearing for post-reset telemetry re-consent: reset clears only the project
+# file, so an either-scope check would still report `true` from a lingering GLOBAL
+# opt-in and skip the re-ask — project-scope presence is what lets the setup re-ask
+# at project scope while surfacing (not silently inheriting) the global value.
 cmd_present() {
-  local key="${1:-}"
+  local scope="either" key=""
+  if [ "${1:-}" = "--scope" ]; then scope="${2:-either}"; shift 2 || true; fi
+  key="${1:-}"
   if [ -z "$key" ] || ! command -v jq >/dev/null 2>&1; then printf 'false\n'; return 0; fi
-  local g p
+  local g p in_p in_g
   g="$(read_obj "$(resolve_global_file)")"
   p="$(read_obj "$(resolve_file)")"
-  if printf '%s' "$p" | jq -e --arg k "$key" 'has($k)' >/dev/null 2>&1 \
-     || printf '%s' "$g" | jq -e --arg k "$key" 'has($k)' >/dev/null 2>&1; then
-    printf 'true\n'
-  else
-    printf 'false\n'
+  in_p=false; in_g=false
+  printf '%s' "$p" | jq -e --arg k "$key" 'has($k)' >/dev/null 2>&1 && in_p=true
+  printf '%s' "$g" | jq -e --arg k "$key" 'has($k)' >/dev/null 2>&1 && in_g=true
+  case "$scope" in
+    project) [ "$in_p" = true ] && printf 'true\n' || printf 'false\n' ;;
+    global)  [ "$in_g" = true ] && printf 'true\n' || printf 'false\n' ;;
+    *)       { [ "$in_p" = true ] || [ "$in_g" = true ]; } && printf 'true\n' || printf 'false\n' ;;
+  esac
+}
+
+# `schema-status` — is the PROJECT settings file current with SETTINGS_SCHEMA_VERSION?
+# Prints one of: unconfigured (no project file, or no stamp) | stale (stamp <
+# current) | current (stamp >= current). Reads the project file's raw stamp
+# DIRECTLY (not the merged view, whose default would always mask an unstamped file
+# as current). Drives the skill's new-run-only reset + one-time re-setup. Fail-open:
+# no jq -> "unconfigured" (safe: triggers a setup pass rather than skipping).
+cmd_schema_status() {
+  if ! command -v jq >/dev/null 2>&1; then printf 'unconfigured\n'; return 0; fi
+  local p stamp
+  p="$(read_obj "$(resolve_file)")"          # {} when the project file is absent/invalid
+  if [ "$p" = "{}" ]; then printf 'unconfigured\n'; return 0; fi
+  stamp="$(printf '%s' "$p" | jq -r 'if has("settings_schema_version") then (.settings_schema_version|tostring) else "" end' 2>/dev/null || echo "")"
+  if [ -z "$stamp" ] || ! printf '%s' "$stamp" | grep -qE '^[0-9]+$'; then printf 'unconfigured\n'; return 0; fi
+  if [ "$stamp" -lt "$SETTINGS_SCHEMA_VERSION" ]; then printf 'stale\n'; else printf 'current\n'; fi
+}
+
+# `reset [--backup]` — clear the PROJECT settings file so the one-time setup re-runs.
+# NEVER touches the GLOBAL file (cross-project settings like a global telemetry
+# opt-in must survive an update). With --backup (recommended, the skill always
+# passes it) the existing project file is copied to `<file>.pre-<oldstamp>` first,
+# so a user can restore prior values by copying the backup back. New-run-only is
+# enforced by the CALLER (the skill runs reset only when starting a new run, never
+# on resume). Fail-open: any error leaves the file untouched and exits 0.
+cmd_reset() {
+  local do_backup=false
+  [ "${1:-}" = "--backup" ] && do_backup=true
+  local file
+  file="$(resolve_file)"
+  if [ ! -f "$file" ]; then printf 'reset: no project settings file (nothing to reset)\n'; return 0; fi
+  if [ "$do_backup" = true ]; then
+    local stamp bak
+    stamp="$(read_obj "$file" | jq -r 'if has("settings_schema_version") then (.settings_schema_version|tostring) else "unknown" end' 2>/dev/null || echo unknown)"
+    [ -n "$stamp" ] || stamp=unknown
+    bak="${file}.pre-${stamp}"
+    cp "$file" "$bak" 2>/dev/null && printf 'reset: backed up to %s\n' "$bak" || printf 'reset: backup failed (continuing)\n' >&2
   fi
+  # Clear to an empty object so schema-status reports "unconfigured" and the setup
+  # re-asks every policy question. rm would also work, but an empty {} keeps the
+  # path present and writable for the immediately-following `set` calls.
+  printf '{}\n' > "$file" 2>/dev/null || { echo "reset: write failed" >&2; exit 0; }
+  printf '%s\n' "$file"
 }
 
 # `set <key> <value> [--global]` — persist a key into the project (default) or
@@ -392,10 +469,12 @@ case "$sub" in
   path) cmd_path ;;
   keys) cmd_keys ;;
   get)  cmd_get "${1:-}" ;;
-  present) cmd_present "${1:-}" ;;
+  present) cmd_present "$@" ;;
   set)  cmd_set "$@" ;;
   all)  cmd_all ;;
   init) cmd_init "${1:-}" ;;
-  *)    echo "settings.sh: unknown subcommand '$sub' (use: path|get|present|set|all|init|keys)" >&2 ;;
+  schema-status) cmd_schema_status ;;
+  reset) cmd_reset "${1:-}" ;;
+  *)    echo "settings.sh: unknown subcommand '$sub' (use: path|get|present|set|all|init|keys|schema-status|reset)" >&2 ;;
 esac
 exit 0

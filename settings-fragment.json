@@ -8,7 +8,8 @@
         "hooks": [
           { "type": "command", "command": "/ABSOLUTE/PATH/TO/auto-task-plugin/hooks/block-ai-attribution.sh" },
           { "type": "command", "command": "/ABSOLUTE/PATH/TO/auto-task-plugin/hooks/enforce-gates.sh" },
-          { "type": "command", "command": "/ABSOLUTE/PATH/TO/auto-task-plugin/hooks/warn-checkout-drift.sh" }
+          { "type": "command", "command": "/ABSOLUTE/PATH/TO/auto-task-plugin/hooks/warn-checkout-drift.sh" },
+          { "type": "command", "command": "/ABSOLUTE/PATH/TO/auto-task-plugin/hooks/guard-dangerous-ops.sh" }
         ]
       }
     ],

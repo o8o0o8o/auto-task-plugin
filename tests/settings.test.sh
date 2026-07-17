@@ -257,6 +257,47 @@ expect "known: external_actions_mode listed"      "$( bash "$SH" keys | grep -qx
 printf '{"external_actions_mode":"runbook"}' > "$T/ext.json"
 expect "override external_actions_mode->runbook"  "$(AUTO_TASK_SETTINGS_FILE="$T/ext.json" bash "$SH" get external_actions_mode)" "runbook"
 
+# --- v0.22 autonomy keys: safe defaults --------------------------------------
+N="$T/none22.json"
+expect "default autonomy=supervised"      "$(AUTO_TASK_SETTINGS_FILE="$N" bash "$SH" get autonomy)"              "supervised"
+expect "default landing_model=pr"         "$(AUTO_TASK_SETTINGS_FILE="$N" bash "$SH" get landing_model)"         "pr"
+expect "default unattended_external=false" "$(AUTO_TASK_SETTINGS_FILE="$N" bash "$SH" get unattended_external)"  "false"
+expect "default risk_gate_threshold=6"    "$(AUTO_TASK_SETTINGS_FILE="$N" bash "$SH" get risk_gate_threshold)"  "6"
+expect "default budget_blowout_factor=3"  "$(AUTO_TASK_SETTINGS_FILE="$N" bash "$SH" get budget_blowout_factor)" "3"
+expect "default test_integrity_guard=true" "$(AUTO_TASK_SETTINGS_FILE="$N" bash "$SH" get test_integrity_guard)" "true"
+
+# --- schema-status: unconfigured / stale / current ---------------------------
+SS="$T/schema.json"
+expect "schema-status: no file -> unconfigured" "$(AUTO_TASK_SETTINGS_FILE="$SS" bash "$SH" schema-status)" "unconfigured"
+printf '{"autonomy":"autonomous"}' > "$SS"   # present but unstamped
+expect "schema-status: unstamped -> unconfigured" "$(AUTO_TASK_SETTINGS_FILE="$SS" bash "$SH" schema-status)" "unconfigured"
+printf '{"settings_schema_version":1}' > "$SS"
+expect "schema-status: old stamp -> stale" "$(AUTO_TASK_SETTINGS_FILE="$SS" bash "$SH" schema-status)" "stale"
+printf '{"settings_schema_version":2}' > "$SS"
+expect "schema-status: current stamp -> current" "$(AUTO_TASK_SETTINGS_FILE="$SS" bash "$SH" schema-status)" "current"
+
+# --- reset --backup: project cleared + backed up, GLOBAL untouched -----------
+RP="$T/reset_proj.json"; RG="$T/reset_glob.json"
+printf '{"telemetry_enabled":true}' > "$RG"
+printf '{"settings_schema_version":1,"telemetry_enabled":true,"autonomy":"autonomous"}' > "$RP"
+AUTO_TASK_SETTINGS_FILE="$RP" AUTO_TASK_GLOBAL_SETTINGS_FILE="$RG" bash "$SH" reset --backup >/dev/null
+expect "reset: project cleared to {}"    "$(cat "$RP")"                        "{}"
+expect "reset: backup written"           "$([ -f "$RP.pre-1" ] && echo yes || echo no)" "yes"
+expect "reset: backup has old values"    "$(jq -r '.autonomy' "$RP.pre-1")"   "autonomous"
+expect "reset: GLOBAL file untouched"    "$(cat "$RG")"                        '{"telemetry_enabled":true}'
+# restore = copy the backup back
+cp "$RP.pre-1" "$RP"
+expect "restore: backup copy restores"   "$(AUTO_TASK_SETTINGS_FILE="$RP" bash "$SH" get autonomy)" "autonomous"
+
+# --- present --scope project vs either (post-reset telemetry re-consent) ------
+printf '{}' > "$RP"   # project cleared (as after reset)
+expect "present project-scope: false post-reset" \
+  "$(AUTO_TASK_SETTINGS_FILE="$RP" AUTO_TASK_GLOBAL_SETTINGS_FILE="$RG" bash "$SH" present --scope project telemetry_enabled)" "false"
+expect "present either-scope: true via global" \
+  "$(AUTO_TASK_SETTINGS_FILE="$RP" AUTO_TASK_GLOBAL_SETTINGS_FILE="$RG" bash "$SH" present telemetry_enabled)" "true"
+expect "present global-scope: true" \
+  "$(AUTO_TASK_SETTINGS_FILE="$RP" AUTO_TASK_GLOBAL_SETTINGS_FILE="$RG" bash "$SH" present --scope global telemetry_enabled)" "true"
+
 echo "--------------------------------------------------------"
 echo "settings.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

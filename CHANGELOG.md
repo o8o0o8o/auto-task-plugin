@@ -2,6 +2,28 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.22.0]
+
+Adds an **autonomy model with exception-triggered gates**. The pipeline can now run fully unattended (opt-in), stopping only when it hits real trouble — with the **merge** as the sole always-mandatory human gate. Autonomy, telemetry, landing style, and unattended-external authority are chosen once in a **first-run setup**.
+
+> **Heads-up — settings reset once per project.** The settings model is version-stamped; on the first `/auto-task` after this update, each project's settings are backed up (`settings.json.pre-<n>`) and cleared so the one-time setup re-runs (telemetry is re-consented). Your shared **global** settings file is never touched. Restore prior values by copying the backup back.
+
+### Added
+
+- **First-run setup + autonomy modes** (`skills/auto-task/SKILL.md`, `hooks/settings.sh`). A one-time, per-project prompt asks four policy questions — telemetry, `autonomy` (`supervised`/`autonomous`), `landing_model` (`pr`/`direct`), `unattended_external` — persisted via `settings.sh`. In `autonomous` mode the Phase-1 plan-approval and Phase-5 push prompts go silent; the plan is still generated and recorded, just not waited on.
+- **Merge gate** (`hooks/enforce-gates.sh`, `hooks/lib/resolve-run-state.sh`, new `gates.merge` state object). The single mandatory human stop. Mechanically enforced: a land action (`git push`, or a direct-to-main `git merge` resolved via a cross-branch active-run scan so an on-main land is not fail-open) is blocked while `gates.merge.required && !acked`. High risk (`effort.risk >= risk_gate_threshold`, default 6) forces the gate on regardless of mode.
+- **Dangerous-ops guard** (`hooks/guard-dangerous-ops.sh`, registered in `hooks/hooks.json` + `settings-fragment.json`). A fail-closed PreToolUse/Bash interrupt that blocks out-of-envelope commands during an active run (`rm -rf` on a dangerous target, force-push to a protected branch, `DROP`/`TRUNCATE`, `kubectl`/`terraform`/`aws … delete`, migration-apply, deploy/publish) unless `unattended_external=true`. Raw-mode aware (still catches dangerous commands when `jq` is absent); benign build cleanup and own-branch force-push are allowed.
+- **Test-integrity check** (`hooks/checks.sh`). A new `test-integrity` row fails when a diff weakens tests to reach green — added skip/focus markers (`.skip`/`xit`/`.only`/`@pytest.mark.skip`/…) or assertions removed from a test file with none added back.
+- **Assumptions ledger** (`state.assumptions[]`). Every decision an unattended run makes on the user's behalf is recorded and surfaced at the merge gate (or the PR body), so optional plan-approval never means "silently decided."
+- **Shared run-state resolver** (`hooks/lib/resolve-run-state.sh`). A pure branch/worktree/STATE resolver (no emit, no exit) sourced by both `enforce-gates.sh` (merge gate) and `guard-dangerous-ops.sh`, so the two hooks can't diverge on run resolution.
+- New settings keys: `settings_schema_version`, `autonomy`, `landing_model`, `unattended_external`, `risk_gate_threshold`, `budget_blowout_factor`, `test_integrity_guard`; new subcommands `settings.sh schema-status`, `settings.sh reset [--backup]`, and `present --scope project|global`.
+- Telemetry/ledger additive fields (`hooks/send-telemetry.sh`, `hooks/record-outcome.sh`): `autonomy`, `landing_model`, `merge_gate_required`, `merge_gate_acked`, `test_integrity_fail`.
+- Tests: new `tests/guard-dangerous-ops.test.sh`; extended `tests/settings.test.sh` (schema-status/reset/scoped-present), `tests/enforcement-spine.test.sh` (merge gate), `tests/checks.test.sh` (test-integrity). The three previously non-executable test files (`auto-task-gc`, `clarify-router`, `suggest-cleanup`) are now executable.
+
+### Changed
+
+- **Settings reset on schema bump** (`hooks/settings.sh`). See the heads-up above — project-scoped, backed up, new-run-only; the global file is never clobbered.
+
 ## [0.21.0]
 
 Adds a **verifier regression eval harness** (`eval/`) — a maintainer tool that checks whether the `task-execution-verifier` (Gate A completeness) can still tell a genuinely-correct patch from a plausible-but-wrong one, under attention load.

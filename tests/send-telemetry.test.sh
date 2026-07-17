@@ -205,7 +205,7 @@ if [ -f "$RO" ]; then
   # sender derives itself. (Optional repo-metrics keys are NOT here — they only
   # appear when the measured merge runs, which needs a repo dir; this dry-run has
   # none. They're covered by the repo-metrics merge test below.)
-  expected="$( { printf '%s\n' "$ro_keys" | grep -vE '^(task|branch|base|at)$'
+  expected="$( { printf '%s\n' "$ro_keys" | grep -vE '^(task|branch|base|at|pr_url)$'
                  printf '%s\n' client_id plugin_version os schema_version \
                    satisfaction correctness comment \
                    difficulty risk task_type requirements_count drift_events \

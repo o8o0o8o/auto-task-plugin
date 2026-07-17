@@ -432,6 +432,54 @@ rm -f "$PR/data/.last-version-check"; cvr 9.9.9 plain >/dev/null; [ -f "$PR/data
 expect "CV-stamp-untouched: skip-throttle writes no stamp"  "$s" "absent"
 rm -rf "$PR"
 
+# ============================================================================
+# Merge gate (v0.22): enforce-gates blocks a LAND action (git push / merge) when
+# gates.merge.required && !acked. Covers push-on-run-branch AND direct-to-main.
+# ============================================================================
+PUSH='{"tool_input":{"command":"git push -u origin HEAD"}}'
+MERGE='{"tool_input":{"command":"git merge feat/widget"}}'
+# ensure we are on the run branch with its state file
+git checkout -q feat/widget
+printf '%s' '{"approved":true,"phase":"handover","gates":{"merge":{"required":true,"acked":false}}}' > "$ST"
+expect "MG push: required+unacked -> block(2)"     "$(grun "$PUSH")"  "2"
+printf '%s' '{"approved":true,"phase":"handover","gates":{"merge":{"required":true,"acked":true}}}' > "$ST"
+expect "MG push: acked -> allow(0)"                "$(grun "$PUSH")"  "0"
+printf '%s' '{"approved":true,"phase":"handover","gates":{"merge":{"required":false,"acked":false}}}' > "$ST"
+expect "MG push: not required -> allow(0)"         "$(grun "$PUSH")"  "0"
+# a run with no merge object at all (legacy) -> land allowed
+printf '%s' '{"approved":true,"phase":"handover","gates":{}}' > "$ST"
+expect "MG push: legacy no-merge-obj -> allow(0)"  "$(grun "$PUSH")"  "0"
+
+# direct-to-main: checkout the base branch; run still lives on feat/widget
+BASEBR="$(git rev-parse --abbrev-ref HEAD)"    # currently feat/widget
+DEF="master"; git rev-parse --verify -q main >/dev/null 2>&1 && DEF="main"
+git checkout -q "$DEF" 2>/dev/null || git checkout -q -b "$DEF"
+printf '%s' '{"approved":true,"phase":"handover","gates":{"merge":{"required":true,"acked":false}}}' > "$ST"
+expect "MG on-main merge run-branch: unacked -> block(2)" "$(grun "$MERGE")" "2"
+expect "MG on-main push: active run unacked -> block(2)"  "$(grun "$PUSH")"  "2"
+printf '%s' '{"approved":true,"phase":"handover","gates":{"merge":{"required":true,"acked":true}}}' > "$ST"
+expect "MG on-main merge: acked -> allow(0)"       "$(grun "$MERGE")" "0"
+# no active run anywhere -> land allowed
+printf '%s' '{"approved":true,"phase":"done","gates":{"merge":{"required":true,"acked":false}}}' > "$ST"
+expect "MG on-main: run is done -> allow(0)"       "$(grun "$MERGE")" "0"
+git checkout -q feat/widget
+
+# B1 regression: a chained `git commit && git push` must NOT bypass the commit gate
+# via the land block. Commit gate not passed + merge not required -> still blocked.
+CP='{"tool_input":{"command":"git commit -m x && git push origin HEAD"}}'
+printf '%s' '{"approved":true,"phase":"handover","gates":{"code_review":{"passed":false},"merge":{"required":false,"acked":false}}}' > "$ST"
+expect "B1 commit&&push, review not passed -> block(2)" "$(grun "$CP")" "2"
+# same chain with gates passed -> allowed
+printf '%s' '{"approved":true,"phase":"handover","gates":{"code_review":{"passed":true,"tool":"skill:auto-task-code-review","clean_pass_after_last_fix":true},"gate_b":{"passed":true},"merge":{"required":false,"acked":false}}}' > "$ST"
+expect "B1 commit&&push, gates passed -> allow(0)"      "$(grun "$CP")" "0"
+
+# Gate B: `gh pr merge` (the landing_model=pr land action) is gated by the merge gate
+GHM='{"tool_input":{"command":"gh pr merge 12 --squash --delete-branch"}}'
+printf '%s' '{"approved":true,"phase":"handover","landing":"pr","gates":{"merge":{"required":true,"acked":false}}}' > "$ST"
+expect "MG gh pr merge, required+unacked -> block(2)" "$(grun "$GHM")" "2"
+printf '%s' '{"approved":true,"phase":"handover","landing":"pr","gates":{"merge":{"required":true,"acked":true}}}' > "$ST"
+expect "MG gh pr merge, acked -> allow(0)"            "$(grun "$GHM")" "0"
+
 echo
 echo "================ SUMMARY: $PASS passed, $FAIL failed ================"
 [ "$FAIL" -eq 0 ]

@@ -18,6 +18,16 @@ set -uo pipefail
 
 input="$(cat)"
 
+# Shared, PURE run-state resolver (branch/worktree/STATE + cross-branch scan).
+# Sourced for the merge-gate block below; the commit-path resolution further down
+# is intentionally left inline, byte-for-byte, so the ~100-assertion enforcement
+# spine test keeps proving the commit gate unchanged. The helper is a faithful
+# extraction of that same logic, and the ops guard uses it too, so the merge-gate
+# and the guard cannot diverge from each other.
+ENFORCE_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+# shellcheck source=/dev/null
+. "$ENFORCE_SCRIPT_DIR/lib/resolve-run-state.sh" 2>/dev/null || true
+
 # `cmd_is_raw=1` means cmd is the raw JSON payload (jq absent or decode failed),
 # not a decoded shell command. The two need different commit-detection regexes:
 # the decoded command can use shell-boundary anchors, but inside raw JSON the
@@ -83,6 +93,65 @@ if [ "$cmd_is_raw" -eq 1 ]; then
 else
   commit_re="(^|[;&|\`]|\\\$\\()[[:space:]]*${mid}"
 fi
+# --- Merge gate (land action: git push / git merge) --------------------------
+# The sole mandatory human gate is the merge/land. When a run set
+# gates.merge.required=true and has not recorded gates.merge.acked, the land action
+# is BLOCKED until the ack exists — mechanically, so an autonomous run cannot skip
+# it. Detected with the SAME anti-evasion sub-patterns as commit, and placed BEFORE
+# the commit-only early exit so a push/merge (which is never a `git commit`) is
+# actually inspected instead of silently allowed (the fail-open the critique
+# flagged). Two landing styles are covered: (a) push while on the run branch, and
+# (b) direct-to-main (checkout on main / another branch) via the cross-branch
+# active-run scan — so an on-main land is guarded, not fail-open.
+land_mid="${wrap}${envp}${gitq}${opts}[[:space:]]+(push|merge)(\\b|\$)"
+# Also gate `gh pr merge` — the land action for landing_model=pr (the default),
+# where the run does not push-to-main. Reuses the wrapper/env prefix; `gh` is not
+# path-qualified like git, so it is matched directly.
+gh_mid="${wrap}${envp}gh[[:space:]]+pr[[:space:]]+merge(\\b|\$)"
+if [ "$cmd_is_raw" -eq 1 ]; then
+  land_re="(^|[;&|\`]|\\\$\\(|\")[[:space:]]*(${land_mid}|${gh_mid})"
+else
+  land_re="(^|[;&|\`]|\\\$\\()[[:space:]]*(${land_mid}|${gh_mid})"
+fi
+if printf '%s' "$cmd" | LC_ALL=C grep -qE "$land_re"; then
+  if command -v rrs_resolve_state >/dev/null 2>&1; then
+    rrs_resolve_state "$input"
+    cand=""
+    [ -f "$RRS_STATE" ] && cand="$RRS_STATE"
+    for br in $RRS_ACTIVE_OTHERS; do
+      f="$RRS_PROJECT_DIR/.auto-task/$br/STATE.json"
+      [ -f "$f" ] && cand="$cand
+$f"
+    done
+    if [ -n "$cand" ]; then
+      if ! command -v jq >/dev/null 2>&1; then
+        printf 'Blocked by auto-task-plugin: a run state exists but `jq` is not installed, so the merge gate cannot be verified before this push/merge.\nInstall jq (a plugin prerequisite) and retry.\n' >&2
+        exit 2
+      fi
+      while IFS= read -r sf; do
+        [ -n "$sf" ] || continue
+        [ -f "$sf" ] || continue
+        jq empty "$sf" 2>/dev/null || continue
+        [ "$(jq -r '.approved // false' "$sf" 2>/dev/null || echo false)" = "true" ] || continue
+        [ "$(jq -r '.phase // ""' "$sf" 2>/dev/null || echo "")" = "done" ] && continue
+        req="$(jq -r '.gates.merge.required // false' "$sf" 2>/dev/null || echo false)"
+        ack="$(jq -r '.gates.merge.acked // false' "$sf" 2>/dev/null || echo false)"
+        if [ "$req" = "true" ] && [ "$ack" != "true" ]; then
+          printf 'Blocked by auto-task-plugin: the merge gate is not acknowledged for this run.\n  state: %s\n  gates.merge.required = true, gates.merge.acked != true\nThis is the run'"'"'s single mandatory human gate. Surface the red risk disclaimer + assumptions ledger, get the user'"'"'s explicit go-ahead, then set gates.merge.acked = true before landing.\n' "$sf" >&2
+          exit 2
+        fi
+      done <<EOF
+$cand
+EOF
+    fi
+  fi
+  # NOTE: do NOT exit here. A land action that is not blocked must fall through to
+  # the commit detector below — otherwise a compound command like
+  # `git commit -m x && git push` (which matches land_re on the push) would skip
+  # the entire commit gate. A pure push/merge simply won't match commit_re and
+  # exits 0 there; a chained commit is still gated.
+fi
+
 if ! printf '%s' "$cmd" | LC_ALL=C grep -qE "$commit_re"; then
   exit 0
 fi

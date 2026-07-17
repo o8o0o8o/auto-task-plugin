@@ -1,6 +1,15 @@
 # auto-task-plugin
 
-End-to-end autonomous task workflow for Claude Code. Takes a task description from intake to pull request with one human gate at plan approval and mechanical enforcement of every protocol invariant after that.
+End-to-end autonomous task workflow for Claude Code. Takes a task description from intake to pull request with mechanical enforcement of every protocol invariant.
+
+## Autonomy modes & the merge gate (v0.22)
+
+auto-task can run in two modes, chosen once per project in a **first-run setup** (four questions: telemetry, autonomy, landing style, unattended-external):
+
+- **`supervised`** (default) — today's behavior: one human gate at plan approval, plus the push prompt.
+- **`autonomous`** — the procedural gates go silent and the run proceeds unattended; the **merge is the sole mandatory human gate**. Safety comes from *exception-triggered* interrupts that stop the run only on real trouble: **ambiguity** (hard stop for a decision it can't resolve with evidence), a **destructive / out-of-envelope command** (blocked by `guard-dangerous-ops.sh` unless `unattended_external` is on), **test integrity** (tests weakened to reach green), and a soft **budget-blowout** check-in. High-risk runs (`effort.risk >= risk_gate_threshold`) force the merge gate on regardless of mode, showing a red disclaimer + an **assumptions ledger** of every call the run made unattended.
+
+> **Settings reset on this update.** The settings file is version-stamped; the first `/auto-task` after upgrading to 0.22 backs up (`settings.json.pre-<n>`) and clears each project's settings so the one-time setup re-runs and telemetry is re-consented. Your shared **global** settings file is never touched — restore prior values by copying the backup back.
 
 ## What it ships
 
