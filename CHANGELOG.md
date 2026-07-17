@@ -2,6 +2,18 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.20.0]
+
+Two verification/telemetry improvements grounded in a research pass on autonomous-agent reliability: the Gate A/B verifier now commits to a correct-answer expectation *before* it reads the diff (de-anchoring), and run telemetry now tracks **merge acceptance** — whether a completed run's PR actually merged, the real success signal that raw completion rate misses.
+
+### Added
+
+- **Merge-acceptance telemetry** (`hooks/record-outcome.sh`, `hooks/auto-task-stats.sh`, `tests/record-outcome.test.sh`). The local outcome row now records the run's `pr_url`, derived locally from `STATE.json` (the Stop hook's no-network contract is unchanged). `auto-task-stats` gains a **Merge acceptance** section: it always prints the local "N of M completed runs opened a PR" count, and — best-effort, in the reader only — resolves each PR's merged/closed/open state via `gh` to report an acceptance rate. Resolution is guarded by a `gh auth status` check and an `AUTO_TASK_PR_RESOLVE` kill-switch, so offline/hermetic runs and tests skip the network lookup while still showing the local count. `pr_url` is added to the reader's lockstep `DERIVE` block, and `tests/record-outcome.test.sh` is extended with capture, null-default forward-compat, local-count, stubbed-`gh` resolution (acceptance math), and lockstep-parity assertions.
+
+### Changed
+
+- **Gate A/B verifier de-anchoring** (`agents/task-execution-verifier.md`). Completeness mode now derives — *blind*, before reading the diff or the recorded evidence — what a correct implementation must contain, what a convincing-but-wrong version would look like, and the single discriminating check between them, then judges the diff against that expectation. The `satisfied`/`unsatisfied` verdict definitions are wired to it so a plausible-but-wrong patch that passes a weak check is caught. Keeps the verifier rating correctness rather than plausibility.
+
 ## [0.19.0]
 
 Adds a **resume-run picker** so you can see and continue any auto-task run across your worktrees — closing the gap where `claude --resume` resumes a *conversation* (not a run) and bare `/auto-task` only sees the current branch.
