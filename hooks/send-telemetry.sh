@@ -44,12 +44,11 @@
 #   AUTO_TASK_STATE_FILE=<path>           # use this STATE.json verbatim (skip git resolution)
 #   AUTO_TASK_HOME=<dir>                  # relocate the install-id / settings root
 #   AUTO_TASK_SETTINGS_FILE / AUTO_TASK_GLOBAL_SETTINGS_FILE  # forwarded to settings.sh
-#   AUTO_TASK_REPO_DIR=<dir>             # repo root passed to repo-metrics.sh
 #   AUTO_TASK_TOKEN_USAGE_JSON=<path>   # use this token-usage JSON verbatim (skip token-usage.sh)
 
 set -uo pipefail
 
-SCHEMA_VERSION=3
+SCHEMA_VERSION=4
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 settings_sh="$SCRIPT_DIR/settings.sh"
@@ -170,10 +169,13 @@ fi
 os="$(uname -s 2>/dev/null || echo unknown)"
 
 # --- Derive the ANONYMIZED payload from STATE.json ----------------------------
-# Field set = record-outcome.sh's row MINUS {task,branch,base,at} PLUS
-# {satisfaction,correctness,comment,client_id,plugin_version,os,schema_version}. A
+# Field set = record-outcome.sh's row MINUS {task,branch,base,at,pr_url} PLUS
+# {satisfaction,correctness,comment,client_id,os,schema_version} (plus the v2/v3
+# derived-in-sender fields). NOTE: plugin_version is now on the local row too (added
+# for the stats version-over-version guard), so it is shared, not sender-only. A
 # drift test (tests/send-telemetry.test.sh) binds this set to the source row so the
-# two cannot silently diverge. Every field is defaulted so a partial state never
+# two cannot silently diverge. Repo-shape fields are FROZEN (no longer merged in —
+# see the freeze note below). Every field is defaulted so a partial state never
 # errors. `comment` is the ONE free-text field — user-authored at the Phase-5
 # prompt, capped to 500 chars, null unless the user typed a note.
 payload="$(jq -c \
@@ -246,21 +248,15 @@ payload="$(jq -c \
     }
 ' "$state" 2>/dev/null || true)"
 
-# --- Merge measured repo metrics (size + churn) — bounded, fail-open ----------
-# Sourced from the sibling repo-metrics.sh against the run's repo; every field is
-# nullable and the whole block is optional (older/failed measurements just omit it,
-# and the DB/dashboard treat missing as null). Keeps the anonymity contract: the
-# helper emits only buckets/numbers, never paths or names.
-if [ -n "$payload" ] && [ -f "$SCRIPT_DIR/repo-metrics.sh" ]; then
-  repo_dir="${AUTO_TASK_REPO_DIR:-${project_dir:-}}"
-  if [ -n "$repo_dir" ]; then
-    rm_base="$(jq -r '.base // ""' "$state" 2>/dev/null || echo "")"
-    rmjson="$(bash "$SCRIPT_DIR/repo-metrics.sh" --repo "$repo_dir" --base "$rm_base" 2>/dev/null || true)"
-    if [ -n "$rmjson" ] && printf '%s' "$rmjson" | jq empty 2>/dev/null; then
-      payload="$(printf '%s' "$payload" | jq -c --argjson rm "$rmjson" '. * $rm' 2>/dev/null || printf '%s' "$payload")"
-    fi
-  fi
-fi
+# --- Repo-shape fields FROZEN as of schema_version 4 (v0.23.0) ----------------
+# The speculative per-segment repo-shape fields (repo_files_bucket, primary_language,
+# is_monorepo, churn_ratio, hotspot_concentration, dirs_touched, max_depth) are no
+# longer emitted: at the current install base they cannot reach statistical power as
+# reporting dimensions (required N scales with 1/effect^2), and slicing a small
+# ledger by them courts winner's-curse false discoveries. The client stops sending
+# them; the server columns are retained as legacy nullable (v4 rows store NULL there)
+# per the schema's never-drop rule. hooks/repo-metrics.sh is kept as an unused helper
+# (still unit-tested) in case a future, higher-N analysis re-enables the merge.
 
 # --- Authoritative token measurement (reliable, at send time) ----------------
 # The token cost (total/breakdown/model/version/by-skill) is measured HERE by

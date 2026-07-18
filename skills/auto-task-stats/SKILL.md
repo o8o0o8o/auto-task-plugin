@@ -24,6 +24,9 @@ From then on, every `/auto-task` run that reaches `phase: done` appends one loca
 
 - `/auto-task-stats` — report using the default 7-day stale threshold.
 - `/auto-task-stats <days>` — a live, approved, non-done run whose newest history entry is older than `<days>` is classified **stalled** rather than **in-flight**.
+- `/auto-task-stats --recalibrate` — additionally print a **suggested** `estimate.sh` coefficient adjustment computed from the pooled actual/estimate ratios (gated behind a sample floor). It is a suggestion only — it never edits `estimate.sh`; you apply it by hand.
+
+**Env-configurable thresholds** (all optional; conservative defaults so small ledgers rarely false-alarm): `AUTO_TASK_STATS_MDE_PP` (default 15) — regression-guard minimum detectable effect for rate metrics, in percentage points; `AUTO_TASK_STATS_RATIO_MDE` (default 0.5) — MDE for est/act ratio metrics; `AUTO_TASK_STATS_MIN_SAMPLE` (default 10) — min pooled runs per plugin version before the guard compares two versions; `AUTO_TASK_STATS_RECAL_MIN_SAMPLE` (default 10) — min measured runs before `--recalibrate` suggests.
 
 ## What to do when invoked
 
@@ -61,20 +64,25 @@ From then on, every `/auto-task` run that reaches `phase: done` appends one loca
 
 3. **Present** the script's output to the user verbatim (it is already formatted as a readable summary). If the output is the "no runs recorded yet" message, remind the user of the opt-in step above.
 
-## Run metrics (estimate accuracy + quality trends)
+## What the report shows (reshaped in v0.23.0)
 
-Since v0.2.0 each completed run also records run-metrics fields to `outcomes.jsonl` (populated by the Phase-5 handover from `estimate.sh` / `token-usage.sh` and the quality-signals panel): `est_duration_min`, `est_tokens`, `act_duration_min`, `act_tokens`, `defects_early`, `defects_late`, `flaky`, `tests_added`, `diff_loc`, `first_pass_ac`, `checks_run`, `checks_failed`. The aggregator (kept in DERIVE-lockstep with `record-outcome.sh`) turns them into cross-run trend lines under a **"Run metrics"** section:
+Each completed run records run-metrics fields to `outcomes.jsonl` (populated by the Phase-5 handover from `estimate.sh` / `token-usage.sh` and the quality-signals panel): `est_duration_min`, `est_tokens`, `act_duration_min`, `act_tokens`, `defects_early`, `defects_late`, `flaky`, `tests_added`, `diff_loc`, `first_pass_ac`, `checks_run`, `checks_failed`, plus `plugin_version` (for version grouping). The aggregator (kept in DERIVE-lockstep with `record-outcome.sh`) reports them in **decision-ordered** sections:
 
-- **Estimate accuracy** — median `actual/estimate` ratio for tokens and time across completed runs (`>1` = ran costlier than estimated, `<1` = cheaper). Runs whose estimate or actual is `null`/`0` (a failed measurement) are EXCLUDED, so the ratio is never poisoned or divided by zero.
-- **Late-defect rate** — % of completed runs that had a defect caught only late (Gate B).
-- **Flakiness rate** — % of completed runs that hit a flaky test.
-- **Tests-added rate** — % of completed runs whose diff touched a test file.
+- **Quality (test-verified) — the headline.** What matters is whether runs produced test-verified, defect-free work: first-pass AC-pass rate, late-defect rate (Gate-B / code-review), early-defect capture (Gate-A / self-verify), tests-added rate, flakiness. Rate metrics carry a **Wilson 95% confidence interval + sample size** (`P% [lo–hi] (n=N)`) — a bare percentage over a handful of runs is not a trustworthy signal. An empty population prints `n=0 (no data)`, never a divide-by-zero.
+- **Merge acceptance** — the real success signal (PRs merged vs decided), resolved via `gh`.
+- **Liveness / operational — NOT a quality signal.** Completion rate ("reached Handover") is *construct-invalid as quality*: an agent can reach `done` with a confidently-wrong result, so completion looks healthy exactly when a run should not be trusted. It lives here as an operational/liveness signal, paired with where stalled runs died.
+- **Estimate accuracy (calibration input)** — median `actual/estimate` ratio for tokens and time (`>1` = costlier than estimated). Runs whose estimate/actual is `null`/`0` are EXCLUDED, so the ratio is never poisoned or divided by zero.
+- **Regression guard (version-over-version)** — compares the two most-recent plugin versions that each clear the sample floor, flagging a metric only when its delta exceeds the MDE. Small local ledgers usually report **"insufficient data"** — the honest state, not a failure (required N scales with 1/effect², so only large shifts are ever detectable at small scale).
+- **Recalibration suggestion** (`--recalibrate` only) — suggests scaled `estimate.sh` constants from the pooled ratios; **suggest-only, never edits `estimate.sh`.**
 
-These are **trends, not snapshots** (a single run is a snapshot; the ledger makes it a trend) and are process/reliability signals — deliberately NOT a single composite "quality score" (a composite invites gaming and hides what a run cannot see). Older ledger rows lacking these fields are tolerated (`// default`) and simply don't contribute to the ratio.
+These are **trends, not snapshots** and a **signals panel, not a single composite score** (a composite invites gaming and hides what a run cannot see). Older ledger rows lacking a field (including pre-v0.23.0 rows with no `plugin_version`) are tolerated (`// default`) — they bucket as `unknown` and are excluded from version-pair comparisons.
 
 ## Rules
 
 - **Read-only.** Never write to the ledger, never edit `STATE.json`, never modify pipeline files.
 - Do not fabricate figures — report only what the script prints.
 - "Gate B coverage" reports how many STANDARD/HEAVY runs ran the adversarial gate to a pass vs. were skipped (from the recorded `gate_b` outcome). It is a coverage figure, not a "bugs caught" count — present it as such.
-- "Estimate accuracy" is a median actual/estimate ratio over runs that actually recorded both — present it as calibration signal, not a guarantee. "Late-defect / flakiness / tests-added" are process signals, not a quality score.
+- "Estimate accuracy" is a median actual/estimate ratio over runs that actually recorded both — present it as calibration signal, not a guarantee. The quality-headline rates are process/correctness signals, not a composite score.
+- **Completion rate is a liveness signal, not a quality metric** — never present "reached Handover" as evidence the work is correct; pair it with merge-acceptance and the test-verified quality block.
+- **Read rates with their CI + n.** A rate over a handful of runs has a wide interval; do not over-interpret a small-n percentage. When the regression guard says "insufficient data," report exactly that — do not manufacture a trend the sample can't support.
+- **`--recalibrate` is suggest-only** — it never edits `estimate.sh`. Present its output as a proposal for the maintainer to apply by hand after eyeballing the sample size.

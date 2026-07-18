@@ -25,6 +25,8 @@
 
 set -uo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+
 # --- Resolve the project root that owns .auto-task/<branch>/ ------------------
 # Mirror prevent-mid-protocol-stall.sh: start from CLAUDE_PROJECT_DIR (or $PWD),
 # resolve to the git toplevel, then retarget to a same-repo linked worktree when
@@ -89,6 +91,26 @@ if [ -f "$sentinel" ]; then
   fi
 fi
 
+# --- Resolve plugin version (never empty) -------------------------------------
+# plugin_version is NOT a STATE field — it lives in the plugin manifest. Resolved
+# via CLAUDE_PLUGIN_ROOT (exported into hooks) or relative to this script, else
+# "unknown". Recorded on the local row so auto-task-stats can group runs by plugin
+# version (the version-over-version regression guard). Mirrors the same probe in
+# send-telemetry.sh. Historical rows written before this field simply lack it and
+# the reader buckets them as "unknown" (excluded from version-pair comparisons).
+plugin_version=""
+if [ -f "$SCRIPT_DIR/hooks.json" ]; then
+  plugin_version="$(jq -r '.version // empty' "$SCRIPT_DIR/hooks.json" 2>/dev/null || echo "")"
+fi
+if [ -z "$plugin_version" ]; then
+  for mf in "${CLAUDE_PLUGIN_ROOT:-}/.claude-plugin/plugin.json" "$SCRIPT_DIR/../.claude-plugin/plugin.json"; do
+    [ -n "$mf" ] && [ -f "$mf" ] || continue
+    plugin_version="$(jq -r '(.plugins[0].version // .version) // empty' "$mf" 2>/dev/null || echo "")"
+    [ -n "$plugin_version" ] && break
+  done
+fi
+[ -n "$plugin_version" ] || plugin_version="unknown"
+
 # --- Derive the one-line row from STATE.json ----------------------------------
 # Every field guarded with a default so a partial/legacy state never errors.
 # Free-text fields are length-capped (task ~140, gate_b ~120). The row now also
@@ -99,7 +121,9 @@ fi
 # The metric fields mirror auto-task-stats.sh's DERIVE VERBATIM (lockstep — a
 # regression test asserts the two field sets match). est_*/act_* are `null` when
 # unmeasured so the reader's ratio can exclude them (no divide-by-zero / poison).
-row="$(jq -c '
+row="$(jq -c \
+  --arg plugin_version "$plugin_version" \
+  '
   (.history // []) as $h
   | ($h | map(.at // empty)) as $ats
   | ($ats | first) as $t0
@@ -114,6 +138,7 @@ row="$(jq -c '
       pr_url: (.pr_url // null),
       task: ((.description // "") | .[0:140]),
       terminal_state: "done",
+      plugin_version: $plugin_version,
       tier: (.effort.tier // ""),
       tier_initial: (((.effort.history // []) | first | .from) // (.effort.tier // "")),
       escalations: ((.effort.history // []) | length),

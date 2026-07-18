@@ -93,6 +93,11 @@ expect "row.act_duration_min = dur"    "$(printf '%s' "$ROW" | jq -r '.act_durat
 expect "row.checks_run default 0"      "$(printf '%s' "$ROW" | jq -r '.checks_run')"    "0"
 expect "row.defects_late default 0"    "$(printf '%s' "$ROW" | jq -r '.defects_late')"  "0"
 expect "row.flaky default false"       "$(printf '%s' "$ROW" | jq -r '.flaky')"         "false"
+# plugin_version: resolved from the manifest (never a STATE field), a non-empty
+# string on the row so auto-task-stats can group runs by version. Value depends on
+# the resolved manifest, so assert only that it is a present, non-empty string.
+expect "row.plugin_version is a string"  "$(printf '%s' "$ROW" | jq -r '.plugin_version | type')" "string"
+expect "row.plugin_version non-empty"    "$(printf '%s' "$ROW" | jq -r '.plugin_version | length > 0')" "true"
 
 # (b) second run, SAME base → sentinel dedups, still one row.
 expect "same-run rerun: hook exits 0"                "$(rec "$T")"                  "0"
@@ -211,7 +216,7 @@ echo "================ Lockstep: metric fields present in BOTH DERIVE blocks ===
 REC_SH="$HOOKS/record-outcome.sh"; STATS_SH="$HOOKS/auto-task-stats.sh"
 for k in est_duration_min est_tokens act_duration_min act_tokens \
          defects_early defects_late flaky tests_added diff_loc first_pass_ac \
-         checks_run checks_failed; do
+         checks_run checks_failed plugin_version; do
   ir="$(grep -c "${k}:" "$REC_SH" 2>/dev/null || echo 0)"
   is="$(grep -c "${k}:" "$STATS_SH" 2>/dev/null || echo 0)"
   if [ "$ir" -ge 1 ] && [ "$is" -ge 1 ]; then

@@ -238,8 +238,8 @@ expect "comment capped at 500 chars" "$(printf '%s' "$Pt" | jq -r '.comment | le
 # absent comment -> null
 expect "comment null when unset" "$(printf '%s' "$P" | jq -r '.comment')" "null"
 
-# --- 13c. schema v3 fields present + anonymized (task_type is prefix only) ----
-expect "schema_version is 3"        "$(printf '%s' "$P" | jq -r '.schema_version')" "3"
+# --- 13c. schema v4 fields present + anonymized (task_type is prefix only) ----
+expect "schema_version is 4"        "$(printf '%s' "$P" | jq -r '.schema_version')" "4"
 for k in difficulty risk task_type requirements_count drift_events tokens_input tokens_output tokens_by_skill files_changed preview_verdict external_status model claude_code_version; do
   expect "v3 field present: $k" "$(printf '%s' "$P" | jq -r "has(\"$k\")")" "true"
 done
@@ -274,7 +274,10 @@ tt_case "Fix/x"            "fix"
 tt_case "main"             "other"
 tt_case ""                 "null"
 
-# --- 13d. repo-metrics merge: measured size/churn fields appear + anonymous ---
+# --- 13d. repo-shape fields FROZEN as of v4: NOT emitted, even with a repo dir --
+# The client no longer merges repo-metrics into the payload (schema_version 4).
+# Even when AUTO_TASK_REPO_DIR points at a real repo, none of the 7 repo-shape
+# fields may appear. (repo-metrics.sh itself is retained + unit-tested separately.)
 if command -v git >/dev/null 2>&1; then
   RR="$T/repo"; git init -q "$RR"; git -C "$RR" config user.email t@t; git -C "$RR" config user.name t
   printf 'x\n' > "$RR/a.ts"; git -C "$RR" add -A; git -C "$RR" commit -qm base >/dev/null 2>&1
@@ -283,11 +286,12 @@ if command -v git >/dev/null 2>&1; then
   Prm="$(AUTO_TASK_HOME="$HOME_DIR" AUTO_TASK_STATE_FILE="$T/state-repo.json" AUTO_TASK_REPO_DIR="$RR" \
     AUTO_TASK_SETTINGS_FILE="$T/on.json" AUTO_TASK_GLOBAL_SETTINGS_FILE="$NOFILE" \
     AUTO_TASK_TELEMETRY_DRYRUN=1 AUTO_TASK_TELEMETRY_IGNORE_SENTINEL=1 bash "$SH" 2>/dev/null)"
-  expect "repo-metrics merged (files bucket)" "$(printf '%s' "$Prm" | jq -r 'has("repo_files_bucket")')" "true"
-  expect "repo-metrics primary_language"      "$(printf '%s' "$Prm" | jq -r '.primary_language')" "ts"
-  expect "repo-metrics still no paths leaked"  "$(printf '%s' "$Prm" | jq -r 'tostring | test("a\\.ts") | not')" "true"
+  expect "repo-shape frozen: no files bucket"  "$(printf '%s' "$Prm" | jq -r 'has("repo_files_bucket")')" "false"
+  expect "repo-shape frozen: no primary_language" "$(printf '%s' "$Prm" | jq -r 'has("primary_language")')" "false"
+  expect "repo-shape frozen: none of the 7 present" \
+    "$(printf '%s' "$Prm" | jq -r 'any(keys[]; . == "repo_files_bucket" or . == "primary_language" or . == "is_monorepo" or . == "churn_ratio" or . == "hotspot_concentration" or . == "dirs_touched" or . == "max_depth")')" "false"
 else
-  echo "  SKIP  git not installed (repo-metrics merge test)"
+  echo "  SKIP  git not installed (repo-shape freeze test)"
 fi
 
 # --- 13e. token cost measured AT SEND TIME (reliable, not orchestrator-dependent)

@@ -24,6 +24,9 @@ expect(){ if [ "$2" = "$3" ]; then PASS=$((PASS+1)); printf '  PASS  %-52s (%s)\
   else FAIL=$((FAIL+1)); printf '  FAIL  %-52s got=%s want=%s\n' "$1" "$2" "$3"; fi; }
 expect_has(){ if printf '%s' "$2" | grep -qF -- "$3"; then PASS=$((PASS+1)); printf '  PASS  %-52s (found)\n' "$1"
   else FAIL=$((FAIL+1)); printf '  FAIL  %-52s (missing: %s)\n' "$1" "$3"; fi; }
+# regex variant (tolerant of column spacing in the reshaped stats output)
+expect_rx(){ if printf '%s' "$2" | grep -qE -- "$3"; then PASS=$((PASS+1)); printf '  PASS  %-52s (found)\n' "$1"
+  else FAIL=$((FAIL+1)); printf '  FAIL  %-52s (missing rx: %s)\n' "$1" "$3"; fi; }
 
 echo "================ metrics data path: record-outcome ================"
 
@@ -67,13 +70,18 @@ expect "row.checks_failed"     "$(printf '%s' "$ROW" | jq -r '.checks_failed')" 
 
 echo "================ metrics data path: auto-task-stats ================"
 OUT="$(CLAUDE_PROJECT_DIR="$T" bash "$STATS" 2>/dev/null)"
-expect_has "stats: run metrics section"     "$OUT" "Run metrics"
+# Reshaped output (v0.23.0): test-verified quality is the headline block; the
+# estimate/actual ratio lives under "Estimate accuracy (calibration input)"; the
+# late-defect/flakiness/tests-added rates moved INTO the quality headline and now
+# carry a Wilson CI + sample size (so match value tolerant of the CI + spacing).
+expect_has "stats: quality headline"        "$OUT" "Quality (test-verified"
 expect_has "stats: estimate accuracy line"  "$OUT" "Estimate accuracy"
 expect_has "stats: token ratio 2x"          "$OUT" "median 2x"
 expect_has "stats: n=1 measured"            "$OUT" "(n=1)"
-expect_has "stats: late-defect 100%"        "$OUT" "Late-defect rate       100%"
-expect_has "stats: flakiness 100%"          "$OUT" "Flakiness rate         100%"
-expect_has "stats: tests-added 100%"        "$OUT" "Tests-added rate       100%"
+expect_rx  "stats: late-defect 100% (quality, CI)" "$OUT" 'Late-defect rate +100% \['
+expect_rx  "stats: flakiness 100% (quality, CI)"   "$OUT" 'Flakiness rate +100% \['
+expect_rx  "stats: tests-added 100% (quality, CI)" "$OUT" 'Tests-added rate +100% \['
+expect_has "stats: completion demoted to liveness" "$OUT" "NOT a quality signal"
 
 echo "================ divide-by-zero guard: null estimate excluded ================"
 # Append a second done row whose estimate FAILED (null) — must NOT poison/divide.

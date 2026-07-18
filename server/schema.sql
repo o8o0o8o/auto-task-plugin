@@ -70,13 +70,18 @@ CREATE TABLE IF NOT EXISTS runs (
   checks_failed     INTEGER,
 
   -- project size + change heat (anonymous buckets/numbers only — no paths) [v2]
-  repo_files_bucket     TEXT,           -- "<100" | "100-1k" | "1k-10k" | …
-  primary_language      TEXT,           -- coarse family: js|ts|py|…
-  is_monorepo           INTEGER,        -- 0/1
-  churn_ratio           REAL,           -- 0..1 fraction of changed files touched before
-  hotspot_concentration REAL,           -- 0..1 biggest-file share of changed lines
-  dirs_touched          INTEGER,
-  max_depth             INTEGER,
+  -- FROZEN as of schema_version 4 (v0.23.0): the client no longer EMITS these —
+  -- at the current install base they can't reach statistical power as reporting
+  -- dimensions, and slicing a small ledger by them courts winner's-curse false
+  -- discoveries. Columns are RETAINED (never drop — old v2/v3 rows keep parsing);
+  -- v4+ rows simply store NULL here. Re-enable the client merge to resume.
+  repo_files_bucket     TEXT,           -- [v2, frozen v4] "<100" | "100-1k" | "1k-10k" | …
+  primary_language      TEXT,           -- [v2, frozen v4] coarse family: js|ts|py|…
+  is_monorepo           INTEGER,        -- [v2, frozen v4] 0/1
+  churn_ratio           REAL,           -- [v2, frozen v4] 0..1 fraction of changed files touched before
+  hotspot_concentration REAL,           -- [v2, frozen v4] 0..1 biggest-file share of changed lines
+  dirs_touched          INTEGER,        -- [v2, frozen v4]
+  max_depth             INTEGER,        -- [v2, frozen v4]
 
   -- user feedback (NULL unless the Phase-5 satisfaction prompt was answered)
   satisfaction      TEXT,               -- "yes" | "mostly" | "no"

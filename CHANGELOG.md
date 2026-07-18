@@ -2,6 +2,16 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.23.0]
+
+Reshapes run-outcome telemetry to be **actionable, not vanity** — and demotes the metric that was quietly misleading. Grounded in a review of how coding-agent teams actually measure quality.
+
+- **Test-verified quality is now the headline.** `auto-task-stats` leads with first-pass AC-pass, Gate-A/B defect capture, tests-added and flakiness. **Completion rate is demoted to a labeled "Liveness / operational (NOT a quality signal)" line** — reaching Handover is construct-invalid as quality (an agent can finish confidently wrong), so it is no longer presented as success.
+- **Rates now carry a Wilson 95% confidence interval + sample size** (`P% [lo–hi] (n=N)`) instead of a bare percentage; empty populations print `n=0 (no data)` — never a divide-by-zero.
+- **Version-over-version regression guard.** Compares the two most-recent plugin versions that each clear a sample floor and flags a metric only when its delta exceeds a minimum detectable effect; otherwise reports "insufficient data" honestly. Thresholds are env-configurable (`AUTO_TASK_STATS_MDE_PP` 15, `AUTO_TASK_STATS_RATIO_MDE` 0.5, `AUTO_TASK_STATS_MIN_SAMPLE` 10). Adds `plugin_version` to the local ledger row to enable grouping.
+- **Estimate→actual recalibration (suggest-only).** `auto-task-stats --recalibrate` prints suggested `estimate.sh` coefficient adjustments from the pooled actual/estimate ratios, gated behind a sample floor. It **never edits `estimate.sh`** — you apply it by hand.
+- **Repo-shape segment fields frozen (schema_version 4).** The speculative per-segment fields (`repo_files_bucket`, `primary_language`, `is_monorepo`, `churn_ratio`, `hotspot_concentration`, `dirs_touched`, `max_depth`) are no longer emitted in the remote payload — at the current install base they can't reach statistical power and slicing by them courts winner's-curse false discoveries. `hooks/repo-metrics.sh` is retained (still unit-tested); server columns are kept as legacy nullable (v4 rows store NULL) per the never-drop rule. Verified backward-compatible against the deployed ingest server (no required-field or schema_version gate).
+
 ## [0.22.0]
 
 Adds an **autonomy model with exception-triggered gates**. The pipeline can now run fully unattended (opt-in), stopping only when it hits real trouble — with the **merge** as the sole always-mandatory human gate. Autonomy, telemetry, landing style, and unattended-external authority are chosen once in a **first-run setup**.
