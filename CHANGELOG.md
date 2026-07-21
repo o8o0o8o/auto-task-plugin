@@ -2,6 +2,19 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.24.0]
+
+Tightens both **main-sync points** so a run always starts from — and hands over against — the latest default branch, keeping merge conflicts small and surfaced early. Also adds a **pipeline flowchart** to the README.
+
+### Changed
+
+- **Branch setup now pulls the default branch (a sanctioned exception to the "leave the shared checkout untouched" rule).** `skills/auto-task/SKILL.md`. Before cutting the run's branch, the setup step fast-forwards the local default branch to its remote with `git pull --ff-only` (switching the main working tree onto `<default>` when needed), then forks the new branch off the now-current default. This is the first half of the "pull main so there are no conflicts" contract, made explicit: the run starts on the freshest main, so integration conflicts surface (and resolve) as early as possible instead of piling up at handover. Best-effort and fail-open (offline / no-remote / non-fast-forward → branch from the local tip), with a hard **WIP guard**: if switching would clobber uncommitted work in the shared checkout, the pull is skipped and the branch is cut from `origin/<default>` — user work is never discarded.
+- **Phase 5 handover sync now advances the local default ref too.** `skills/auto-task/SKILL.md`. The pre-commit main-sync additionally fast-forwards the local `<default>` ref without a checkout (`git fetch origin "<default>":"<default>"`), mirroring branch setup so local main stays current at both ends of the run. Refused when `<default>` is checked out in another worktree or can't fast-forward — expected and ignored; the merge still integrates the freshly-fetched `origin/<default>`, so correctness is unaffected.
+
+### Added
+
+- **README pipeline flowchart.** A Mermaid diagram in a new "How it works" section maps the full pipeline — Setup → Define → Execute → Self-verify → Gate A → Code review → Gate B → Handover → merge gate, plus the optional post-PR phases (6 bot-review, 7 preview, 8 external change). It reflects the v0.22 autonomy model: supervised vs. autonomous modes, PR-vs-direct landing, first-run setup, the merge gate, and the interrupt-now gates. Solid vs. dashed borders distinguish always-runs steps from optional/conditional ones, alongside a legend and an autonomy × landing gate matrix.
+
 ## [0.23.0]
 
 Reshapes run-outcome telemetry to be **actionable, not vanity** — and demotes the metric that was quietly misleading. Grounded in a review of how coding-agent teams actually measure quality.
