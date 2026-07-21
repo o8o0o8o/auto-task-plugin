@@ -2,6 +2,95 @@
 
 End-to-end autonomous task workflow for Claude Code. Takes a task description from intake to pull request with mechanical enforcement of every protocol invariant.
 
+## How it works
+
+The pipeline runs unattended between two anchor points: the **Phase-1 plan** (a human gate in `supervised` mode; recorded but not waited on in `autonomous`) and the **merge gate** — the single mandatory human stop before work lands, as a PR merge or a direct-to-main merge per your landing model. High-risk runs always stop at the merge gate regardless of mode. Progress is durably recorded in `STATE.json`, so an interrupted run resumes where it paused.
+
+```mermaid
+flowchart TD
+    Start(["/auto-task &lt;description&gt;"]) --> Setup
+    Setup["SETUP · pre-flight<br/>version check · first-run setup (autonomy · landing · telemetry) · pull main · fresh worktree"] --> Recon
+
+    subgraph P1["PHASE 1 · DEFINE"]
+        direction TB
+        Recon["Recon · score effort tier + risk · clarify Q&amp;A"]
+        Plan["Write PLAN.md + acceptance criteria + assumptions ledger"]
+        Approve{"Plan approval<br/>supervised = human gate · autonomous = recorded, not waited on"}
+        Recon --> Plan --> Approve
+    end
+
+    Approve -->|revise| Plan
+    Approve -->|approved / auto-approved| Execute
+
+    Execute["PHASE 2 · EXECUTE<br/>implement plan — one growing diff, no commits"] --> Verify
+    Verify["PHASE 3 · SELF-VERIFY<br/>/auto-task-verify · types·unit·lint·build"]
+    Verify -->|pass| GateA
+    GateA{"GATE A · completeness<br/>runs on every tier"} -->|contract met| Review
+    Review["PHASE 4 · CODE REVIEW<br/>auto-task-code-review · 5-phase"] -->|clean| GateB
+    GateB{"GATE B · adversarial<br/>STANDARD / HEAVY"} -->|clean| Handover
+    GateB -.->|LIGHT tier skips| Handover
+
+    Verify -->|fail| Fix
+    GateA -->|findings| Fix
+    Review -->|blocker / required| Fix
+    GateB -->|findings| Fix
+    Fix["auto-task-fix<br/>then re-verify + re-review"] --> Verify
+
+    Fix -.->|loop rule: no progress · out of scope · blocked · flaky| Surface(["STOP &amp; surface to user"])
+    Execute -.->|interrupt-now: ambiguity · destructive op · test integrity · budget| Surface
+
+    subgraph P5["PHASE 5 · HANDOVER"]
+        direction TB
+        Handover["re-sync main · single commit · CONTEXT.md"]
+        Merge{"MERGE GATE — the one mandatory human stop<br/>required when supervised, autonomous+direct, or risk >= threshold"}
+        Handover --> Merge
+    end
+
+    Merge -->|hold| Done(["✓ done"])
+    Merge -->|ack| Land["LAND<br/>pr: push + open/merge PR · direct: merge to default branch"]
+    Merge -.->|autonomous + low-risk pr: auto-ack| Land
+    Land --> Done
+    Land -.->|post-PR, if applicable| P6
+
+    subgraph POST["POST-PR — optional · each runs only if its condition holds"]
+        direction TB
+        P6["PHASE 6 · Bot-comment review<br/>opt-in: bot_review_autofix"]
+        P7["PHASE 7 · Preview verification<br/>opt-in / auto-learned"]
+        P8["PHASE 8 · External change apply<br/>only if external actions declared"]
+        P6 -.-> P7 -.-> P8
+    end
+    P8 -.-> Done
+
+    classDef human fill:#fbf1de,stroke:#b5730a,stroke-width:2px,color:#3a2a05;
+    classDef gate fill:#dcf1f2,stroke:#0d7b83,stroke-width:2px,color:#043033;
+    classDef phase fill:#e9edfd,stroke:#3550d6,stroke-width:1.5px,color:#0f1a52;
+    classDef fix fill:#eee7fb,stroke:#6b40cf,stroke-width:1.5px,color:#2a1358;
+    classDef term fill:#e0f2e6,stroke:#1f8a4c,stroke-width:2px,color:#0a3d20;
+    classDef stop fill:#fbe3e3,stroke:#c92a2a,stroke-width:1.5px,color:#5c0d0d;
+    classDef cond fill:#eaeef3,stroke:#5a6675,stroke-width:1.5px,stroke-dasharray:5 4,color:#28313c;
+
+    class Approve,Merge human;
+    class GateA,GateB gate;
+    class Setup,Recon,Plan,Execute,Verify,Review,Handover,Land phase;
+    class Fix fix;
+    class Start,Done term;
+    class Surface stop;
+    class P6,P7,P8 cond;
+```
+
+**Legend — solid border = always runs · dashed border = optional / conditional.** 🟦 phase / action · 🟨 human gate · 🟩 independent verifier gate (A/B) · 🟪 fix / review loop · ⬜ optional post-PR phase · 🟥 stop &amp; surface.
+
+**Where the human stops (autonomy × landing model, chosen once at first-run setup):**
+
+| mode | `pr` landing | `direct` landing |
+|---|---|---|
+| `supervised` (default) | plan approval + push/PR prompt | plan approval + prompt before landing |
+| `autonomous` | plan recorded; low-risk auto-acks (disclaimer in PR body) | plan recorded; **merge-gate ack** before landing |
+
+Any run with `effort.risk >= risk_gate_threshold` forces the **merge gate** regardless of mode. The **interrupt-now gates** (ambiguity · destructive op · test integrity · budget) can halt the run during any unattended phase, not just Phase 2.
+
+**Always runs:** Setup → Define → Execute → Self-verify → Gate A → Code review → Handover → merge gate. **Conditional:** Gate B runs on STANDARD/HEAVY only (LIGHT skips it). **Optional (opt-in / only when applicable):** Phase 6 bot-comment review, Phase 7 preview verification, Phase 8 external-change application. Effort tier (LIGHT / STANDARD / HEAVY, scored in Phase 1) sets the verify scope, fix-loop cap, and whether Gate B runs.
+
 ## Autonomy modes & the merge gate (v0.22)
 
 auto-task can run in two modes, chosen once per project in a **first-run setup** (four questions: telemetry, autonomy, landing style, unattended-external):
