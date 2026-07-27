@@ -113,9 +113,11 @@ auto-task can run in two modes, chosen once per project in a **first-run setup**
   - `block-ai-attribution.sh` (PreToolUse on Bash): refuses commits and PR bodies containing `Co-Authored-By: Claude`, `🤖 Generated`, etc.
   - `enforce-gates.sh` (PreToolUse on Bash): blocks `git commit` during an auto-task run unless `gates.code_review.passed`, `gates.code_review.tool === "skill:auto-task-code-review"`, `gates.code_review.clean_pass_after_last_fix`, and Gate B's gate (or skip reason) are all satisfied. It also enforces **review staleness** — if `git diff <base>` no longer hashes to the recorded `gates.code_review.reviewed_diff_sha`, code changed after the review went clean and the commit is blocked until a re-review. It also carries the **checkout-drift block** — a `git commit` while the working tree sits on a branch other than an active in-place run's branch is blocked (previously a silent fail-open). Fails closed: with `jq` missing or `STATE.json` unparseable during an active run, it blocks rather than letting the commit through.
   - `warn-checkout-drift.sh` (PreToolUse on Bash): informational, NEVER blocks. Warns on every command when an active run exists on a branch other than the one checked out (the proactive half of the checkout-drift guard; the enforce-gates block is the mechanical half). Silent and near-free in non-auto-task repos.
+  - `guard-dangerous-ops.sh` (PreToolUse on Bash): fail-closed interrupt during an active run. Blocks commands outside the safe action envelope — destructive filesystem removals, force-push to a protected branch, destructive SQL, infrastructure delete/apply, migration-apply, deploy/publish — unless `unattended_external` is true, so the model must surface them instead of running them unattended. Raw-mode aware; benign build cleanup and own-branch force-push are allowed. See "Autonomy modes & the merge gate".
   - `prevent-mid-protocol-stall.sh` (Stop event): blocks turn-ends mid-pipeline by reading `expected_next_action` from STATE.json. The antidote to sub-skill output looking completion-shaped.
   - `record-outcome.sh` (Stop event): **opt-in, never blocks.** When `.auto-task/outcomes.jsonl` exists and a run reaches `phase: done`, appends one derived JSON row (fields from STATE.json — no network, no new data). A base-keyed sentinel makes it write once per run. Silent no-op unless opted in. Read by `auto-task-stats`. See "Run telemetry (opt-in)".
   - `send-telemetry.sh` (Stop event): **opt-in, off by default, never blocks.** The **remote** counterpart to `record-outcome.sh` — when `telemetry_enabled`+`telemetry_endpoint` are set (see "Remote telemetry"), POSTs an anonymized quality/perf row to your HTTPS endpoint at `phase: done`. Bounded, fail-open, write-once per run. Silent no-op unless opted in.
+  - `release-notes.sh` (SessionStart): best-effort "what's new" notice. The first session after the installed version changes, it prints a short user-facing summary of everything you gained, read from the bundled `.claude-plugin/release-notes.json` — **no network, no changelog parsing**. Shown once per version via a stamp at `~/.claude/auto-task/last-seen-version`; a fresh install is silent (no delta to report), and a release with nothing user-visible produces nothing. Fails open and silent on every error path, and if the stamp can't be written the notice is suppressed rather than repeated every session. See "Release notes" under Updating.
   - `check-version.sh` (SessionStart): best-effort update notice. Once per 24h it compares the installed version against the published `plugin.json` on GitHub and, if you're behind, prints a one-line reminder to run `/plugin update auto-task@auto-task-plugin`. Fails open and silent when current, offline, or unparseable — this cached SessionStart notice never blocks or slows a session. **Per-run version check:** on top of that notice, `/auto-task` Phase 1 runs a fresh **per-run version check** (the same script via `--plain`, throttle bypassed) at the start of every NEW run and, if you're behind, asks once whether to auto-apply the update (via `hooks/apply-update.sh` — no manual command) or proceed on the current version. It is separately bounded (`--connect-timeout 2 -m 5`) and fully fail-open — it never blocks the run and never touches the SessionStart throttle stamp. Skipped on resume.
   - `suggest-cleanup.sh` (SessionStart): best-effort, non-destructive worktree-cleanup nudge. Cheap and **local-only** (no `du`, no network) and throttled once per `worktree_cleanup_throttle_hours` **per clone**; when ≥1 auto-task worktree looks reclaimable (merged, or clean-and-stale past its per-type threshold) it prints a one-line suggestion to run `/auto-task-gc`. Never deletes, never blocks; fails open and silent, and is gated off by `worktree_cleanup_nudge: false`. See "Worktree space control".
 - **`inject-history-reminder.sh`** (`UserPromptSubmit`, opt-in): tells non-bundled tools that an `.auto-task/<branch>/` history folder exists for the current branch. **Wired but OFF by default** — it stays silent unless you enable it with `settings.sh set history_reminder_enabled true` (works identically for marketplace and `install.sh`). Even when enabled it emits nothing outside auto-task branches, so unrelated prompts pay no token cost.
@@ -130,7 +132,7 @@ This repo is its own plugin marketplace. From inside Claude Code:
 /plugin install auto-task@auto-task-plugin
 ```
 
-That copies the plugin into your plugin cache and **auto-wires everything** — the ten skills, the `task-execution-verifier` agent, and all eight core hooks (`hooks/hooks.json`). No `settings.json` editing, no symlinks, no `install.sh`.
+That copies the plugin into your plugin cache and **auto-wires everything** — the ten skills, the `task-execution-verifier` agent, and all ten core hooks (`hooks/hooks.json`). No `settings.json` editing, no symlinks, no `install.sh`.
 
 Plugin skills are namespaced under the plugin name, so you invoke the orchestrator as:
 
@@ -157,6 +159,24 @@ You can also run the updater standalone (`bash hooks/apply-update.sh`) or update
 ```
 
 The bundled `check-version.sh` SessionStart hook also reminds you (at most once per day) when a newer version has been published, so you don't have to remember to check. Updates ship only when the maintainer bumps `version` in `plugin.json`.
+
+#### Release notes — what you just got
+
+You never have to read the changelog to find out what an update did. The first session on a new version, the bundled `release-notes.sh` hook prints a short, **user-facing** summary of everything you gained:
+
+```
+auto-task is now on 0.24.0 — what's new:
+  • 0.24.0 — Tightens both main-sync points so a run always starts from the latest default branch…
+  • 0.23.0 — Reshapes run-outcome telemetry to be actionable, not vanity…
+```
+
+It reads `.claude-plugin/release-notes.json`, which ships with the plugin — **no network request** — and shows each version exactly once, tracked by a single stamp at `~/.claude/auto-task/last-seen-version`. A **fresh install stays silent** (there is no delta to report), and when several versions landed at once you get the newest three plus a `(+N earlier releases in these notes)` line. The qualifier is deliberate: the bundled file keeps only the newest ten releases, so for a wider gap that count is what these notes hold, not everything you gained.
+
+**Only user-visible changes appear.** A release that changes nothing you can observe — an internal refactor, a dev-only tool, a docs sync — is marked `<!-- release-notes: skip -->` in the changelog and produces no note and no notice, rather than filler.
+
+Strictly best-effort: a missing or unreadable notes file, or no `jq`, means you simply see nothing — never an error and never a slower session. If the "already shown" stamp cannot be written, the notice is suppressed rather than repeated every session.
+
+> **Not included: a "what *would* I get?" preview before updating.** An earlier version of this feature also fetched the notes for versions you did not have yet and appended them to the update notice. It was dropped: rendering a file fetched over the network kept opening ways for hostile JSON to forge notice lines or blow the message size, and the input space is unbounded. Reading only the bundled artifact removes that trust boundary instead of adding another layer of validation to it.
 
 ### Optional / opt-in
 
@@ -496,6 +516,23 @@ The measurement helpers are pure, deterministic, fail-open (they never break a r
 ## Pruning history & worktrees
 
 Per-branch folders under `.auto-task/` never auto-prune during a run. Reclaim them (and the far larger worktree checkouts) with **`/auto-task-gc`**, which removes reclaimable worktrees and prunes their matching `.auto-task/<branch>/` in one pass — see "Worktree space control" above. For a `.auto-task/<branch>/` folder that has no worktree, `rm -rf .auto-task/<old-branch>/` by hand. Nothing in the plugin depends on stale folders being present.
+
+## Releasing (maintainers)
+
+Cutting a release is a dedicated commit, separate from the feature commits it describes:
+
+1. **Write the changelog entry.** Add a `## [X.Y.Z]` section to `CHANGELOG.md` opening with a one-paragraph lead that describes the release **from the user's point of view** — that paragraph becomes the release note users actually see.
+   - If the release changes nothing a user can observe (internal refactor, dev-only tooling, a docs sync), add `<!-- release-notes: skip -->` so it produces **no** note. Unmarked releases are included by default.
+   - To show different wording than the lead paragraph, use `<!-- release-notes: your short text -->`.
+   - **Put either marker directly under the `## [X.Y.Z]` heading**, above the lead paragraph. A marker written lower down is treated as an *example* rather than an instruction — otherwise a release that documents this feature would delete its own note — and the generator refuses to write until you move it. If you do want to show the marker in an entry, put it in a fenced code block or inline code (an unfenced HTML comment renders as nothing anyway).
+2. **Bump the version** in `.claude-plugin/plugin.json` *and* `.claude-plugin/marketplace.json` (they must match). Do this *before* step 3 — the generator cross-checks the version it finds in `plugin.json`, so bumping first is what lets it verify the release you are actually shipping.
+3. **Regenerate the notes file** — `scripts/build-release-notes.sh`. This distills `CHANGELOG.md` into `.claude-plugin/release-notes.json` (newest 10 releases, each capped at 300 characters) and must be committed alongside the changelog. `scripts/build-release-notes.sh --check` reports staleness without writing; `--stdout` previews.
+   - It **refuses to write** rather than ship a release with no notes, and says which problem it found. The one worth recognising: *"the version being shipped … has no note and no skip marker"* means the `## [X.Y.Z]` heading for that version is missing or mistyped (it must match exactly — no extra spaces, no leading `v`, three components), or the entry produced no usable text. Fix the heading or the entry; do not work around it.
+4. **Verify.** Run `tests/release-notes-sync.test.sh` — it fails if the committed `release-notes.json` and a fresh generation disagree, which is the guard against a changelog entry shipping without its note.
+5. **If your entry contains a fenced code block, close it.** That is the one malformed shape nothing can catch for you: a fence left unclosed *inside* its own entry but closed by a later ` ``` ` is balanced overall, so every release heading it spans is swallowed with no diagnostic. It eats the *older* entries below it rather than yours, so eyeballing the file for your own version would not reveal it. Nesting is handled correctly — showing a fenced block inside a longer fence works as CommonMark specifies — so this only happens with a genuinely unbalanced fence, which most markdown renderers also render wrongly.
+6. **Commit** as `chore(release): vX.Y.Z`, tag it annotated, and push the commit and the tag.
+
+> **Note:** there is no CI in this repo, so nothing runs these steps for you. Two things do check your work once you run them: the generator itself refuses to write when the version in `plugin.json` has no note and no `skip` marker (step 3), and the drift test catches a changelog edited without regenerating (step 4). If you edit `CHANGELOG.md` and skip step 3 entirely, the test suite is what tells you.
 
 ## License
 

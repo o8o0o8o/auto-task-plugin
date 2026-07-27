@@ -138,7 +138,8 @@ Paths below are absolute and point at this clone ($REPO_ROOT).
         "hooks": [
           { "type": "command", "command": "$REPO_ROOT/hooks/block-ai-attribution.sh" },
           { "type": "command", "command": "$REPO_ROOT/hooks/enforce-gates.sh" },
-          { "type": "command", "command": "$REPO_ROOT/hooks/warn-checkout-drift.sh" }
+          { "type": "command", "command": "$REPO_ROOT/hooks/warn-checkout-drift.sh" },
+          { "type": "command", "command": "$REPO_ROOT/hooks/guard-dangerous-ops.sh" }
         ]
       }
     ],
@@ -155,16 +156,29 @@ Paths below are absolute and point at this clone ($REPO_ROOT).
     "SessionStart": [
       {
         "hooks": [
+          { "type": "command", "command": "$REPO_ROOT/hooks/release-notes.sh" },
           { "type": "command", "command": "$REPO_ROOT/hooks/check-version.sh" },
           { "type": "command", "command": "$REPO_ROOT/hooks/suggest-cleanup.sh" }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "$REPO_ROOT/hooks/inject-history-reminder.sh" }
         ]
       }
     ]
   }
 }
 
-If you already have entries under "hooks.PreToolUse", "hooks.Stop", or
-"hooks.SessionStart", append to the existing arrays rather than overwriting them.
+If you already have entries under "hooks.PreToolUse", "hooks.Stop",
+"hooks.SessionStart", or "hooks.UserPromptSubmit", append to the existing arrays
+rather than overwriting them.
+
+(inject-history-reminder.sh is wired but stays OFF until you enable it with
+ settings.sh set history_reminder_enabled true — see README.)
 EOF
 }
 

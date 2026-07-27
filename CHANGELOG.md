@@ -49,6 +49,8 @@ Adds an **autonomy model with exception-triggered gates**. The pipeline can now 
 
 ## [0.21.0]
 
+<!-- release-notes: skip -->
+
 Adds a **verifier regression eval harness** (`eval/`) — a maintainer tool that checks whether the `task-execution-verifier` (Gate A completeness) can still tell a genuinely-correct patch from a plausible-but-wrong one, under attention load.
 
 ### Added
@@ -100,6 +102,8 @@ Adds **external actions** — first-class handling for tasks that need a change 
 - **Post-PR phase chain** extended to Phase 6 → 7 → 8; the Phase-5 terminal ladder, yield-point contract table, `phase` enum, and NON-YIELDING contract updated accordingly.
 
 ## [0.17.1]
+
+<!-- release-notes: skip -->
 
 Documentation sync — corrected stale doc↔code cross-references (no behavior change to the pipeline). Landed via `/auto-task`.
 
