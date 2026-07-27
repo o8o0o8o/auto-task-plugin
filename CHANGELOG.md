@@ -2,6 +2,22 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.25.0]
+
+Adds a **what's new notice** after the plugin updates. A SessionStart hook shows a short summary of the version you just received, read from a file bundled with the plugin — no network request. Only user-visible changes appear; internal releases produce no note at all.
+
+### Added
+
+- **Post-update release notes.** `hooks/release-notes.sh` + `hooks/lib/release-notes-render.sh`, wired as a `SessionStart` hook. When the installed version differs from the last one you saw, the session opens with a short per-release summary. Each version is shown **at most once**, tracked by a single stamp at `~/.claude/auto-task/last-seen-version`. A **first install is silent** (there is no delta to report), and a user many versions behind gets a **bounded** notice — the newest three plus a `(+N earlier releases in these notes)` line — rather than a wall of text. Fail-open throughout: every error path exits 0 with no output on either stream, and a failure to *determine* the last-seen version leaves the stamp alone so the notice is retried next session instead of being silently consumed.
+- **`CHANGELOG.md` is the single source of truth.** `scripts/build-release-notes.sh` (using the extractor `hooks/lib/changelog-notes.sh`) distills each release's lead paragraph into `.claude-plugin/release-notes.json` — newest 10 releases, each capped at 300 characters, markdown flattened to plain text. The runtime hook reads only that bundled artifact, so no session ever parses a 100 KB markdown file. `--check` reports staleness without writing; `--stdout` previews.
+- **Curation, so only user-visible changes ship.** A release that changes nothing you can observe is marked in its changelog block with an HTML comment (`release-notes: skip` — see the Releasing checklist in the README for the exact spelling) and produces **no** note; unmarked releases are included by default. A second form overrides the wording shown. The marker must be the **first content** of the release block: written lower down it is an *example* rather than an instruction, so a release documenting this feature cannot delete its own note.
+- **The generator refuses to write rather than ship a release with no notes.** It cross-checks the version in `plugin.json` against the generated notes, so a mistyped heading or a forgotten changelog entry fails at generation time instead of silently dropping that release; and it reports a malformed, misspelled or mispositioned curation marker instead of ignoring it. `tests/release-notes-sync.test.sh` fails if the committed artifact and a fresh generation disagree.
+- **README "Releasing (maintainers)" checklist**, so the next release regenerates the notes file. Bump the version *before* regenerating — the generator validates against `plugin.json`.
+
+### Fixed
+
+- **`install.sh` was missing `guard-dangerous-ops.sh`.** Since v0.22.0, users who installed by hand (rather than via the marketplace) never had the fail-closed dangerous-ops interrupt wired, despite the README describing it as always-on. The `UserPromptSubmit` block was missing too, so `inject-history-reminder.sh` could not be enabled either. `settings-fragment.json` had both all along, making `install.sh` the only surface that had drifted. Parity between `hooks/hooks.json`, `install.sh` and `settings-fragment.json` is now checked structurally per event, so a hook added to one and not the others fails the suite.
+
 ## [0.24.0]
 
 Tightens both **main-sync points** so a run always starts from — and hands over against — the latest default branch, keeping merge conflicts small and surfaced early. Also adds a **pipeline flowchart** to the README.
