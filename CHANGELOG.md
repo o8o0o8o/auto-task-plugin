@@ -2,6 +2,22 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.26.0]
+
+Adds two **optional end-of-run steps**: a **docs update** that refreshes the repo's user-facing docs when a run changed the behavior they describe, and a **release step** that cuts the version bump, changelog entry, commit and annotated tag — locally, never pushing or publishing. Both are off by default. Also makes the **fix-loop budget** real: the effort tier's cap has always been documented and nothing enforced it, so a run could iterate far past it.
+
+### Added
+
+- **Optional docs-update step (Phase 5 step 1b), off by default.** A new project setting `docs_update_mode` decides what happens when a run changes behavior the docs describe: `skip` (default — never run it, never ask), `always` (refresh every run), or `ask` (prompt, but **only when there is actually something to update**, so a run with no stale docs stays silent). Scoped to `README.md` and `docs/**` via the bundled `auto-task-docs` skill; the edits join the single handover commit rather than adding one. It joins the first-run policy questions as the fifth, via a `SETTINGS_SCHEMA_VERSION` 2→3 bump, so already-configured projects are re-asked once — with a restorable `.pre-2` backup, and the shared global settings file untouched.
+- **Optional release step (Phase 9), off by default.** `release_mode` (`skip` default / `ask` / `always`) cuts a release for work that already landed: it derives the version bump *with the evidence that produced it*, writes the `CHANGELOG.md` entry, runs your own `release_command` to bump the version files, then commits `chore(release): vX.Y.Z` and an annotated tag. **Local only — it never pushes and never publishes.** The bump is delegated rather than guessed: with no `release_command` configured it emits a paste-ready runbook and changes nothing. The release commit re-passes the full gate loop before it can land, and is fully unwindable (`git tag -d` + `git reset --hard HEAD~1`). An interrupted release is **surfaced for you to resolve, never auto-resumed** — the guarantee is that it never silently re-cuts and never reports success.
+- **The fix-loop budget is now enforced.** The effort tier has always carried a cap (LIGHT 2 / STANDARD 4 / HEAVY 6) that nothing read — a real run reached 33 rounds against a cap of 6. The commit gate and the Stop hook now measure `max(iteration.fix, iteration.review)` against it and require an explicit acknowledgement to continue past it.
+- **Run metrics.** A pre-execution estimate (duration + tokens) surfaced at the approval gate, measured actuals at handover, and a quality **signals panel** — deliberately not a composite score, since a single number is gameable and hides what one run cannot see.
+
+### Fixed
+
+- **The over-budget acknowledgement snippet targeted a relative state path.** The block prints a `jq` command to paste, and it pointed at a relative `.auto-task/<branch>/STATE.json` while the hook already held the absolute path. Pasted from a subdirectory it merely failed and the documented recovery silently did nothing; pasted from a different checkout sharing the branch name — two worktrees of one clone — it could write to the wrong run's state.
+- **Phase-9 precision, 16 items.** Corrections to the release step's own spec and the assertions that guard it: the commit-step `failed` bullet no longer implies it raises a release-command failure (that happens earlier, in the skill's apply substep); the `git ls-remote` probe's "tag absent" and "remote unreachable" readings are told apart by exit status rather than by empty output; the "fully reversible locally" unwind claim is qualified for a command that pushes the commit without the tag; and an accepted partial failure now records a discriminator the resume check can see, so an interrupt cannot re-surface a decision you already made.
+
 ## [0.25.0]
 
 Adds a **what's new notice** after the plugin updates. A SessionStart hook shows a short summary of the version you just received, read from a file bundled with the plugin — no network request. Only user-visible changes appear; internal releases produce no note at all.
