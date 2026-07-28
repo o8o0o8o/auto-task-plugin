@@ -411,6 +411,18 @@ expect_eq "README core-hook count matches hooks.json minus the gated opt-in" \
   "$(grep -c "$(count_word "$always_on") core hooks" "$README")" "1"
 expect_eq "no stale core-hook count survives in README" \
   "$(grep -cE '(eight|nine) core hooks' "$README")" "0"
+# GB6#5: the README skill counter went stale (said "ten skills" while install.sh
+# wired 12). Pinned the same way the hook count above is — derived from the source
+# of truth, not hardcoded — so the next skill addition fails loudly here instead of
+# leaving a wrong number in the install instructions. install.sh's SKILLS array is
+# that source: it is what the fallback installer actually symlinks.
+n_skills="$(sed -n 's/^SKILLS=(\(.*\))$/\1/p' "$REPO/install.sh" | tr ' ' '\n' | grep -c .)"
+expect_eq "install.sh SKILLS array is parseable" "$([ "$n_skills" -ge 8 ] && echo ok || echo "no ($n_skills)")" "ok"
+expect_eq "README skill count matches install.sh SKILLS" \
+  "$(grep -c "$(count_word "$n_skills") skills" "$README")" "2"
+expect_eq "no stale skill count survives in README" \
+  "$(grep -cE '(eight|nine|ten|eleven) skills' "$README")" "0"
+
 missing_bullets=""
 for h in $all_hooks; do
   case " $GATED_HOOKS " in *" $h "*) continue ;; esac

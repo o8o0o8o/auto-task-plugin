@@ -132,7 +132,7 @@ This repo is its own plugin marketplace. From inside Claude Code:
 /plugin install auto-task@auto-task-plugin
 ```
 
-That copies the plugin into your plugin cache and **auto-wires everything** — the ten skills, the `task-execution-verifier` agent, and all ten core hooks (`hooks/hooks.json`). No `settings.json` editing, no symlinks, no `install.sh`.
+That copies the plugin into your plugin cache and **auto-wires everything** — the twelve skills, the `task-execution-verifier` agent, and all ten core hooks (`hooks/hooks.json`). No `settings.json` editing, no symlinks, no `install.sh`.
 
 Plugin skills are namespaced under the plugin name, so you invoke the orchestrator as:
 
@@ -193,7 +193,7 @@ cd ~/.claude/auto-task-plugin
 ./install.sh
 ```
 
-It symlinks the ten skills into `~/.claude/skills/` and the verifier agent into `~/.claude/agents/`, then prints a settings snippet with absolute paths for the hooks. Merge that snippet into `~/.claude/settings.json` — preserve your existing keys, append to the `hooks.PreToolUse` / `hooks.Stop` arrays if they already exist. The skills load without the merge, but the gate-enforcement and anti-stall hooks won't fire. With this path the skills are invoked by their bare names (`/auto-task`), not namespaced.
+It symlinks the twelve skills into `~/.claude/skills/` and the verifier agent into `~/.claude/agents/`, then prints a settings snippet with absolute paths for the hooks. Merge that snippet into `~/.claude/settings.json` — preserve your existing keys, append to the `hooks.PreToolUse` / `hooks.Stop` arrays if they already exist. The skills load without the merge, but the gate-enforcement and anti-stall hooks won't fire. With this path the skills are invoked by their bare names (`/auto-task`), not namespaced.
 
 Pass `--copy` instead of the default to copy files (no symlinks), or `--uninstall` to remove the links. To update: `git pull` inside the clone (symlinks pick up changes automatically; if you used `--copy`, re-run `./install.sh`). The SessionStart update-notice fires under either install path — `check-version.sh` self-locates its manifest (via `${CLAUDE_PLUGIN_ROOT}` under the marketplace install, or relative to its own path for the `install.sh`/symlink layout).
 

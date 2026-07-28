@@ -81,13 +81,17 @@ flowchart TD
     P9Run -- "nothing to release" --> Done
     P9Run -- "release_command unset" --> P9Book[status runbook<br/>paste-ready steps, nothing run]
     P9Book --> Done
+    P9Run -. "report-only blocker &#40;pre-existing tag, absent<br/>CHANGELOG, command self-commits&#41;" .-> P9Part
     P9Run -- "ask + something to release" --> P9Ask{cut this release?<br/>degrades to always under<br/>autonomous / headless}
     P9Ask -- no --> Done
-    P9Ask -- yes --> P9Gate
-    P9Run -- "always + something to release" --> P9Gate[re-verify + re-auto-task-code-review<br/>refresh reviewed_diff_sha<br/>reset + re-run Gate B on STANDARD/HEAVY]
+    P9Ask -- yes --> P9Apply
+    P9Run -- "always + something to release" --> P9Apply[skill: auto-task-release — apply<br/>write changelog entry, run release_command,<br/>verify the bump landed — does NOT commit]
+    P9Apply -. "non-zero release_command<br/>&#40;apply substep 4.2&#41;" .-> P9Part
+    P9Apply --> P9Gate[re-verify + re-auto-task-code-review<br/>refresh reviewed_diff_sha<br/>reset + re-run Gate B on STANDARD/HEAVY]
+    P9Gate -. "re-gate not clean" .-> P9Part
     P9Gate --> P9Cut[chore&#40;release&#41;: vX.Y.Z + annotated tag<br/>LOCAL ONLY — never push, never publish]
     P9Cut --> Done([phase=done, run recorded])
-    P9Cut -. interrupted / commit without tag / blocker .-> P9Part([status in-progress / partial-failure / failed<br/>SURFACED for manual resolution —<br/>never auto-resumed, retried or reverted<br/>hands over the continuation AND the undo commands])
+    P9Cut -. "interrupted / commit without tag" .-> P9Part([status in-progress / partial-failure / failed<br/>SURFACED for manual resolution —<br/>never auto-resumed, retried or reverted<br/>hands over the continuation AND the undo commands])
 
     %% Loop-rule global exits
     P3 -. no progress / out-of-scope /<br/>blocker / flakiness .-> Surface([Surfacing protocol<br/>save state, write status, wait])
@@ -112,7 +116,7 @@ On a NEW run, before branch setup, Phase 1 also runs a best-effort **per-run ver
 | 5 Handover | optional `auto-task-docs` skill (step 1b) + `auto-task-commit` skill + `gh pr create` | **YES — single commit** (docs edits join it) | PR opened (or user holds push) | gates fail → surface (do not bypass hook) |
 | 6 Bot-comment review (opt-in) | `pr-bot-comments.sh` + full verify → `auto-task-code-review` → gate → commit loop | **YES — gate-reviewed bot-fix commits** (only when `bot_review_autofix`) | bot comments triaged; safe fixes applied + pushed, rest parked | fork-PR / no-push → fail-open skip |
 | 7 Preview verification (gated) | preview URL resolution + URL-AC checks (`playwright`/`curl`) | no | verdict PASS/FAIL/INCONCLUSIVE recorded (or handoff/timeout) | no URL → skip gracefully; FAIL → done-with-negative-verdict |
-| 9 Release (gated, opt-in) | optional `auto-task-release` skill + the project's `release_command` | **YES — one gate-reviewed release commit** (+ annotated tag; only when `release_mode` is `always`/`ask`) | `chore(release): vX.Y.Z` committed and tagged **locally** — never pushed, never published | `release_command` unset → runbook; `landing_model=pr` → `deferred-pr`; command fails → `failed`; commit without tag → `partial-failure`, surfaced with the unwind |
+| 9 Release (gated, opt-in) | optional `auto-task-release` skill + the project's `release_command` | **YES — one gate-reviewed release commit** (+ annotated tag; only when `release_mode` is `always`/`ask`) | `chore(release): vX.Y.Z` committed and tagged **locally** — never pushed, never published | `release_command` unset → runbook; `landing_model=pr` → `deferred-pr`; command fails at apply substep 4.2 → `failed`; commit without tag → `partial-failure`, surfaced with the unwind |
 
 Phases 2–4 accumulate one growing uncommitted diff against the base branch. **Phase 5 produces the single authored commit; the opt-in Phase 6 (bot-fixes) and Phase 9 (release) may add further authored commits, each individually gate-reviewed** (the only exceptions to "one commit" beyond the main-sync merge). Post-PR Phases 6–7 run only when a push happened.
 

@@ -94,7 +94,12 @@ expect "ordering: entry sets phase=release"  "$(grep -c '^\*\*On entry, set `pha
 expect "ordering: phase enum has release"    "$(has "$SKILL" 'external|release|done')"                               "yes"
 expect "ordering: release owns the done write" "$(has "$SKILL" 'it is the **last writer of `phase: "done"`**')"       "yes"
 expect "ordering: runs before done, not after" "$(has "$SKILL" 'after `done` the gate hook exits 0')"                "yes"
-expect "ordering: phase-5 routes to release"  "$(has "$SKILL" '**Else release applicable**')"                        "yes"
+# Gate A follow-up #2: `**Else release applicable**` is a prefix shared by the
+# Phase-5 fork AND the Phase-6 fork, so this pin matched either one — the Phase-6
+# site has its own more specific pin below, leaving the Phase-5 site effectively
+# unpinned. Anchored on the Phase-5-only parenthetical instead.
+expect "ordering: phase-5 routes to release" \
+  "$(has "$SKILL" '**Else release applicable** (no bot-review, no preview, no external actions')"                      "yes"
 expect "ordering: phase-8 routes to release"  "$(has "$SKILL" 'the release step is applicable? → set `phase: "release"`')" "yes"
 # The named guard is the mechanism that stops an EARLIER phase writing `done`
 # while a configured release still owes work. It must be referenced at more than
@@ -125,13 +130,30 @@ expect "yield: degrades under autonomous/headless" "$(has "$SKILL" 'release_mode
 # absolute claiming a maximum number of prompts must stay explicitly Phase-5-scoped,
 # because Phase 9 adds a prompt OUTSIDE Phase 5. An unscoped claim would be false
 # and would lead a model to skip the release ask.
-promptmax="$(grep -nE 'exactly two|at most 2|at-most-two|only the two' "$SKILL" "$ARCH" \
+# Gate A follow-up #1: the scoping test was enforced per LINE, so an ADDED unscoped
+# claim was caught but an IN-PLACE de-scoping was not — appending an unscoped
+# prompt-max sentence to an existing long line that mentions Phase 5 *elsewhere*
+# left the whole line matching `Phase.?5` and slipped through. These files are
+# written in very long paragraph-lines, so that is the likely shape of the
+# regression, not the unlikely one. Now sentence-scoped: each line is split into
+# sentences, and every SENTENCE carrying a prompt-max claim must itself be
+# Phase-5-scoped. Same fail-closed contract; finer granularity.
+promptmax_lines="$(grep -nE 'exactly two|at most 2|at-most-two|only the two' "$SKILL" "$ARCH" \
   | grep -iE 'prompt|interaction surface' || true)"
 expect "absolutes: prompt-max claims exist to check" \
-  "$([ "$(printf '%s' "$promptmax" | grep -c .)" -ge 2 ] && echo ok || echo no)" "ok"
-unscoped="$(printf '%s' "$promptmax" | grep -vE 'Phase.?5' || true)"
-expect "absolutes: every prompt-max claim is Phase-5-scoped" "$(printf '%s' "$unscoped" | grep -c .)" "0"
-[ -n "$unscoped" ] && printf '        offending line(s):\n%s\n' "$unscoped"
+  "$([ "$(printf '%s' "$promptmax_lines" | grep -c .)" -ge 2 ] && echo ok || echo no)" "ok"
+# Split every matched line into sentences, keep only the sentences that actually
+# carry a prompt-max claim, then require each of those to name Phase 5.
+unscoped="$(printf '%s\n' "$promptmax_lines" \
+  | perl -ne 'chomp; ($loc,$rest)=/^([^:]*:\d+):(.*)$/ or next;
+              for my $s (split /(?<=[.!?])\s+/, $rest) {
+                next unless $s =~ /exactly two|at most 2|at-most-two|only the two/;
+                next unless $s =~ /prompt|interaction surface/i;
+                print "$loc: $s\n" unless $s =~ /Phase.?5/;
+              }' || true)"
+expect "absolutes: every prompt-max claim is Phase-5-scoped (sentence-scoped)" \
+  "$(printf '%s' "$unscoped" | grep -c .)" "0"
+[ -n "$unscoped" ] && printf '        offending sentence(s):\n%s\n' "$unscoped"
 expect "absolutes: release ask named in contract" "$(has "$SKILL" 'and in Phase 9 the release ask')"                  "yes"
 expect "absolutes: two report-only exceptions"  "$(has "$SKILL" 'There are two further exceptions, and only these two')" "yes"
 expect "absolutes: post-PR range is 6-9"        "$(has "$SKILL" 'The post-PR surfaces of Phases 6-9')"                "yes"
@@ -296,9 +318,9 @@ expect "reentry: a stale step name is surfaced too" \
   "$(has "$SKILL" 'names a stage this version of the phase no longer has')"                                              "yes"
 # GB#4b: no transcript may be fabricated on the resolution path.
 expect "resolve: no transcript fabricated on resolution" \
-  "$(has "$SKILL" 'the command ran in a dead session and this one has no transcript')"                                    "yes"
+  "$(has "$SKILL" 'the command ran in a dead session, so this one has no transcript')"                                    "yes"
 expect "resolve: and saves nothing rather than inventing one" \
-  "$(has "$SKILL" 'In both cases say so and save nothing')"                                                               "yes"
+  "$(has "$SKILL" 'In all four cases say so and save nothing')"                                                               "yes"
 # GB#6: both docs describe the fail-safe trigger, not the narrower `landing_model: pr`.
 expect "docs: arch node states the fail-safe trigger" \
   "$(has "$ARCH" 'landing is not an explicit direct')"                                                                   "yes"
@@ -354,7 +376,16 @@ try:
     term=tail[:tail.index('**Transitional status**')]
     rest=tail[tail.index('**Transitional status**'):]
     trans=rest[:rest.index('**Surfaced statuses**')]
-    surf=rest[rest.index('**Surfaced statuses**'):]
+    # Bound the surfaced slice to the END OF ITS OWN PARAGRAPH. Unbounded it ran to
+    # the end of the Phase-9 region, swallowing the trailing `**Release step off?**`
+    # paragraph — which names `skipped-disabled`. Today the `both` arm still cannot
+    # fire on that (the terminal side matches the skipped family by the `any
+    # `skipped-*`` wildcard, not by literal name), but a future status added to the
+    # trailing paragraph WOULD be silently read as surfaced. Bounding it keeps the
+    # check honest by construction rather than by that coincidence.
+    _s=rest.index('**Surfaced statuses**')
+    _e=rest.find('\n\n', _s)
+    surf=rest[_s:_e if _e != -1 else len(rest)]
     gaps=[v for v in enum
           if f'`{v}`' not in term and f'`{v}`' not in surf and f'`{v}`' not in trans
           and not (v.startswith('skipped-') and 'any `skipped-*`' in term)]
@@ -385,6 +416,100 @@ expect "closure: no value can rest without finishing or handing over" \
   "$(has "$SKILL" 'no value can sit in the state file without either finishing the run or handing it to the user')"       "yes"
 expect "closure: surfaced set is exactly the three" \
   "$(has "$SKILL" '`in-progress` / `partial-failure` / `failed` → stay `phase: "release"`')"                             "yes"
+
+# --- FOLLOW-UPS from the optional-release-step run ----------------------------
+# Each assertion below pins one parked follow-up. Two of them (marker wording,
+# declined producers) were already closed incidentally by later fixes in that run;
+# they are pinned here so they cannot silently reopen.
+
+# #20: the append-only history means these refresh sites APPEND, never update.
+expect "marker: refresh sites say append, not update" \
+  "$(grep -c 'Append a refreshed in-flight marker' "$SKILL")"                                                          "2"
+expect "marker: no update-the-marker wording survives" \
+  "$(grep -c 'Update the in-flight marker' "$SKILL")"                                                                  "0"
+
+# #26: `declined` has two producers that differ on whether anything ever ran.
+expect "declined: record is producer-aware" \
+  "$(has "$SKILL" 'which producer it came from decides what to record')"                                               "yes"
+
+# #12: the release command runs at apply substep 4.2, NOT at the commit step.
+p9_step8="$(sed -n '/^   - \*\*`failed`\*\* (a blocker such as a pre-existing tag/p' "$SKILL")"
+expect "attribution: step-8 failed is not where a command failure is raised" \
+  "$(printf '%s' "$p9_step8" | grep -c 'substep 4.2')"                                                                 "1"
+
+# resolution rule outcome 3 is the only one that does not route to step 9.
+expect "resolution: outcome 3 sets the yield field" \
+  "$(has "$SKILL" 'Set `expected_next_action: "auto-continue"` on this outcome (REQUIRED).')"                          "yes"
+
+# an accepted partial-failure must be visible to step 1, which reads history.
+expect "accepted partial: discriminator is defined" \
+  "$(has "$SKILL" 'result: "accepted-partial-failure"')"                                                               "yes"
+expect "accepted partial: terminal pair is explicit" \
+  "$(has "$SKILL" 'This exception writes `phase: "done"` AND `expected_next_action: null`')"                           "yes"
+expect "accepted partial: step 9 names its discriminator" \
+  "$(has "$SKILL" 'Read the acceptance from the newest `release` entry in `state.history`')"                            "yes"
+expect "accepted partial: protected set says three, not two" \
+  "$(has "$SKILL" 'They are two of the three protected values')"                                                       "yes"
+expect "accepted partial: no stale only-two claim" \
+  "$(grep -c 'These are the only two terminal values that must NOT be re-derived' "$SKILL")"                           "0"
+expect "accepted partial: step 1 recognizes it" \
+  "$(has "$SKILL" '**`accepted-partial-failure` — the user was shown a half-cut release')"                             "yes"
+
+# Phase-4 review: the history-only value needs an explicit carve-out from the
+# status-write rule, or it silently contradicts the closed-enum MUST.
+expect "record: mirror clause keeps its own parenthetical" \
+  "$(has "$SKILL" 'per the status-write rule above** (so a completed release logs `result: "applied"`)')"              "yes"
+expect "record: TRACE entry is written on every path" \
+  "$(has "$SKILL" '(The TRACE entry above is still written, on every path.)')"                                         "yes"
+expect "accepted partial: carve-out from the status-write rule" \
+  "$(has "$SKILL" 'One carve-out, and only one: `accepted-partial-failure`')"                                          "yes"
+expect "accepted partial: is history-only, never a status" \
+  "$(has "$SKILL" 'is therefore a **history-only** value')"                                                            "yes"
+expect "accepted partial: stays out of the status enum" \
+  "$(rel_enum="$(grep -m1 '"status": "skipped-disabled|skipped-invalid-value' "$SKILL")"; \
+      if [ -z "$rel_enum" ]; then echo "ANCHOR-DRIFTED"; \
+      else printf '%s' "$rel_enum" | grep -c 'accepted-partial-failure'; fi)"                                          "0"
+
+# GB5#3: the release object is written ONLY by Phase 9.
+expect "phase-5 else fork does not write the release object" \
+  "$(has "$SKILL" 'Leave `release` as `null` here — do NOT write `skipped-disabled`')"                                 "yes"
+
+
+# GB7#1/#2/#3: step-8 push-detection precision.
+expect "push probe: absent vs unreachable is named" \
+  "$(has "$SKILL" 'absent from the remote and an unreachable remote are indistinguishable')"                            "yes"
+expect "push probe: unwind claim is qualified" \
+  "$(has "$SKILL" 'pushes the commit without the tag')"                                                                "yes"
+expect "push probe: applied states its precondition" \
+  "$(has "$SKILL" 'only when the commit AND the tag both exist')"                                                      "yes"
+
+# GB7#4: three no-transcript producers, not two.
+expect "transcript: count is four" \
+  "$(has "$SKILL" 'ALL FOUR of these statuses can be recorded with no transcript in *this* session')"                      "yes"
+expect "transcript: stale three-count is gone" \
+  "$(grep -c 'three of these statuses can be reached' "$SKILL")"                                                       "0"
+expect "transcript: names the resolution-path partial-failure route" \
+  "$(has "$SKILL" 'recorded on that same resolution path (outcome 4, the *accepted* half-cut release)')"               "yes"
+expect "transcript: stale two-count is gone" \
+  "$(grep -c 'two of these statuses can be reached without the command having run' "$SKILL")"                          "0"
+
+# GB7#5: the amendment path must act on a corrected-report blocker.
+expect "amendment: acts on a corrected-report blocker" \
+  "$(has "$SKILL" 'act on its Blockers line exactly as step 3 does')"                                                  "yes"
+
+# GB5#6b: the flowchart routes report-only/apply blockers from P9Run, not P9Cut.
+expect "flowchart: P9Run has a surfaced edge" \
+  "$(grep -cE '^\s*P9Run -\.' "$ARCH")"                                                                                "1"
+expect "flowchart: P9Gate has a surfaced edge" \
+  "$(grep -cE '^\s*P9Gate -\.' "$ARCH")"                                                                               "1"
+# GB5: a substep-4.2 command failure belongs to the APPLY call, not to the
+# report-only node — the same misattribution R3 removed from the prose.
+expect "flowchart: apply is its own node" \
+  "$(grep -cE 'P9Apply\[skill: auto-task-release' "$ARCH")"                                                              "1"
+expect "flowchart: substep 4.2 hangs off apply, not report-only" \
+  "$(grep -cE '^\s*P9Apply -\.' "$ARCH")"                                                                              "1"
+expect "flowchart: report-only edge no longer claims substep 4.2" \
+  "$(grep -E '^\s*P9Run -\.' "$ARCH" | grep -c 'substep 4.2')"                                                         "0"
 
 # --- GATE B pass 5: the two Required (honesty/reporting axis) -----------------
 # GB5#1: nothing in the phase read what `apply` RETURNED. A legitimately failing
@@ -606,10 +731,10 @@ expect "record: transcript only when the command ran" \
 # thing the skipped-* bullet two rows up forbids.
 expect "record: transcript premise is verified, not assumed" \
   "$(has "$SKILL" 'verify that premise before acting on it')"                                                            "yes"
-expect "record: names both no-transcript producers" \
-  "$(has "$SKILL" 'two of these statuses can be reached without the command having run at all')"                          "yes"
+expect "record: names all four no-transcript producers" \
+  "$(has "$SKILL" 'ALL FOUR of these statuses can be recorded with no transcript in *this* session')"                        "yes"
 expect "record: step-4 failed can precede the command" \
-  "$(has "$SKILL" 'a step-4 `failed` can be raised **before** substep 4.2 ever ran the command')"                         "yes"
+  "$(has "$SKILL" 'a step-4 **`failed`** raised **before** substep 4.2 ever ran the command')"                         "yes"
 # GB6#4: step 4's undo must NOT cite step 5's intent-add — step 5 runs after step 4.
 expect "undo: step-4 form deletes the untracked file" \
   "$(has "$SKILL" 'simply deleting the untracked file')"                                                                  "yes"
