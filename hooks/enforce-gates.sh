@@ -419,6 +419,13 @@ if [ "$has_effort" = "yes" ] && [ "$has_iter" = "yes" ]; then
   [ "$review_count" -gt "$loop_count" ] && loop_count="$review_count"
   if [ "$loop_count" -gt "$budget" ]; then
     next_budget="$(lb_next_budget "$cap" "$acked_through" "$loop_count")"
+    # The ack snippet is a command the model PASTES, so it targets the absolute $state
+    # path rather than a relative .auto-task/<branch>/ one. Relative was a two-runs-one-
+    # path hazard of the same class as the /tmp/s temp file already fixed on this line:
+    # pasted from a subdirectory the jq leg merely fails, but pasted from a DIFFERENT
+    # checkout that happens to share the branch name it records the ack against the
+    # wrong run's state. The descriptive blocks above keep the short relative form on
+    # purpose — they are prose for a human to read, not commands to run.
     # The ack we print must be a value this same hook will ACCEPT on the next run.
     # lb_is_number bounds an INPUT at 18 digits (the widest bash can compare), but the
     # rung computed for an 18-digit counter can be 19 — so the recovery snippet would
@@ -430,8 +437,8 @@ if [ "$has_effort" = "yes" ] && [ "$has_iter" = "yes" ]; then
       printf 'Blocked by auto-task-plugin: the fix-loop counter in .auto-task/%s/STATE.json is implausibly large (loop count: %s), so no ack value within the supported range can clear it.\nThis hook fails closed. Repair .iteration.fix / .iteration.review to the run\x27s real round counts and retry.\n' "$branch" "$loop_count" >&2
       exit 2
     fi
-    printf 'Blocked by auto-task-plugin: this run is over its fix-loop budget.\n  loop count:      %s   (max of iteration.fix=%s and iteration.review=%s)\n  tier=%s cap:     %s\n  budget in force: %s   (max of the cap and any previous ack)\nThe effort tier documents a fix-loop cap; exceeding it means the run has iterated more than its budget allows, which is the signal to check in with the user rather than keep churning.\nSurface to the user: show the per-round finding severities so they can see whether returns have diminished, then let THEM decide to continue or stop. On their go-ahead, record the ack (raises the budget to the next cap rung that clears the current count, so ONE ack suffices and the next check-in is at %s):\n  t="$(mktemp)" && jq \x27.gates.loop_budget = {acked_through: %s, acked_at: "\x27"$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"\x27", reason: "<why continuing is right>"}\x27 .auto-task/%s/STATE.json > "$t" && mv "$t" .auto-task/%s/STATE.json\nDo NOT set this yourself without asking — it is the user\x27s call, exactly like every other gate flag.\n' \
-      "$loop_count" "$fix_count" "$review_count" "$tier" "$cap" "$budget" "$(( next_budget + 1 ))" "$next_budget" "$branch" "$branch" >&2
+    printf 'Blocked by auto-task-plugin: this run is over its fix-loop budget.\n  loop count:      %s   (max of iteration.fix=%s and iteration.review=%s)\n  tier=%s cap:     %s\n  budget in force: %s   (max of the cap and any previous ack)\nThe effort tier documents a fix-loop cap; exceeding it means the run has iterated more than its budget allows, which is the signal to check in with the user rather than keep churning.\nSurface to the user: show the per-round finding severities so they can see whether returns have diminished, then let THEM decide to continue or stop. On their go-ahead, record the ack (raises the budget to the next cap rung that clears the current count, so ONE ack suffices and the next check-in is at %s):\n  t="$(mktemp)" && jq \x27.gates.loop_budget = {acked_through: %s, acked_at: "\x27"$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"\x27", reason: "<why continuing is right>"}\x27 %s > "$t" && mv "$t" %s\nDo NOT set this yourself without asking — it is the user\x27s call, exactly like every other gate flag.\n' \
+      "$loop_count" "$fix_count" "$review_count" "$tier" "$cap" "$budget" "$(( next_budget + 1 ))" "$next_budget" "$state" "$state" >&2
     exit 2
   fi
 fi

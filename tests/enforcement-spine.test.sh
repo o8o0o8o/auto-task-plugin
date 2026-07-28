@@ -629,6 +629,17 @@ expect "LB  ...and that ack is itself valid input"       "$(bash -c ". '$HOOKS/l
 # The printed recovery must not funnel two parallel runs through one global temp path:
 # both pasting `> /tmp/s && mv /tmp/s <state>` can move run B's STATE.json onto run A's.
 expect "LB ack snippet uses mktemp, not a fixed path"    "$(printf '%s' "$LBE2e" | grep -c '> /tmp/s')" "0"
+# ...and its TARGET is absolute too (FU-LB13). A relative .auto-task/<branch>/ path is
+# the same two-runs-one-path hazard as the temp file: pasted from a subdirectory the jq
+# leg just fails, but pasted from a different checkout sharing the branch name it writes
+# the ack to the wrong run's state. The hook already holds the absolute path in $state.
+# Asserted on the PROPERTY (leading /), not on a literal path: the hook resolves
+# project_dir through `git rev-parse --show-toplevel`, which on macOS returns the
+# /private-prefixed form of $TMPDIR, so a literal comparison would be fragile for a
+# reason unrelated to what is being pinned.
+expect "LB ack snippet targets an absolute state path"   "$(printf '%s' "$LBE2e" | grep -qE "' /[^ ]*/STATE\.json > " && echo y || echo n)" "y"
+expect "LB  ...and mv restores it to that same path"     "$(printf '%s' "$LBE2e" | grep -qE "mv \"\\\$t\" /[^ ]*/STATE\.json" && echo y || echo n)" "y"
+expect "LB  ...with no relative .auto-task target left"  "$(printf '%s' "$LBE2e" | grep -c 'mv "\$t" \.auto-task/')" "0"
 expect "LB  ...and routes through \$t"                   "$(printf '%s' "$LBE2e" | grep -qF 'mktemp' && echo y || echo n)" "y"
 
 # --- precedence: the primary gate contract reports before the budget ------
