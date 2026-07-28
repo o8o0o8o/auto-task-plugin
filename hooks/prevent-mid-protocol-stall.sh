@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Prevents the model from yielding mid-pipeline during an auto-task run.
 #
-# Registered as a Stop hook. Once the run is approved and not done, the ONLY
-# values that allow a stop are the two explicit user-gates; everything else
-# (including a missing/null field) blocks. Reads the per-branch STATE.json's
-# `expected_next_action`:
+# Registered as a Stop hook. Once the run is approved and not done, the two explicit
+# user-gates allow a stop and everything else (including a missing/null field) blocks
+# — subject to the two bounded release valves documented below (the soft-lock breaker
+# and the fix-loop budget release), which are the only ways any other value yields.
+# Reads the per-branch STATE.json's `expected_next_action`:
 #   - "user-approval"     → allow (Phase 1 plan gate, Loop-rule surface)
 #   - "user-push-prompt"  → allow (the one Phase 5 push/PR ask)
 #   - "auto-continue"     → block the stop, re-prompt the model to continue
@@ -117,6 +118,15 @@ esac
 # the field rather than hunt for a phantom gate.
 [ -n "$expected" ] || expected="(unset/null — must be set on every post-approval state write)"
 
+# Shared, PURE fix-loop budget resolver — the SAME file enforce-gates.sh sources,
+# so the cap table has one executable home and the two hooks cannot drift.
+# Sourced permissively: this hook is fail-OPEN by contract, so a missing helper must
+# never break stop-handling. The budget release below simply does not fire if the
+# functions are absent, which leaves today's behavior exactly as it was.
+STALL_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+# shellcheck source=/dev/null
+. "$STALL_SCRIPT_DIR/lib/loop-budget.sh" 2>/dev/null || true
+
 # Soft-lock breaker. Track consecutive blocks in the SAME run state; if the run
 # is frozen (no progress) for AUTO_TASK_STALL_LIMIT turn-ends in a row, release
 # the stop instead of blocking, so the session can't become unrecoverable.
@@ -141,7 +151,13 @@ count_file="$project_dir/.auto-task/$branch/.stall-block-count"
 # caught by the backstop. Backward-compatible: absent on every non-poll run
 # (`// 0` → "0", constant), so it is inert for existing runs and does not alter
 # their stall behavior.
-sig="$(jq -r '[(.base // ""), (.phase // ""), (.expected_next_action // ""), ((.iteration.review // 0)|tostring), ((.iteration.fix // 0)|tostring), (.gates.code_review.reviewed_diff_sha // ""), ((.preview.polls // 0)|tostring), ((.bot_review.polls // 0)|tostring), ((.external.polls // 0)|tostring)] | join("|")' "$state" 2>/dev/null || echo "")"
+#
+# `.gates.loop_budget.acked_through` is in the signature for a narrower reason: a
+# turn whose ONLY action is recording the user's over-budget ack would otherwise
+# leave every signature field constant, so that turn would be counted as another
+# frozen turn-end rather than as the progress it is. Same `// 0` backward-compat
+# shape as the poll counters — absent on every run that never went over budget.
+sig="$(jq -r '[(.base // ""), (.phase // ""), (.expected_next_action // ""), ((.iteration.review // 0)|tostring), ((.iteration.fix // 0)|tostring), (.gates.code_review.reviewed_diff_sha // ""), ((.preview.polls // 0)|tostring), ((.bot_review.polls // 0)|tostring), ((.external.polls // 0)|tostring), ((.gates.loop_budget.acked_through // 0)|tostring)] | join("|")' "$state" 2>/dev/null || echo "")"
 prev_count=0; prev_sig=""
 if [ -f "$count_file" ]; then
   prev_line="$(cat "$count_file" 2>/dev/null || echo "")"
@@ -158,6 +174,115 @@ if [ "$count" -ge "$stall_limit" ]; then
   echo "auto-task anti-stall: $count consecutive turn-ends blocked in the same state (phase=$phase, expected_next_action=$expected) — the run appears genuinely frozen with no progress. Releasing this stop to avoid an unrecoverable soft-lock. Inspect/repair .auto-task/$branch/STATE.json and resume with /auto-task." >&2
   rm -f "$count_file" 2>/dev/null || true
   exit 0
+fi
+
+# ---- Fix-loop budget release ----------------------------------------------
+# Placed AFTER the soft-lock counter above, deliberately: the counter must keep
+# accumulating while a run sits over budget, because "over budget" and "genuinely
+# frozen" are different conditions and the frozen backstop must still work. This
+# release also does NOT delete the counter file — an earlier draft did, which would
+# have stopped AUTO_TASK_STALL_LIMIT ever accumulating during exactly the window a
+# freeze is most likely.
+#
+# WHY A RELEASE AT ALL. Not because surfacing would otherwise be impossible — a model
+# that follows the ack ritual sets expected_next_action=user-approval first, and the
+# early-exit above already allows that yield. The release plus its warning (emitted on
+# BOTH channels — see the surfacing note at the echo below) are for the run that goes
+# wrong the other way: one that keeps churning WITHOUT updating
+# the field, where the anti-stall contract would force it onward with nothing telling
+# it the budget is blown. This is the mirror of the soft-lock breaker: that one
+# releases when the run has made too LITTLE progress, this one when it has spent too
+# MUCH budget.
+#
+# FIRED ONCE PER ITERATION COUNT, not every turn. A naive "release while over
+# budget" would leave the non-yielding contract off for the whole over-budget
+# window, which would be a large hole in the anti-stall guarantee. The marker file
+# records the loop count we last released at; a second turn-end at the same count
+# falls through and blocks normally, so the model gets exactly one opportunity to
+# surface per new loop iteration.
+#
+# THE LOOP COUNT IS max(iteration.fix, iteration.review) — the identical measure
+# enforce-gates.sh blocks on, and it has to be, or the two halves of this feature
+# disagree: a review-heavy run (fix=0, review=28) would have its commit blocked by
+# the gate while this hook never releases the turn-end it needs to surface the
+# check-in. Both counters bound the same thing (review volume); see the note in
+# enforce-gates.sh.
+#
+# HONEST LIMITATION: a Stop hook can only PERMIT a stop, never require one, and the
+# stop it permits is any stop — not provably the budget check-in. What makes the
+# budget non-advisory is the pair: this release makes surfacing possible, and
+# enforce-gates.sh refuses the commit until the user's ack is recorded. Neither half
+# is sufficient alone, and this one does not pretend to be.
+if command -v lb_cap_for_tier >/dev/null 2>&1 && command -v lb_effective_budget >/dev/null 2>&1; then
+  lb_tier="$(jq -r '.effort.tier // ""' "$state" 2>/dev/null || echo "")"
+  lb_has_tier="$(jq -r 'if (.effort? // null) == null then "no" else (if (.effort.tier? // null) == null then "no" else "yes" end) end' "$state" 2>/dev/null || echo "no")"
+  # BOTH counters default to 0, matching enforce-gates.sh's `// 0` reads EXACTLY.
+  # An earlier draft defaulted lb_fix to "" so that an absent counter would fail
+  # lb_is_number and skip the branch — but that made the two hooks disagree on the
+  # very state the gate was widened to support: `iteration:{review:28}` with no
+  # `fix` key blocked the commit while this hook stayed silent, i.e. the run was
+  # refused a landing with no released turn-end and no in-band warning. `// 0` is
+  # safe for a legacy run precisely because 0 is never > budget, so absence still
+  # produces silence — it just produces it by arithmetic rather than by bailing out.
+  lb_fix="$(jq -r '.iteration.fix // 0' "$state" 2>/dev/null || echo 0)"
+  lb_review="$(jq -r '.iteration.review // 0' "$state" 2>/dev/null || echo 0)"
+  lb_acked="$(jq -r '.gates.loop_budget.acked_through // 0' "$state" 2>/dev/null || echo 0)"
+  # Only act when the run carries a tier and every counter is sane. The tier test is
+  # `has_effort`-shaped rather than `-n`: the gate hook treats only a MISSING
+  # tier as legacy (an empty-string tier falls through to its `// "standard"`
+  # default and blocks at cap 4), so keying on emptiness here would reopen the same
+  # disagreement in a second place. Anything unsane: stay silent and let the normal
+  # block/allow logic below decide — fail-open, per this hook's contract.
+  if [ "$lb_has_tier" = "yes" ] && lb_is_number "$lb_fix" && lb_is_number "$lb_review" && lb_is_number "$lb_acked"; then
+    lb_cap="$(lb_cap_for_tier "$lb_tier")"
+    lb_budget="$(lb_effective_budget "$lb_cap" "$lb_acked")"
+    lb_count="$lb_fix"
+    [ "$lb_review" -gt "$lb_count" ] && lb_count="$lb_review"
+    if [ "$lb_count" -gt "$lb_budget" ]; then
+      lb_marker="$project_dir/.auto-task/$branch/.loop-budget-released"
+      # RUN-SCOPED, keyed by `base`, exactly like record-outcome.sh's .outcome-recorded
+      # sentinel and like this hook's own .base-led stall signature above. Without the
+      # base, residue from a PRIOR run in a reused .auto-task/<branch>/ folder swallows
+      # the new run's release at the same iteration count — and swallows the stderr
+      # warning with it, which is the only in-band notification the model gets. Keying
+      # by base also removes the need to clean the file up at phase=done in the common
+      # case: a run forked from an advanced default branch has a new base, so the old
+      # key cannot match. It is not a total guarantee — two runs forked from an
+      # UNMOVED default share a base, so residue at the same loop count can still
+      # swallow one release (and its warning). Bounded: the commit gate still blocks,
+      # and the run surfaces the ordinary way. Tracked as FU-LB9.
+      lb_base="$(jq -r '.base // ""' "$state" 2>/dev/null || echo "")"
+      lb_key="$lb_base|$lb_count"
+      lb_prev=""
+      [ -f "$lb_marker" ] && lb_prev="$(cat "$lb_marker" 2>/dev/null || echo "")"
+      if [ "$lb_prev" != "$lb_key" ]; then
+        # R3: the release is conditional on the marker WRITE SUCCEEDING. It used to be
+        # `> marker || true` followed by an unconditional exit 0, so an unwritable
+        # directory or a full disk turned "release once per count" into "release every
+        # turn" — verbatim the large hole in the anti-stall guarantee the comment above
+        # says the marker prevents. Falling through to the block is this hook's
+        # pre-existing behavior, so making the release conditional adds no soft-lock
+        # risk: the worst case is the run does not get its extra yield and must set
+        # expected_next_action=user-approval to surface, which the ack ritual does anyway.
+        if printf '%s\n' "$lb_key" > "$lb_marker" 2>/dev/null; then
+          lb_msg="auto-task loop budget: loop count $lb_count (max of iteration.fix=$lb_fix and iteration.review=$lb_review) exceeds the tier=$lb_tier budget of $lb_budget (cap $lb_cap). Releasing this turn-end ONCE so the run can surface a budget check-in — show the user the per-round finding severities so they can judge whether returns have diminished, then let them decide. A commit stays blocked until gates.loop_budget.acked_through is raised on their go-ahead. Further turn-ends at this same iteration count will block again."
+          # SURFACE ON BOTH CHANNELS. stderr alone is not enough on an ALLOW: for a Stop
+          # hook, `exit 0` means "allow" and only the block path's stdout JSON is
+          # model-facing, so a stderr-only notice can be written and never delivered —
+          # which would be precisely the run this release exists for (one that keeps
+          # churning without updating expected_next_action, i.e. with nothing telling it
+          # the budget is blown). `systemMessage` is this repo's established surfacing
+          # field (check-version.sh, release-notes.sh, suggest-cleanup.sh all use it) and
+          # carries no `decision`, so the stop is still ALLOWED. stderr stays as the
+          # belt-and-suspenders, exactly as warn-checkout-drift.sh pairs the two.
+          # Emitted best-effort: if jq is somehow unavailable here the release still fires.
+          jq -n --arg m "$lb_msg" '{systemMessage:$m}' 2>/dev/null || true
+          echo "$lb_msg" >&2
+          exit 0
+        fi
+      fi
+    fi
+  fi
 fi
 
 # Mid-protocol stall. Block.

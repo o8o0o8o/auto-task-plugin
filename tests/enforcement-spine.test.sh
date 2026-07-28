@@ -37,7 +37,14 @@ COMMIT='{"tool_input":{"command":"git commit -m wip"}}'
 gate(){ printf '%s' "$COMMIT" | CLAUDE_PROJECT_DIR="$T" bash "$GATE" >/dev/null 2>&1; echo $?; }
 grun(){ printf '%s' "$1" | CLAUDE_PROJECT_DIR="$T" bash "$GATE" >/dev/null 2>&1; echo $?; }
 attr(){ printf '%s' "$1" | bash "$ATTR" >/dev/null 2>&1; echo $?; }
-stop(){ local o; o="$(CLAUDE_PROJECT_DIR="$T" bash "$STOP" 2>/dev/null)"; [ -z "$o" ] && { echo allow; return; }; printf '%s' "$o" | jq -r '.decision // "allow"' 2>/dev/null; }
+# `</dev/null` is load-bearing, not decoration: the Stop hook does a guarded stdin
+# read, and with stdin inherited from the test runner an invocation can BLOCK
+# indefinitely. Without it this suite hangs rather than fails — observed while
+# mutation-testing the loop-budget release, where the run wedged past a 6-minute
+# bound and completed in seconds once stdin was closed. Pre-existing latent
+# flakiness; the loop-budget block below adds ~12 more Stop invocations, which is
+# what surfaced it.
+stop(){ local o; o="$(CLAUDE_PROJECT_DIR="$T" bash "$STOP" </dev/null 2>/dev/null)"; [ -z "$o" ] && { echo allow; return; }; printf '%s' "$o" | jq -r '.decision // "allow"' 2>/dev/null; }
 # Must use the SAME pinned flags as enforce-gates.sh, or the recorded sha won't
 # match the hook's recompute under non-default git config.
 DIFF_FLAGS='--no-color --no-ext-diff --no-textconv --no-renames --diff-algorithm=myers --src-prefix=a/ --dst-prefix=b/'
@@ -176,7 +183,7 @@ cat > "$ST" <<EOF
  "gates":{"code_review":{"passed":false},"gate_b":{"passed":false}}}
 EOF
 rm -f "$SD/.stall-block-count"
-stopS(){ local o; o="$(CLAUDE_PROJECT_DIR="$T" AUTO_TASK_STALL_LIMIT=3 bash "$STOP" 2>/dev/null)"; [ -z "$o" ] && { echo allow; return; }; printf '%s' "$o" | jq -r '.decision // "allow"' 2>/dev/null; }
+stopS(){ local o; o="$(CLAUDE_PROJECT_DIR="$T" AUTO_TASK_STALL_LIMIT=3 bash "$STOP" </dev/null 2>/dev/null)"; [ -z "$o" ] && { echo allow; return; }; printf '%s' "$o" | jq -r '.decision // "allow"' 2>/dev/null; }
 expect "Stall: block #1 (count<limit)"                    "$(stopS)" "block"
 expect "Stall: block #2 (count<limit)"                    "$(stopS)" "block"
 expect "Stall: release #3 (count>=limit)"                 "$(stopS)" "allow"
@@ -225,7 +232,11 @@ echo "================ Fail-open / fail-closed edges ================"
 git checkout -q feat/widget
 echo '{bad json' > "$ST"
 expect "Malformed STATE.json: stop ALLOWS (no soft-lock)" "$(stop)" "allow"
-printf '%s' "$COMMIT" | CLAUDE_PROJECT_DIR="$T" bash "$GATE" >/dev/null 2>&1; expect "Malformed STATE.json: commit BLOCKED (fail closed)" "$?" "2"
+MALF="$(printf '%s' "$COMMIT" | CLAUDE_PROJECT_DIR="$T" bash "$GATE" 2>&1 >/dev/null)"; MALFRC="$?"
+expect "Malformed STATE.json: commit BLOCKED (fail closed)" "$MALFRC" "2"
+# Status alone would also be satisfied by a fail-closed block attributed to the wrong
+# cause. Pin the reason so the assertion proves WHY it blocked.
+expect "Malformed STATE.json: names unparseable state as the reason" "$(printf '%s' "$MALF" | grep -qF 'not valid JSON' && echo y || echo n)" "y"
 
 echo "================ Worktree / subdir / nested-repo resolution ================"
 # Each assertion sets its OWN state and discriminates the fix from a revert — no
@@ -244,7 +255,7 @@ SUB="$WT/pkg/sub"; mkdir -p "$SUB"
 SDW="$WT/.auto-task/wt-feature"; mkdir -p "$SDW"
 # Helpers: run a hook from an explicit CWD ($1) with CLAUDE_PROJECT_DIR UNSET.
 gateAt(){ printf '%s' "$COMMIT" | ( cd "$1" && unset CLAUDE_PROJECT_DIR && bash "$GATE" ) >/dev/null 2>&1; echo $?; }
-stopAt(){ local o; o="$( cd "$1" && unset CLAUDE_PROJECT_DIR && bash "$STOP" 2>/dev/null )"; [ -z "$o" ] && { echo allow; return; }; printf '%s' "$o" | jq -r '.decision // "allow"' 2>/dev/null; }
+stopAt(){ local o; o="$( cd "$1" && unset CLAUDE_PROJECT_DIR && bash "$STOP" </dev/null 2>/dev/null )"; [ -z "$o" ] && { echo allow; return; }; printf '%s' "$o" | jq -r '.decision // "allow"' 2>/dev/null; }
 # (1) WT-subdir-gate: ungated worktree state; CWD = worktree SUBDIR; CPD unset -> BLOCK.
 #     Discriminates the fix: old `$PWD`=subdir resolution finds no state and fail-opens (0);
 #     resolving the toplevel of the base finds the worktree root and blocks (2).
@@ -479,6 +490,444 @@ printf '%s' '{"approved":true,"phase":"handover","landing":"pr","gates":{"merge"
 expect "MG gh pr merge, required+unacked -> block(2)" "$(grun "$GHM")" "2"
 printf '%s' '{"approved":true,"phase":"handover","landing":"pr","gates":{"merge":{"required":true,"acked":true}}}' > "$ST"
 expect "MG gh pr merge, acked -> allow(0)"            "$(grun "$GHM")" "0"
+
+echo
+echo "================ Fix-loop budget (anti-churn) ================"
+
+# The effort tier has always documented a fix-loop cap and NOTHING enforced it: a real
+# run reached iteration.fix=33 against a HEAVY cap of 6 (5.5x over) because this hook
+# never read the counter, and the Stop hook read it only to detect movement, never
+# magnitude. The plugin had a rigorous anti-stall guard and no anti-churn guard at all.
+# Caps live in hooks/lib/loop-budget.sh so the two enforcing hooks cannot drift.
+
+LB_GATES='"code_review":{"passed":true,"tool":"skill:auto-task-code-review","clean_pass_after_last_fix":true},"gate_b":{"passed":true}'
+# lbstate <tier> <fix> <acked|empty for no loop_budget object>
+lbstate(){ local lb=""; [ -n "$3" ] && lb="\"loop_budget\":{\"acked_through\":$3},"
+  printf '{"phase":"review","approved":true,"expected_next_action":"auto-continue","effort":{"tier":"%s"},"iteration":{"fix":%s,"review":1},"gates":{%s%s}}' \
+    "$1" "$2" "$lb" "$LB_GATES" > "$ST"; }
+lberr(){ printf '%s' "$COMMIT" | CLAUDE_PROJECT_DIR="$T" bash "$GATE" 2>&1 >/dev/null; }
+
+# --- the block fires, and its message is actionable -------------------------
+lbstate heavy 7 ""
+expect "LB heavy fix=7 no ack -> block(2)"              "$(gate)" "2"
+LBE="$(lberr)"
+expect "LB msg names the loop count"                    "$(printf '%s' "$LBE" | grep -qF 'loop count:      7' && echo y || echo n)" "y"
+expect "LB msg names BOTH counters it maxed"            "$(printf '%s' "$LBE" | grep -qF 'max of iteration.fix=7 and iteration.review=1' && echo y || echo n)" "y"
+expect "LB msg names the tier cap"                      "$(printf '%s' "$LBE" | grep -qF 'cap:     6' && echo y || echo n)" "y"
+# The ack wording must describe what lb_next_budget actually does. It used to say
+# "raises the budget by one cap" while stepping to the first rung that clears the
+# counter - at heavy/fix=33 that is a five-cap jump, so the sentence was false.
+expect "LB msg describes the rung-clearing ack"         "$(printf '%s' "$LBE" | grep -qF 'next cap rung that clears the current count' && echo y || echo n)" "y"
+expect "LB msg does NOT claim a one-cap raise"          "$(printf '%s' "$LBE" | grep -qF 'raises the budget by one cap' && echo y || echo n)" "n"
+expect "LB msg names the budget in force"               "$(printf '%s' "$LBE" | grep -qF 'budget in force: 6' && echo y || echo n)" "y"
+expect "LB msg carries the jq ack snippet"              "$(printf '%s' "$LBE" | grep -qF 'gates.loop_budget = {acked_through: 12' && echo y || echo n)" "y"
+expect "LB msg says the ack is the user's call"         "$(printf '%s' "$LBE" | grep -qF "user's call" && echo y || echo n)" "y"
+
+# --- the ack ladder: budget = max(cap, acked_through), block on >, ack adds a cap.
+# HEAVY cap 6 -> budgets 6/12/18, so the check-ins land at fix 7/13/19.
+lbstate heavy 6  "";   expect "LB fix=6 == cap -> allow(0) (equal is not over)"    "$(gate)" "0"
+lbstate heavy 7  "";   expect "LB fix=7 > cap -> block(2)"                         "$(gate)" "2"
+lbstate heavy 7  12;   expect "LB fix=7 acked=12 -> allow(0)"                      "$(gate)" "0"
+lbstate heavy 12 12;   expect "LB fix=12 == budget -> allow(0)"                    "$(gate)" "0"
+lbstate heavy 13 12;   expect "LB fix=13 > budget -> block(2) (check-in returns)"  "$(gate)" "2"
+lbstate heavy 13 18;   expect "LB fix=13 acked=18 -> allow(0)"                     "$(gate)" "0"
+# a stale ack BELOW the cap must not lower the budget (tier-escalation safety)
+lbstate heavy 5  2;    expect "LB stale ack(2) < cap(6): max() keeps budget"       "$(gate)" "0"
+
+# --- BOTH counters are in force: the budget is max(fix, review) -------------
+# iteration.fix is bumped only on the Phase-3 self-verify failure path; every Phase-4
+# review round and Gate-B feedback round bumps iteration.review instead. A gate reading
+# fix alone lets the churn shape this feature exists to bound (fix=0/review=28) land
+# unblocked, while the docs call the cap "a hook-enforced budget, not a suggestion".
+# lbstate2 <tier> <fix> <review> <acked|empty>
+lbstate2(){ local lb=""; [ -n "$4" ] && lb="\"loop_budget\":{\"acked_through\":$4},"
+  printf '{"phase":"review","approved":true,"expected_next_action":"auto-continue","effort":{"tier":"%s"},"iteration":{"fix":%s,"review":%s},"gates":{%s%s}}' \
+    "$1" "$2" "$3" "$lb" "$LB_GATES" > "$ST"; }
+lbstate2 heavy 0 28 "";  expect "LB review=28 fix=0 -> block(2) (the motivating shape)" "$(gate)" "2"
+lbstate2 heavy 0 7  "";  expect "LB review=7 > cap -> block(2)"                         "$(gate)" "2"
+lbstate2 heavy 0 6  "";  expect "LB review=6 == cap -> allow(0)"                        "$(gate)" "0"
+lbstate2 heavy 7 0  "";  expect "LB fix drives it too (fix=7, review=0) -> block(2)"    "$(gate)" "2"
+lbstate2 heavy 5 5  "";  expect "LB max not sum: 5+5 but max=5 <= cap -> allow(0)"      "$(gate)" "0"
+lbstate2 heavy 0 28 30;  expect "LB review=28 acked=30 -> allow(0)"                     "$(gate)" "0"
+LBR="$(lbstate2 heavy 2 28 "" ; lberr)"
+expect "LB msg reports the review counter as the driver" "$(printf '%s' "$LBR" | grep -qF 'max of iteration.fix=2 and iteration.review=28' && echo y || echo n)" "y"
+expect "LB  ...and one ack clears it (rung 30, not 12)"  "$(printf '%s' "$LBR" | grep -qF 'acked_through: 30' && echo y || echo n)" "y"
+# an absent sibling counter reads as 0, it does not disable the gate
+printf '{"phase":"review","approved":true,"effort":{"tier":"heavy"},"iteration":{"fix":7},"gates":{%s}}' "$LB_GATES" > "$ST"
+expect "LB iteration.review absent, fix over -> block(2)"  "$(gate)" "2"
+printf '{"phase":"review","approved":true,"effort":{"tier":"heavy"},"iteration":{"review":7},"gates":{%s}}' "$LB_GATES" > "$ST"
+expect "LB iteration.fix absent, review over -> block(2)"  "$(gate)" "2"
+printf '{"phase":"review","approved":true,"effort":{"tier":"heavy"},"iteration":{"review":"abc"},"gates":{%s}}' "$LB_GATES" > "$ST"
+expect "LB non-numeric iteration.review -> block(2), fail closed" "$(gate)" "2"
+
+# --- per-tier caps come from the shared lib --------------------------------
+lbstate light    3 ""; expect "LB tier=light cap2, fix=3 -> block(2)"     "$(gate)" "2"
+lbstate light    2 ""; expect "LB tier=light cap2, fix=2 -> allow(0)"     "$(gate)" "0"
+lbstate standard 5 ""; expect "LB tier=standard cap4, fix=5 -> block(2)"  "$(gate)" "2"
+lbstate standard 4 ""; expect "LB tier=standard cap4, fix=4 -> allow(0)"  "$(gate)" "0"
+
+# --- quiet paths: the budget gate must not fire here -----------------------
+printf '{"phase":"done","approved":true,"effort":{"tier":"heavy"},"iteration":{"fix":99},"gates":{%s}}' "$LB_GATES" > "$ST"
+expect "LB phase=done -> allow(0)"                       "$(gate)" "0"
+printf '{"phase":"review","approved":false,"effort":{"tier":"heavy"},"iteration":{"fix":99},"gates":{%s}}' "$LB_GATES" > "$ST"
+expect "LB approved=false -> allow(0)"                   "$(gate)" "0"
+printf '{"phase":"review","approved":true,"iteration":{"fix":99},"gates":{%s}}' "$LB_GATES" > "$ST"
+expect "LB legacy run, no effort object -> allow(0)"     "$(gate)" "0"
+printf '{"phase":"review","approved":true,"effort":{},"iteration":{"fix":99},"gates":{%s}}' "$LB_GATES" > "$ST"
+expect "LB effort.tier absent -> allow(0)"               "$(gate)" "0"
+printf '{"phase":"review","approved":true,"effort":{"tier":"heavy"},"gates":{%s}}' "$LB_GATES" > "$ST"
+expect "LB iteration absent -> allow(0)"                 "$(gate)" "0"
+
+# --- fail CLOSED on a corrupt counter -------------------------------------
+# `[ "abc" -gt 6 ]` does not evaluate false, it ERRORS - so an unguarded `if` takes the
+# else branch and the guard would fail OPEN inside a hook documented fail-CLOSED.
+printf '{"phase":"review","approved":true,"effort":{"tier":"heavy"},"iteration":{"fix":"abc"},"gates":{%s}}' "$LB_GATES" > "$ST"
+expect "LB non-numeric iteration.fix -> block(2), fail closed" "$(gate)" "2"
+# Capture into a var BEFORE grepping: `set -o pipefail` is on and lberr's exit
+# status is the hook's 2 (blocked), so `lberr | grep -q` would report failure even
+# when the pattern matched. This bit two assertions here.
+LBE2="$(lberr)"
+expect "LB  ...and says why"                             "$(printf '%s' "$LBE2" | grep -qF 'not a non-negative integer' && echo y || echo n)" "y"
+# MAGNITUDE, not just character class. `[ 99999999999999999999 -gt 6 ]` is all digits
+# and STILL errors ("integer expression expected"), reproducing the same fail-OPEN the
+# "abc" case above closes - a 20-digit counter walked straight past this gate.
+printf '{"phase":"review","approved":true,"effort":{"tier":"heavy"},"iteration":{"fix":99999999999999999999},"gates":{%s}}' "$LB_GATES" > "$ST"
+expect "LB huge iteration.fix -> block(2), not fail-open" "$(gate)" "2"
+printf '{"phase":"review","approved":true,"effort":{"tier":"heavy"},"iteration":{"fix":0,"review":99999999999999999999},"gates":{%s}}' "$LB_GATES" > "$ST"
+expect "LB huge iteration.review -> block(2)"            "$(gate)" "2"
+printf '{"phase":"review","approved":true,"effort":{"tier":"heavy"},"iteration":{"fix":7},"gates":{"loop_budget":{"acked_through":99999999999999999999},%s}}' "$LB_GATES" > "$ST"
+expect "LB huge acked_through -> block(2)"               "$(gate)" "2"
+# ...and the block is not raw shell noise: it names the field, like every other block.
+LBE2b="$(lberr)"
+expect "LB  ...huge value block names the field"         "$(printf '%s' "$LBE2b" | grep -qF 'acked_through in .auto-task' && echo y || echo n)" "y"
+# A zero-padded counter is accepted by the character-class check and compares fine in
+# `[ ]`, but `$(( 09 ))` is octal and fatal - so the ack snippet the block prints must
+# still be VALID jq with a real number, and stderr must carry no arithmetic error.
+printf '{"phase":"review","approved":true,"effort":{"tier":"heavy"},"iteration":{"fix":"09"},"gates":{%s}}' "$LB_GATES" > "$ST"
+expect "LB zero-padded counter -> block(2)"              "$(gate)" "2"
+LBE2c="$(lberr)"
+expect "LB  ...ack snippet carries a real number"        "$(printf '%s' "$LBE2c" | grep -qE 'acked_through: [0-9]+' && echo y || echo n)" "y"
+expect "LB  ...and no octal arithmetic error leaks"      "$(printf '%s' "$LBE2c" | grep -c 'too great for base')" "0"
+printf '{"phase":"review","approved":true,"effort":{"tier":"heavy"},"iteration":{"fix":7},"gates":{"loop_budget":{"acked_through":"x"},%s}}' "$LB_GATES" > "$ST"
+expect "LB non-numeric acked_through -> block(2)"        "$(gate)" "2"
+
+# The ack the block PRINTS must be a value this same hook will ACCEPT next run.
+# lb_is_number bounds an input at 18 digits, but the rung computed for an 18-digit
+# counter is 19 - so the recovery snippet used to advise a value the validator then
+# rejected, dead-ending the documented recovery (the class lb_strip_zeros exists to
+# prevent). Now such a counter is named as the corruption it is.
+printf '{"phase":"review","approved":true,"effort":{"tier":"heavy"},"iteration":{"fix":999999999999999999},"gates":{%s}}' "$LB_GATES" > "$ST"
+expect "LB 18-digit counter -> block(2)"                 "$(gate)" "2"
+LBE2d="$(lberr)"
+expect "LB  ...names the counter as implausible"         "$(printf '%s' "$LBE2d" | grep -qF 'implausibly large' && echo y || echo n)" "y"
+expect "LB  ...and prints NO un-ackable ack value"       "$(printf '%s' "$LBE2d" | grep -c 'acked_through: [0-9]\{19,\}')" "0"
+# ...while ordinary counters still print a usable, re-acceptable ack.
+lbstate heavy 33 ""
+LBE2e="$(lberr)"
+expect "LB normal counter still prints its ack"          "$(printf '%s' "$LBE2e" | grep -qF 'acked_through: 36' && echo y || echo n)" "y"
+expect "LB  ...and that ack is itself valid input"       "$(bash -c ". '$HOOKS/lib/loop-budget.sh'; lb_is_number 36 && echo y || echo n")" "y"
+# The printed recovery must not funnel two parallel runs through one global temp path:
+# both pasting `> /tmp/s && mv /tmp/s <state>` can move run B's STATE.json onto run A's.
+expect "LB ack snippet uses mktemp, not a fixed path"    "$(printf '%s' "$LBE2e" | grep -c '> /tmp/s')" "0"
+expect "LB  ...and routes through \$t"                   "$(printf '%s' "$LBE2e" | grep -qF 'mktemp' && echo y || echo n)" "y"
+
+# --- precedence: the primary gate contract reports before the budget ------
+printf '{"phase":"review","approved":true,"effort":{"tier":"heavy"},"iteration":{"fix":99},"gates":{"code_review":{"passed":false},"gate_b":{"passed":false}}}' > "$ST"
+LBE3="$(lberr)"
+expect "LB review-not-passed reports first"              "$(printf '%s' "$LBE3" | grep -qF 'code-review loop has passed' && echo y || echo n)" "y"
+expect "LB  ...and the budget message is NOT shown"      "$(printf '%s' "$LBE3" | grep -qF 'over its fix-loop budget' && echo y || echo n)" "n"
+
+echo
+echo "================ Fix-loop budget - Stop-hook release ================"
+
+# The release is a backstop, not a precondition for surfacing: the hook already exits 0
+# on expected_next_action=user-approval, which the ack ritual tells the model to set. What
+# these assertions pin is the behavior for a run that never updated the field. This is the
+# mirror of the soft-lock breaker: that releases on too LITTLE progress, this on too MUCH
+# volume.
+LBMARK="$SD/.loop-budget-released"
+lbclean(){ rm -f "$LBMARK" "$SD/.stall-block-count"; }
+sstate(){ local lb=""; [ -n "$3" ] && lb="\"loop_budget\":{\"acked_through\":$3},"
+  printf '{"phase":"review","approved":true,"expected_next_action":"auto-continue","base":"%s","effort":{"tier":"%s"},"iteration":{"fix":%s,"review":1},"gates":{%s"code_review":{"reviewed_diff_sha":"s"}}}' \
+    "$BASE" "$1" "$2" "$lb" > "$ST"; }
+swarn(){ CLAUDE_PROJECT_DIR="$T" bash "$STOP" </dev/null 2>&1 >/dev/null; }
+
+# CONTROL FIRST: under budget must still BLOCK, otherwise "allow" proves nothing.
+lbclean; sstate heavy 3 ""
+expect "LBS control: under budget still blocks"          "$(stop)" "block"
+# One invocation, both streams: the release fires ONCE per iteration count, so a
+# second call at the same count correctly produces no warning. Reading the decision
+# and the warning from separate invocations would have tested the wrong thing.
+lbclean; sstate heavy 7 ""
+LBSOUT="$(CLAUDE_PROJECT_DIR="$T" bash "$STOP" </dev/null 2>"$T/lbs.err")"
+expect "LBS over budget releases the turn-end"           "$([ -z "$LBSOUT" ] && echo allow || printf '%s' "$LBSOUT" | jq -r '.decision // "allow"')" "allow"
+expect "LBS  ...and warns naming the budget"             "$(grep -qF 'loop budget' "$T/lbs.err" && echo y || echo n)" "y"
+# stderr alone is NOT delivery: on an ALLOW a Stop hook has no guaranteed model-facing
+# channel (only a block is fed back), so the notice also goes out as a systemMessage -
+# the field check-version.sh/release-notes.sh/suggest-cleanup.sh already use. Carries no
+# `decision`, so the stop is still allowed.
+expect "LBS  ...and surfaces via systemMessage too"      "$(printf '%s' "$LBSOUT" | jq -r '.systemMessage // ""' 2>/dev/null | grep -qF 'loop budget' && echo y || echo n)" "y"
+expect "LBS  ...without turning the release into a block" "$([ -z "$LBSOUT" ] && echo allow || printf '%s' "$LBSOUT" | jq -r '.decision // "allow"' 2>/dev/null)" "allow"
+# ONCE per iteration count - a second turn-end at the same fix blocks again.
+expect "LBS 2nd turn-end at same fix -> block"           "$(stop)" "block"
+expect "LBS 3rd turn-end at same fix -> block"           "$(stop)" "block"
+sstate heavy 8 ""
+expect "LBS new iteration count releases once more"      "$(stop)" "allow"
+expect "LBS  ...then blocks again at that count"         "$(stop)" "block"
+# after the ack raises the budget, no release
+lbclean; sstate heavy 8 12
+expect "LBS acked (budget 12), fix=8 -> block"           "$(stop)" "block"
+# the soft-lock counter must KEEP accumulating across releases - an earlier draft
+# deleted it, which would have stopped AUTO_TASK_STALL_LIMIT ever firing.
+# Assert on the RELEASE turn itself. An earlier version of this test only checked the
+# count after three turn-ends, which a deleting release masks: it removes turn 1's
+# count, and turns 2-3 (which do not release) rebuild it past the threshold. Mutation
+# testing caught that — the deletion mutant stayed green.
+lbclean; sstate heavy 7 ""
+stop >/dev/null                                   # the one turn-end that releases
+expect "LBS release does NOT delete the soft-lock counter" "$([ -f "$SD/.stall-block-count" ] && echo y || echo n)" "y"
+expect "LBS  ...and the count survives that turn"          "$(cut -d'|' -f1 "$SD/.stall-block-count" 2>/dev/null)" "1"
+stop >/dev/null; stop >/dev/null
+expect "LBS soft-lock counter keeps accumulating"          "$([ "$(cut -d'|' -f1 "$SD/.stall-block-count" 2>/dev/null)" -gt 1 ] && echo y || echo n)" "y"
+# The release must measure the SAME loop count the gate blocks on - max(fix, review).
+# If it read fix alone, a review-heavy run (fix=0/review=28) would have its commit
+# blocked by enforce-gates.sh while never getting the turn-end it needs to surface the
+# check-in: the two halves of the feature would disagree and the run would soft-lock.
+sstate2(){ local lb=""; [ -n "$4" ] && lb="\"loop_budget\":{\"acked_through\":$4},"
+  printf '{"phase":"review","approved":true,"expected_next_action":"auto-continue","base":"%s","effort":{"tier":"%s"},"iteration":{"fix":%s,"review":%s},"gates":{%s"code_review":{"reviewed_diff_sha":"s"}}}' \
+    "$BASE" "$1" "$2" "$3" "$lb" > "$ST"; }
+lbclean; sstate2 heavy 0 28 ""
+LBSOUT2="$(CLAUDE_PROJECT_DIR="$T" bash "$STOP" </dev/null 2>"$T/lbs2.err")"
+expect "LBS review-driven overage releases too"          "$([ -z "$LBSOUT2" ] && echo allow || printf '%s' "$LBSOUT2" | jq -r '.decision // "allow"')" "allow"
+expect "LBS  ...and the warning names both counters"     "$(grep -qF 'iteration.fix=0 and iteration.review=28' "$T/lbs2.err" && echo y || echo n)" "y"
+expect "LBS  ...once only, at that loop count"           "$(stop)" "block"
+lbclean; sstate2 heavy 0 6 ""
+expect "LBS review == cap -> no release, block"          "$(stop)" "block"
+# The ack itself is PROGRESS. `gates.loop_budget.acked_through` joins the anti-stall
+# signature for one narrow reason: a turn whose ONLY action is recording the user's
+# over-budget ack leaves every other signature field constant, so without it that turn
+# is counted as another frozen turn-end and pushes the run toward a spurious
+# AUTO_TASK_STALL_LIMIT force-release. Asserted behaviorally (counter resets), because
+# a grep on the jq line would pass on a sig that never reads the value. Mutation-tested:
+# deleting the field from the sig reds this assertion and nothing else in the suite.
+lbclean; sstate2 heavy 3 1 ""
+stop >/dev/null; stop >/dev/null; stop >/dev/null
+expect "LBS stall counter accumulated before the ack"    "$(cut -d'|' -f1 "$SD/.stall-block-count" 2>/dev/null)" "3"
+sstate2 heavy 3 1 12
+stop >/dev/null
+expect "LBS an ack-only turn RESETS the stall counter"   "$(cut -d'|' -f1 "$SD/.stall-block-count" 2>/dev/null)" "1"
+
+# PARITY WITH THE GATE, on the states where the two used to diverge. The gate treats an
+# absent sibling counter as 0 and an empty-string tier as tier-present (cap 4); this
+# hook must agree, or a run is refused a landing with no released turn-end and no
+# in-band warning. Every fixture above writes BOTH counters, so these shapes are the
+# only ones that can catch it - an earlier draft passed the whole suite while diverging.
+lbstall(){ printf '{"phase":"review","approved":true,"expected_next_action":"auto-continue","base":"%s","effort":{"tier":"%s"},"iteration":%s,"gates":{"code_review":{"reviewed_diff_sha":"s"}}}' "$BASE" "$1" "$2" > "$ST"; }
+lbclean; lbstall heavy '{"review":28}'
+expect "LBS fix absent, review over -> release"          "$(stop)" "allow"
+lbclean; lbstall heavy '{"fix":null,"review":28}'
+expect "LBS fix null, review over -> release"            "$(stop)" "allow"
+lbclean; lbstall heavy '{"fix":28}'
+expect "LBS review absent, fix over -> release"          "$(stop)" "allow"
+lbclean; lbstall "" '{"fix":28}'
+expect "LBS empty tier (gate uses cap 4) -> release"     "$(stop)" "allow"
+lbclean; lbstall heavy '{"fix":1,"review":1}'
+expect "LBS  ...control: under budget still blocks"      "$(stop)" "block"
+lbclean; sstate2 heavy 0 28 30
+expect "LBS review acked past -> no release, block"      "$(stop)" "block"
+# legacy / corrupt -> no release, normal block. This hook is fail-OPEN, so silence
+# from the budget branch means "let the existing logic decide", not "allow".
+lbclean
+printf '{"phase":"review","approved":true,"expected_next_action":"auto-continue","base":"%s","iteration":{"fix":99},"gates":{}}' "$BASE" > "$ST"
+expect "LBS legacy (no effort.tier) -> block, no release" "$(stop)" "block"
+printf '{"phase":"review","approved":true,"expected_next_action":"auto-continue","base":"%s","effort":{"tier":"heavy"},"iteration":{"fix":"abc"},"gates":{}}' "$BASE" > "$ST"
+expect "LBS non-numeric fix -> block, no release"        "$(stop)" "block"
+# user gates still yield
+printf '{"phase":"review","approved":true,"expected_next_action":"user-approval","base":"%s","effort":{"tier":"heavy"},"iteration":{"fix":99},"gates":{}}' "$BASE" > "$ST"
+expect "LBS user-approval still allowed"                 "$(stop)" "allow"
+# fail-OPEN on malformed JSON, with the warning as the POSITIVE discriminator: a
+# crashed hook or a broken harness also produces no block, so "allow" alone is weak.
+printf '{not json' > "$ST"
+expect "LBS malformed JSON -> allow (fail open)"         "$(stop)" "allow"
+SWERR="$(swarn)"
+expect "LBS  ...and the fail-open warning is emitted"    "$(printf '%s' "$SWERR" | grep -qF 'not valid JSON' && echo y || echo n)" "y"
+
+echo
+echo "================ Fix-loop budget - review fixes ================"
+RLIB="$HOOKS/lib/loop-budget.sh"
+nb(){ bash -c ". '$RLIB'; lb_next_budget $*"; }
+
+# --- R1: ONE ack must clear the block, however far past budget the run is ----
+# The gate runs at COMMIT time while iteration.fix accumulates during the fix loop, so
+# a run arrives here already far past its budget. lb_next_budget used to step a single
+# cap regardless of position, which demanded one ack per cap of overshoot: a HEAVY run
+# at fix=33 needed FIVE (12, 18, 24, 30, 36), each asking the user to approve budget
+# already spent, and each block announcing a check-in point already in the past.
+lbstate heavy 33 ""
+expect "R1 heavy fix=33 no ack -> block"                 "$(gate)" "2"
+LBE33="$(lberr)"
+expect "R1  ...ack clears it in ONE step (not 12)"       "$(printf '%s' "$LBE33" | grep -o 'acked_through: [0-9]*' | head -1)" "acked_through: 36"
+expect "R1  ...and the promised check-in is AHEAD of 33" "$(printf '%s' "$LBE33" | grep -o 'next check-in is at [0-9]*' | head -1)" "next check-in is at 37"
+lbstate heavy 33 36
+expect "R1  ...and that single ack really allows it"     "$(gate)" "0"
+
+# The documented ladder must be UNCHANGED where a run meets the gate one past budget:
+# HEAVY budgets 6/12/18/24, check-ins at fix 7/13/19/25.
+expect "R1 ladder rung 1 unchanged (fix=7 -> 12)"        "$(nb 6 0 7)"    "12"
+expect "R1 ladder rung 2 unchanged (fix=13 -> 18)"       "$(nb 6 12 13)"  "18"
+expect "R1 ladder rung 3 unchanged (fix=19 -> 24)"       "$(nb 6 18 19)"  "24"
+expect "R1 far overshoot steps in whole caps (33 -> 36)" "$(nb 6 0 33)"   "36"
+expect "R1 light cap2 overshoot (fix=9 -> 10)"           "$(nb 2 0 9)"    "10"
+expect "R1 standard cap4 overshoot (fix=17 -> 20)"       "$(nb 4 0 17)"   "20"
+# back-compat + sanitization: a caller with no position, or a garbage one, gets the old
+# single-step answer rather than an error or a wild number.
+expect "R1 fix omitted -> old single-step result"        "$(nb 6 0)"      "12"
+expect "R1 non-numeric fix ignored"                      "$(nb 6 0 abc)"  "12"
+expect "R1 an ack always RAISES (fix well under budget)" "$(nb 6 0 3)"    "12"
+
+# --- R3: a failed marker write must not turn the release sticky --------------
+# It was `> marker || true` then an unconditional exit 0, so an unwritable directory
+# converted "release once per count" into "release every turn" - exactly the hole the
+# marker exists to prevent. Falling through to the block is pre-existing behavior, so
+# gating the release on the write costs no soft-lock risk.
+lbclean; sstate heavy 7 ""
+chmod a-w "$SD"
+R3A="$(stop)"; R3B="$(stop)"; R3C="$(stop)"
+chmod u+w "$SD"
+expect "R3 unwritable marker: turn 1 blocks (no release)" "$R3A" "block"
+expect "R3  ...turn 2 blocks"                             "$R3B" "block"
+expect "R3  ...turn 3 blocks (not sticky)"                "$R3C" "block"
+# CONTROL: the same sequence in a writable dir must still release exactly once, else
+# the three assertions above would pass on a hook that never releases at all.
+lbclean; sstate heavy 7 ""
+expect "R3 control: writable dir releases once"           "$(stop)" "allow"
+expect "R3 control:  ...then blocks"                      "$(stop)" "block"
+
+# --- R4: the marker must be run-scoped by base ------------------------------
+# .stall-block-count is run-scoped (.base leads its signature) and record-outcome.sh
+# keys its sentinel by base for the same reason. The marker was the only per-run file
+# that was not, so residue from a prior run in a reused .auto-task/<branch>/ folder
+# swallowed a new run's release AND its stderr warning - the only in-band notice.
+lbclean; printf 'B_OLD|7\n' > "$LBMARK"
+sstate heavy 7 ""
+R4OUT="$(CLAUDE_PROJECT_DIR="$T" bash "$STOP" </dev/null 2>"$T/r4.err")"
+expect "R4 prior-run residue does not swallow release"    "$([ -z "$R4OUT" ] && echo allow || printf '%s' "$R4OUT" | jq -r '.decision // "allow"')" "allow"
+expect "R4  ...and the warning still reaches the user"    "$(grep -qF 'loop budget' "$T/r4.err" && echo y || echo n)" "y"
+expect "R4  ...marker is keyed by base, not bare count"   "$(cat "$LBMARK" 2>/dev/null)" "$BASE|7"
+# CONTROL: within the SAME run the once-per-count behavior must be intact, else R4's
+# assertion would be satisfied by a hook that simply ignores the marker.
+expect "R4 control: same run, 2nd turn-end blocks"        "$(stop)" "block"
+
+echo
+echo "================ Shared cap definition + doc contracts ================"
+
+LBLIB="$HOOKS/lib/loop-budget.sh"
+expect "lib/loop-budget.sh exists"                       "$([ -f "$LBLIB" ] && echo y || echo n)" "y"
+expect "lib/loop-budget.sh parses"                       "$(bash -n "$LBLIB" 2>/dev/null && echo y || echo n)" "y"
+# Both enforcing hooks must source the SAME definition, or the cap table reverts to
+# two hardcoded copies - the duplication this file exists to prevent.
+# Presence, not an exact count: the path appears in the source line AND in the
+# comments explaining why the lib is shared, and pinning a count would red the suite
+# for anyone who edits a comment.
+expect "enforce-gates sources the shared lib"            "$(grep -q '^\. .*lib/loop-budget.sh' "$GATE" && echo y || echo n)" "y"
+expect "stall hook sources the shared lib"               "$(grep -q '^\. .*lib/loop-budget.sh' "$STOP" && echo y || echo n)" "y"
+expect "lib cap light=2"    "$(bash -c ". '$LBLIB'; lb_cap_for_tier light")"    "2"
+expect "lib cap standard=4" "$(bash -c ". '$LBLIB'; lb_cap_for_tier standard")" "4"
+expect "lib cap heavy=6"    "$(bash -c ". '$LBLIB'; lb_cap_for_tier heavy")"    "6"
+expect "lib unknown tier -> standard cap" "$(bash -c ". '$LBLIB'; lb_cap_for_tier bogus")" "4"
+expect "lib budget = max(cap, acked)"     "$(bash -c ". '$LBLIB'; lb_effective_budget 6 3")" "6"
+expect "lib next budget adds one cap"     "$(bash -c ". '$LBLIB'; lb_next_budget 6 12")" "18"
+expect "lib rejects non-numeric"          "$(bash -c ". '$LBLIB'; lb_is_number abc && echo y || echo n")" "n"
+expect "lib rejects negative"             "$(bash -c ". '$LBLIB'; lb_is_number -3 && echo y || echo n")" "n"
+# Magnitude is part of the contract: bash compares via a signed 64-bit conversion, so
+# an all-digits value wider than INT64_MAX errors in `[ ]` exactly like "abc" does and
+# would fail the guard OPEN. 18 digits is the widest unconditionally safe length.
+expect "lib accepts 18 digits"            "$(bash -c ". '$LBLIB'; lb_is_number 999999999999999999 && echo y || echo n")" "y"
+expect "lib rejects 19 digits"            "$(bash -c ". '$LBLIB'; lb_is_number 9999999999999999999 && echo y || echo n")" "n"
+expect "lib rejects 20 digits"            "$(bash -c ". '$LBLIB'; lb_is_number 99999999999999999999 && echo y || echo n")" "n"
+expect "lib judges value, not zero-padding" "$(bash -c ". '$LBLIB'; lb_is_number 0000000000000000000005 && echo y || echo n")" "y"
+expect "lib accepts all-zeros"            "$(bash -c ". '$LBLIB'; lb_is_number 000 && echo y || echo n")" "y"
+# a rejected huge value must degrade to the default, never to shell noise
+expect "lib huge acked -> falls back to cap" "$(bash -c ". '$LBLIB'; lb_effective_budget 4 99999999999999999999 2>/dev/null")" "4"
+# Octal safety: bash ARITHMETIC (unlike `[ ]`) reads a leading zero as an octal
+# prefix, so `$(( 09 ))` is a fatal "value too great for base" error. A validated
+# all-digit counter can therefore still blow up an arithmetic caller - which in the
+# fail-CLOSED gate printed raw shell noise and an `acked_through: ` with NO value,
+# i.e. a block whose own documented recovery snippet was invalid jq.
+expect "lib strips leading zeros"         "$(bash -c ". '$LBLIB'; lb_strip_zeros 0000009")" "9"
+expect "lib strip keeps all-zeros as 0"   "$(bash -c ". '$LBLIB'; lb_strip_zeros 000")" "0"
+expect "lib next budget survives octal"   "$(bash -c ". '$LBLIB'; lb_next_budget 6 0 09 2>/dev/null")" "12"
+expect "lib  ...with no arithmetic error" "$(bash -c ". '$LBLIB'; lb_next_budget 6 0 09 2>&1 >/dev/null" | grep -c 'too great for base')" "0"
+expect "lib budget survives octal acked"  "$(bash -c ". '$LBLIB'; lb_effective_budget 4 08 2>/dev/null")" "8"
+expect "lib does not leak v to the caller" \
+  "$(bash -c '. "'"$LBLIB"'"; v=S; lb_is_number 5; printf "%s" "$v"')" "S"
+# The helper must not clobber caller variables. enforce-gates.sh legitimately uses
+# `cap` and `budget` itself, and today every call site happens to use $( ) (a
+# subshell), which masks the problem — so this asserts on DIRECT calls, where a
+# missing `local` would actually bite. Flagged as a latent fragility by verify.
+expect "lib does not leak cap/budget to the caller" \
+  "$(bash -c '. "'"$LBLIB"'"; cap=S; budget=S; lb_effective_budget 6 12 >/dev/null; lb_next_budget 6 12 >/dev/null; printf "%s%s" "$cap" "$budget"')" "SS"
+
+# Doc contracts: greps for claims this change FALSIFIED. A stale one means a
+# maintainer reads a guarantee the code no longer provides.
+LBSKILL="$HOOKS/../skills/auto-task/SKILL.md"
+LBARCH="$HOOKS/../skills/auto-task/ARCHITECTURE.md"
+LBRDME="$HOOKS/../README.md"
+expect "Loop rule carries the converged clause"          "$(grep -c 'zero blockers and zero required findings means the loop has CONVERGED' "$LBSKILL")" "1"
+expect "SKILL documents the fix-loop budget section"     "$(grep -c '^### Fix-loop budget' "$LBSKILL")" "1"
+expect "SKILL documents the ack ritual"                  "$(grep -c 'The ack ritual' "$LBSKILL")" "1"
+expect "SKILL schema carries gates.loop_budget"          "$(grep -c '"loop_budget": { "acked_through"' "$LBSKILL")" "1"
+expect "SKILL: no stale 'reads only gates.*'"            "$(grep -c 'reads only `gates\.\*`' "$LBSKILL")" "0"
+expect "SKILL: no stale 'ONLY new object'"               "$(grep -c 'ONLY new object a hook reads' "$LBSKILL")" "0"
+expect "SKILL: no stale 'no fixed numeric cap'"          "$(grep -c 'no fixed numeric cap' "$LBSKILL")" "0"
+expect "SKILL: actuals is an explicit obligation"        "$(grep -c 'is an OBLIGATION, not best-effort' "$LBSKILL")" "1"
+expect "SKILL: obligation keyed on the history entry"    "$(grep -c 'history entry EXISTS' "$LBSKILL")" "1"
+# The obligation must be a NAMED guard checked at every writer of phase:"done", not a
+# sentence buried in the step that performs it - a rule stated only inside the step it
+# obliges guards just the branch that would already have complied. Precedent: the
+# external-actions terminal guard, which is restated at every Phase-7 done-writer.
+# >= rather than == : the guard is deliberately restated at every done-writer, so the
+# count grows whenever a new terminal branch is added. An exact count would red on the
+# very edit that EXTENDS coverage - the opposite of what this pins. The per-writer
+# assertions below are what actually enforce placement; this one guards the name.
+expect "SKILL: the obligation is a named guard"          "$([ "$(grep -ic 'run-metrics terminal guard' "$LBSKILL")" -ge 6 ] && echo y || echo n)" "y"
+expect "SKILL: guard cited at the Phase-5 done fork"     "$(sed -n '/^12\. Write .pr_url. to state/p' "$LBSKILL" | grep -qF 'run-metrics terminal guard' && echo y || echo n)" "y"
+expect "SKILL: guard cited at the Phase-6 done writer"   "$(sed -n '/^\*\*6\. Terminal handoff\.\*\*/p' "$LBSKILL" | grep -qF 'run-metrics terminal guard' && echo y || echo n)" "y"
+expect "SKILL: guard cited at the Phase-8 done writer"   "$(sed -n '/^\*\*6\. Terminal state\.\*\*/p' "$LBSKILL" | grep -qF 'run-metrics terminal guard' && echo y || echo n)" "y"
+# Per-WRITER, not per-phase: the earlier pin counted the phrase somewhere in Phase 7,
+# which one standalone paragraph satisfied while step 3's FAIL branch (a done-writer in
+# its own numbered step) cited only the external-actions guard - "addressed in name, not
+# in behavior", the exact shape this guard exists to prevent.
+expect "SKILL: Phase-7 FAIL branch cites both guards"    "$(sed -n '/^   - \*\*FAIL\*\* — the preview was reachable/p' "$LBSKILL" | grep -qF 'run-metrics terminal guard' && echo y || echo n)" "y"
+expect "SKILL: Phase-7 terminal bullet cites the guard"  "$(sed -n '/^   - \*\*Terminal state (or handoff to Phase 8)/p' "$LBSKILL" | grep -qF 'run-metrics terminal guard' && echo y || echo n)" "y"
+expect "SKILL: Phase-7 step 1.4 cites both guards"       "$(sed -n '/^   4\. \*\*No URL by/p' "$LBSKILL" | grep -qF 'BOTH terminal guards' && echo y || echo n)" "y"
+expect "SKILL: the guard enumeration names step 3"       "$(grep -c "step 3's FAIL bullet" "$LBSKILL")" "1"
+# The two hooks' agreement is scoped to well-formed states; on an unverifiable counter
+# they diverge BY DESIGN (opposite fail policies). The old absolute was false - fuzzing
+# found ~9 corrupt shapes where the gate blocks and the release stays silent.
+expect "SKILL: no false never-disagree absolute"         "$(grep -c 'can never disagree with each other' "$LBSKILL")" "0"
+expect "SKILL: divergence-by-design documented"          "$(grep -c 'they diverge \*by design\*' "$LBSKILL")" "1"
+expect "SKILL: guard cited at the Phase-7 done writers"  "$(grep -c 'Terminal guards . the external-actions terminal guard AND the run-metrics terminal guard' "$LBSKILL")" "1"
+expect "ARCH gate table lists the loop-budget gate"      "$(grep -q 'loop-budget gate' "$LBARCH" && echo y || echo n)" "y"
+# The gate skips when EITHER side is missing (`has_effort && has_iter`). The row used
+# to read as a conjunction ("no effort.tier AND no iteration counters"), which predicts
+# a block at cap 4 for {"iteration":{"fix":99}} with no effort object - the code exits 0.
+# This is the row the design nominates as the single non-stale source, so its content
+# gets a guard, not just its existence.
+expect "ARCH row states the skip as EITHER-side"         "$(grep -c 'missing EITHER side' "$LBARCH")" "1"
+expect "ARCH row does not state it as a conjunction"     "$(grep -c 'no .effort.tier. and no .iteration. counters' "$LBARCH")" "0"
+expect "ARCH cap table points at the shared lib"         "$(grep -c 'single executable definition' "$LBARCH")" "1"
+expect "README gate list mentions the fix-loop budget"   "$(grep -c 'It also enforces the \*\*fix-loop budget\*\*' "$LBRDME")" "1"
+# The ack does NOT buy a flat one cap - it steps to the first rung that clears the
+# count (see lb_next_budget). Mutation testing showed this README row was the ONE
+# corrected surface no assertion pinned: restoring the stale wording left the suite
+# fully green. Same shape as the SKILL stale-claim guards above.
+expect "README: no stale one-cap ack claim"              "$(grep -c 'buys one more cap' "$LBRDME")" "0"
+expect "README budget rows name both counters"           "$([ "$(grep -c 'max(iteration.fix, iteration.review)' "$LBRDME")" -ge 2 ] && echo y || echo n)" "y"
+expect "README has a budget troubleshooting row"         "$(grep -c 'over its fix-loop budget' "$LBRDME")" "1"
+
+# restore a sane state file for anything appended after this block
+printf '%s' '{"approved":true,"phase":"review","expected_next_action":"auto-continue"}' > "$ST"
 
 echo
 echo "================ SUMMARY: $PASS passed, $FAIL failed ================"

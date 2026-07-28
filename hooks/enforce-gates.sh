@@ -27,6 +27,13 @@ input="$(cat)"
 ENFORCE_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
 # shellcheck source=/dev/null
 . "$ENFORCE_SCRIPT_DIR/lib/resolve-run-state.sh" 2>/dev/null || true
+# Shared, PURE fix-loop budget resolver — the single executable home of the
+# effort-tier cap table, sourced by this hook AND by prevent-mid-protocol-stall.sh
+# so the two cannot drift. Sourced permissively (`|| true`) like the resolver above;
+# the loop-budget block below re-checks that its functions actually loaded, because
+# a fail-CLOSED hook must not silently skip a guard just because a source failed.
+# shellcheck source=/dev/null
+. "$ENFORCE_SCRIPT_DIR/lib/loop-budget.sh" 2>/dev/null || true
 
 # `cmd_is_raw=1` means cmd is the raw JSON payload (jq absent or decode failed),
 # not a decoded shell command. The two need different commit-detection regexes:
@@ -337,6 +344,96 @@ fi
 if [ "$tier" != "light" ] && [ "$gate_b_passed" != "true" ] && [ -z "$gate_b_skipped" ]; then
   printf 'Blocked by auto-task-plugin: tier=%s requires Gate B before commit.\nRequired:\n  gates.gate_b.passed = true   OR   gates.gate_b.skipped_reason set\n' "$tier" >&2
   exit 2
+fi
+
+# ---- Fix-loop budget -------------------------------------------------------
+# The effort tier has always documented a fix-loop cap (LIGHT 2 / STANDARD 4 /
+# HEAVY 6) and NOTHING enforced it. A real run reached iteration.fix=33 against a
+# HEAVY cap of 6 — 5.5x over — and no mechanism could stop it: this hook never read
+# the counter, and the Stop hook reads it only to detect *movement*, never magnitude.
+# The plugin had a rigorous anti-stall guard and no anti-churn guard at all.
+#
+# BOTH LOOP COUNTERS COUNT, via max(iteration.fix, iteration.review). The skill keeps
+# two: `iteration.fix` is bumped only on the Phase-3 self-verify failure path, while
+# every Phase-4 review round and every Gate-B feedback round bumps `iteration.review`.
+# A gate reading `fix` alone would therefore wave through the churn shape this feature
+# exists to bound — fix=0 / review=28 is 28 rounds of iteration and would land
+# unblocked. The budget bounds review VOLUME, so it is measured against whichever
+# counter has run furthest. Taking the max (rather than the sum) keeps one ack
+# sufficient and keeps the ladder on the documented cap rungs.
+#
+# Placed LAST, after the gate contract above, deliberately. A run that has not yet
+# passed review is still legitimately working, and "you are over budget" would be
+# noise ahead of "your review has not passed". By the time control reaches here the
+# work is done and the only question left is whether an over-budget run may LAND.
+#
+# The block is recoverable-with-instructions, like every other block in this hook:
+# the message carries the exact `jq` to record an ack. An ack raises the budget to the
+# next cap multiple that clears the current counter, so ONE ack always suffices and the
+# check-in returns one cap later (HEAVY: budget 6/12/18/24, check-ins at loop count
+# 7/13/19/25) rather than nagging every turn. The "clears the current counter" part
+# matters because this gate runs at commit time while the loop counters accumulate
+# during the loop: a run can arrive here far past its budget, and a fixed single-cap
+# step would then demand one ack per cap of overshoot (see lb_next_budget).
+#
+# Fail policy is deliberately MIXED here, and the asymmetry is the point:
+#   - A LEGACY run (no `effort` object at all — it predates the tier feature) must
+#     NOT be blocked. Absence is probed separately from the `// "standard"` default
+#     read above, because that default yields cap 4 and WOULD block such a run.
+#   - A CORRUPT counter must block. `[ "abc" -gt 6 ]` does not evaluate false, it
+#     ERRORS, so an unguarded `if` takes the else branch and the guard fails OPEN —
+#     wrong in a hook documented as fail-closed. Every value is validated first, and
+#     `lb_is_number` rejects on MAGNITUDE as well as character class, because a
+#     20-digit all-digits counter errors in `[ ]` exactly like "abc" does.
+#   - A MISSING helper must block. If lib/loop-budget.sh failed to source we cannot
+#     resolve the cap, and a fail-closed hook blocks rather than waving it through.
+#   - A run carrying EITHER counter is in scope. Only a run with no `iteration`
+#     counters at all (a legacy state file) is skipped; an absent sibling counter
+#     reads as 0 rather than disabling the gate.
+has_effort="$(jq -r 'if (.effort? // null) == null then "no" else (if (.effort.tier? // null) == null then "no" else "yes" end) end' "$state" 2>/dev/null || echo "no")"
+has_iter="$(jq -r 'if (.iteration? // null) == null then "no" else (if ((.iteration.fix? // null) == null and (.iteration.review? // null) == null) then "no" else "yes" end) end' "$state" 2>/dev/null || echo "no")"
+if [ "$has_effort" = "yes" ] && [ "$has_iter" = "yes" ]; then
+  if ! command -v lb_cap_for_tier >/dev/null 2>&1 || ! command -v lb_effective_budget >/dev/null 2>&1; then
+    printf 'Blocked by auto-task-plugin: hooks/lib/loop-budget.sh could not be sourced, so the fix-loop budget cannot be verified before this commit.\nThis hook fails closed. Restore hooks/lib/loop-budget.sh (it ships with the plugin) and retry.\n' >&2
+    exit 2
+  fi
+  fix_count="$(jq -r '.iteration.fix // 0' "$state" 2>/dev/null || echo 0)"
+  review_count="$(jq -r '.iteration.review // 0' "$state" 2>/dev/null || echo 0)"
+  acked_through="$(jq -r '.gates.loop_budget.acked_through // 0' "$state" 2>/dev/null || echo 0)"
+  if ! lb_is_number "$fix_count"; then
+    printf 'Blocked by auto-task-plugin: .iteration.fix in .auto-task/%s/STATE.json is not a non-negative integer (got: %s), so the fix-loop budget cannot be verified.\nThis hook fails closed. Repair the counter and retry.\n' "$branch" "$fix_count" >&2
+    exit 2
+  fi
+  if ! lb_is_number "$review_count"; then
+    printf 'Blocked by auto-task-plugin: .iteration.review in .auto-task/%s/STATE.json is not a non-negative integer (got: %s), so the fix-loop budget cannot be verified.\nThis hook fails closed. Repair the counter and retry.\n' "$branch" "$review_count" >&2
+    exit 2
+  fi
+  if ! lb_is_number "$acked_through"; then
+    printf 'Blocked by auto-task-plugin: .gates.loop_budget.acked_through in .auto-task/%s/STATE.json is not a non-negative integer (got: %s), so the fix-loop budget cannot be verified.\nThis hook fails closed. Repair the value (or remove gates.loop_budget to reset the ack) and retry.\n' "$branch" "$acked_through" >&2
+    exit 2
+  fi
+  cap="$(lb_cap_for_tier "$tier")"
+  budget="$(lb_effective_budget "$cap" "$acked_through")"
+  # The loop count is max(fix, review) — see the BOTH LOOP COUNTERS note above.
+  loop_count="$fix_count"
+  [ "$review_count" -gt "$loop_count" ] && loop_count="$review_count"
+  if [ "$loop_count" -gt "$budget" ]; then
+    next_budget="$(lb_next_budget "$cap" "$acked_through" "$loop_count")"
+    # The ack we print must be a value this same hook will ACCEPT on the next run.
+    # lb_is_number bounds an INPUT at 18 digits (the widest bash can compare), but the
+    # rung computed for an 18-digit counter can be 19 — so the recovery snippet would
+    # advise a value the validator rejects, dead-ending the documented recovery in the
+    # exact way lb_strip_zeros exists to prevent. Unreachable with any real counter; if
+    # it ever happens the counter itself is the corruption, so say that instead of
+    # printing an unusable ack.
+    if ! lb_is_number "$next_budget"; then
+      printf 'Blocked by auto-task-plugin: the fix-loop counter in .auto-task/%s/STATE.json is implausibly large (loop count: %s), so no ack value within the supported range can clear it.\nThis hook fails closed. Repair .iteration.fix / .iteration.review to the run\x27s real round counts and retry.\n' "$branch" "$loop_count" >&2
+      exit 2
+    fi
+    printf 'Blocked by auto-task-plugin: this run is over its fix-loop budget.\n  loop count:      %s   (max of iteration.fix=%s and iteration.review=%s)\n  tier=%s cap:     %s\n  budget in force: %s   (max of the cap and any previous ack)\nThe effort tier documents a fix-loop cap; exceeding it means the run has iterated more than its budget allows, which is the signal to check in with the user rather than keep churning.\nSurface to the user: show the per-round finding severities so they can see whether returns have diminished, then let THEM decide to continue or stop. On their go-ahead, record the ack (raises the budget to the next cap rung that clears the current count, so ONE ack suffices and the next check-in is at %s):\n  t="$(mktemp)" && jq \x27.gates.loop_budget = {acked_through: %s, acked_at: "\x27"$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"\x27", reason: "<why continuing is right>"}\x27 .auto-task/%s/STATE.json > "$t" && mv "$t" .auto-task/%s/STATE.json\nDo NOT set this yourself without asking — it is the user\x27s call, exactly like every other gate flag.\n' \
+      "$loop_count" "$fix_count" "$review_count" "$tier" "$cap" "$budget" "$(( next_budget + 1 ))" "$next_budget" "$branch" "$branch" >&2
+    exit 2
+  fi
 fi
 
 exit 0
