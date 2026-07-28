@@ -55,7 +55,7 @@ set -uo pipefail
 # stamped below this value (or with no stamp) is treated as needing a reset +
 # re-setup by `schema-status` (skill-driven, new-runs-only). Kept out of band from
 # the plugin version so a docs/patch release need not force a settings reset.
-SETTINGS_SCHEMA_VERSION="${AUTO_TASK_SETTINGS_SCHEMA_VERSION:-2}"
+SETTINGS_SCHEMA_VERSION="${AUTO_TASK_SETTINGS_SCHEMA_VERSION:-3}"
 
 # --- Central telemetry collection (BUNDLED defaults) -------------------------
 # These ship WITH the plugin so a user who opts in (telemetry_enabled=true) sends
@@ -88,6 +88,7 @@ default_for() {
     autonomy)                     printf 'supervised' ;;
     landing_model)                printf 'pr' ;;
     unattended_external)          printf 'false' ;;
+    docs_update_mode)             printf 'skip' ;;
     risk_gate_threshold)          printf '6' ;;
     budget_blowout_factor)        printf '3' ;;
     test_integrity_guard)         printf 'true' ;;
@@ -143,6 +144,7 @@ defaults_json() {
     autonomy: "supervised",
     landing_model: "pr",
     unattended_external: false,
+    docs_update_mode: "skip",
     risk_gate_threshold: 6,
     budget_blowout_factor: 3,
     test_integrity_guard: true,
@@ -183,7 +185,7 @@ defaults_json() {
   }'
 }
 
-known_keys="settings_schema_version autonomy landing_model unattended_external risk_gate_threshold budget_blowout_factor test_integrity_guard has_preview_deployment preview_autodetect preview_url preview_wait_mode preview_timeout_min preview_poll_interval_sec preview_bypass_header preview_post_verdict_comment bot_review_autofix bot_review_timeout_min bot_review_poll_interval_sec bot_review_bots external_actions_mode external_actions_timeout_min external_actions_poll_interval_sec visual_assets_enabled cloudinary_cloud_name cloudinary_upload_preset telemetry_enabled telemetry_endpoint telemetry_ingest_token telemetry_satisfaction_prompt history_reminder_enabled worktree_cleanup_nudge worktree_cleanup_throttle_hours worktree_cleanup_prune_dirty worktree_stale_days_default worktree_stale_days_feat worktree_stale_days_refactor worktree_stale_days_fix worktree_stale_days_chore worktree_stale_days_deps worktree_stale_days_docs worktree_stale_days_cleanup"
+known_keys="settings_schema_version autonomy landing_model unattended_external docs_update_mode risk_gate_threshold budget_blowout_factor test_integrity_guard has_preview_deployment preview_autodetect preview_url preview_wait_mode preview_timeout_min preview_poll_interval_sec preview_bypass_header preview_post_verdict_comment bot_review_autofix bot_review_timeout_min bot_review_poll_interval_sec bot_review_bots external_actions_mode external_actions_timeout_min external_actions_poll_interval_sec visual_assets_enabled cloudinary_cloud_name cloudinary_upload_preset telemetry_enabled telemetry_endpoint telemetry_ingest_token telemetry_satisfaction_prompt history_reminder_enabled worktree_cleanup_nudge worktree_cleanup_throttle_hours worktree_cleanup_prune_dirty worktree_stale_days_default worktree_stale_days_feat worktree_stale_days_refactor worktree_stale_days_fix worktree_stale_days_chore worktree_stale_days_deps worktree_stale_days_docs worktree_stale_days_cleanup"
 
 # --- Path resolution ---------------------------------------------------------
 hash_str() {

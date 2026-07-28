@@ -93,18 +93,18 @@ Any run with `effort.risk >= risk_gate_threshold` forces the **merge gate** rega
 
 ## Autonomy modes & the merge gate (v0.22)
 
-auto-task can run in two modes, chosen once per project in a **first-run setup** (four questions: telemetry, autonomy, landing style, unattended-external):
+auto-task can run in two modes, chosen once per project in a **first-run setup** (five questions: telemetry, autonomy, landing style, unattended-external, docs update):
 
 - **`supervised`** (default) — today's behavior: one human gate at plan approval, plus the push prompt.
 - **`autonomous`** — the procedural gates go silent and the run proceeds unattended; the **merge is the sole mandatory human gate**. Safety comes from *exception-triggered* interrupts that stop the run only on real trouble: **ambiguity** (hard stop for a decision it can't resolve with evidence), a **destructive / out-of-envelope command** (blocked by `guard-dangerous-ops.sh` unless `unattended_external` is on), **test integrity** (tests weakened to reach green), a soft **cost-blowout** check-in, and the **fix-loop budget** — exceeding the tier's iteration cap blocks the *commit* until you acknowledge it (and warns during the loop), which is the mechanism that stops a run churning indefinitely without your say-so. High-risk runs (`effort.risk >= risk_gate_threshold`) force the merge gate on regardless of mode, showing a red disclaimer + an **assumptions ledger** of every call the run made unattended.
 
-> **Settings reset on this update.** The settings file is version-stamped; the first `/auto-task` after upgrading to 0.22 backs up (`settings.json.pre-<n>`) and clears each project's settings so the one-time setup re-runs and telemetry is re-consented. Your shared **global** settings file is never touched — restore prior values by copying the backup back.
+> **Settings reset when the settings model changes.** The settings file is version-stamped, and a release that adds a policy question bumps the stamp. On the first `/auto-task` after such an update, each project's settings are backed up (`settings.json.pre-<n>`) and cleared so the one-time setup re-runs and telemetry is re-consented. Your shared **global** settings file is never touched — restore prior values by copying the backup back. This has happened twice so far: at 0.22 (the autonomy/landing/unattended questions) and again when `docs_update_mode` joined the set.
 
 ## What it ships
 
-- **`auto-task` skill** — the orchestrator. Composes the six bundled sibling skills and the verifier agent across the pipeline (Define → Execute → Self-verify → Review → Handover, plus an optional post-push Preview-verification phase).
+- **`auto-task` skill** — the orchestrator. Composes the seven bundled sibling skills and the verifier agent across the pipeline (Define → Execute → Self-verify → Review → Handover, plus an optional post-push Preview-verification phase).
 - **`hooks/settings.sh` — project settings (opt-in).** Reads a per-project, per-user JSON settings file kept **outside your repo** (`~/.claude/auto-task/<project-key>/settings.json`), with a built-in default for every key. First key: `has_preview_deployment`, which turns on the post-push preview verification. See "Project settings (opt-in)" below. Pure, fail-open, `tests/settings.test.sh`.
-- **Six namespaced sibling skills** — `auto-task-plan`, `auto-task-implement`, `auto-task-verify`, `auto-task-code-review`, `auto-task-commit`, `auto-task-fix`. Forked from the upstream skills and patched to participate in the read-before-review contract. The `auto-task-` prefix keeps them distinct from your existing `/plan`, `/verify`, etc.; under a marketplace install they are further namespaced (`auto-task:auto-task-plan`), and under the `install.sh` fallback they keep the bare `auto-task-plan` form.
+- **Seven namespaced sibling skills** — `auto-task-plan`, `auto-task-implement`, `auto-task-verify`, `auto-task-code-review`, `auto-task-commit`, `auto-task-fix`, `auto-task-docs`. The first six are forked from the upstream skills and patched to participate in the read-before-review contract; `auto-task-docs` is new to this plugin (the optional docs-update step — see "Docs update at handover"). The `auto-task-` prefix keeps them distinct from your existing `/plan`, `/verify`, etc.; under a marketplace install they are further namespaced (`auto-task:auto-task-plan`), and under the `install.sh` fallback they keep the bare `auto-task-plan` form.
 - **`task-execution-verifier` agent** — read-only verifier spawned at Gate A (completeness) and Gate B (adversarial). Fresh context per spawn.
 - **`auto-task-stats` skill** — standalone, read-only maintainer tool (NOT part of the pipeline). Reports local run-outcome telemetry: completion rate, where runs stall, per-tier fix/review effort, Gate B coverage. See "Run telemetry (opt-in)" below. Invoke as `/auto-task:auto-task-stats` (marketplace) or `/auto-task-stats` (install.sh fallback).
 - **`auto-task-gc` skill** — standalone disk/worktree cleanup tool (NOT part of the pipeline). Reports each auto-task worktree's size, age, and merge status, then safely reclaims the merged/stale ones on confirmation (branch refs preserved, matching `.auto-task/<branch>/` pruned). Retention is per branch type and fully defaulted/overridable. See "Worktree space control" below. Invoke as `/auto-task:auto-task-gc` (marketplace) or `/auto-task-gc` (install.sh fallback).
@@ -228,7 +228,7 @@ After you type `approved` / `proceed` / `yes`, the pipeline runs unattended thro
 - **Gate A** — spawns `task-execution-verifier` in `completeness` mode; runs every Acceptance Criterion bound to `gate-a`.
 - **Phase 4** Code review — invokes `auto-task-code-review`, applies any blockers / required fixes, re-invokes until the latest pass is clean.
 - **Gate B** — spawns `task-execution-verifier` in `adversarial` mode (skipped for `tier=light` tasks).
-- **Phase 5** Handover — single commit, push, PR with embedded change diagram. Asks once whether to push & open PR / push only / hold.
+- **Phase 5** Handover — optionally refreshes stale docs first (`docs_update_mode`, off by default), then a single commit, push, PR with embedded change diagram. Asks once whether to push & open PR / push only / hold.
 
 ### Resume an interrupted run
 
@@ -355,6 +355,7 @@ Recognized keys (v1):
 | `external_actions_mode` | `"ask"` | How **Phase 8** applies an external-system change (CMS edit, feature-flag toggle, live data migration, third-party API config). `ask` (default) = ask once for permission + credentials, then run the script and verify — fall back to a runbook if declined. `runbook` = never auto-run; always emit a runbook and wait. `auto` = pre-authorized to run without the prompt (any *irreversible* action still prompts; unreachable creds degrade to runbook). Gates only *how* it applies — **detection + the "not done until applied" marking are always-on**, never gated. See "External change application" below. |
 | `external_actions_timeout_min` | `30` | Max minutes Phase 8's in-session **settle-poll** (an `auto`-run apply whose external effect is asynchronous) waits for the change to propagate before surfacing. A `runbook`/`awaiting-external` human handoff does **not** poll — it yields and waits for a `/auto-task` resume — so this bound does not apply there. |
 | `external_actions_poll_interval_sec` | `60` | Seconds between Phase-8 settle-poll cycles. |
+| `docs_update_mode` | `"skip"` | Whether the optional **docs-update step** runs at handover, so a run's docs do not go stale. `skip` (default) = never run it, never ask. `always` = refresh docs every run, no prompt. `ask` = ask each run — but only when the step actually finds something stale, so a docs-current run stays silent. Scoped to `README.md` + `docs/**`; never `CHANGELOG.md`, `CLAUDE.md`, or code comments. Chosen at first-run setup; any unrecognized value reads as `skip`. See "Docs update at handover" below. |
 | `visual_assets_enabled` | `false` | Opt-in: embed **before/after screenshots** in PRs for visual changes (uploaded to **Cloudinary**, embedded inline). Off by default; `/auto-task` asks once per repo (only on UI-scoped runs) before enabling. Off → verification still runs locally; the PR gets a local-artifact + preview note instead. Requires `cloudinary_cloud_name` + `cloudinary_upload_preset`. See "Visual PR proof" below. |
 | `cloudinary_cloud_name` | *(bundled)* | Cloudinary cloud name uploads go to. Defaults to a **bundled shared** disposable cloud so opt-in embedding works out of the box; override with your own (or `AUTO_TASK_CLOUDINARY_DEFAULT_CLOUD`). Not a secret — it's in every delivery URL. |
 | `cloudinary_upload_preset` | *(bundled)* | The **unsigned** upload preset. Defaults to the bundled preset; override with your own (or `AUTO_TASK_CLOUDINARY_DEFAULT_PRESET`). Not a secret. An unsigned preset is world-writable, so self-hosters should restrict their own (allowed formats/size, fixed folder, moderation). |
@@ -381,6 +382,26 @@ Two pieces keep that in check, and **nothing deletes without you asking**:
 - **`/auto-task-gc`** (the `auto-task-gc` skill) — the on-demand tool. `/auto-task-gc` **reports** each worktree's size (`du`), age, type, and merge status (local ancestry **and** `gh` for squash-merged PRs) read-only. `/auto-task-gc --prune` previews the removal plan; `/auto-task-gc --prune --yes` performs it after you confirm. Removal **preserves the branch ref** (committed work is recoverable with `git worktree add <path> <branch>`) and prunes the matching `.auto-task/<branch>/`. Dirty worktrees are kept unless `worktree_cleanup_prune_dirty: true` (then WIP-committed first); the current and main worktrees are never removed; `--all` widens to every clean worktree regardless of merge/age. One caveat: removing a worktree deletes its directory, so **gitignored** files inside it go too (that's the point for `node_modules`, but a local `.env` or other ignored scratch is removed and is *not* captured by the WIP-commit) — the report lists exactly which worktrees will be removed, so run it first.
 
 Retention is **per branch type** so short-lived `chore`/`deps`/`docs`/`cleanup` work is reclaimed sooner than `feat`/`refactor`. Every threshold ships as a default and is overridable, e.g. `bash hooks/settings.sh set worktree_stale_days_feat 45`.
+
+### Docs update at handover (`docs_update_mode`)
+
+A run changes behavior; the docs that describe that behavior go stale. `docs_update_mode` decides what auto-task does about it, and it is one of the five questions asked once per repo at first-run setup:
+
+| Value | Behavior |
+|---|---|
+| `skip` *(default)* | Never run the docs step, never ask again. Exactly the pre-feature behavior. |
+| `always` | Refresh the docs on every run, no prompt. |
+| `ask` | Ask once per run — **but only when there is actually something to update.** |
+
+The step runs in **Phase 5, before staging**, which is the design decision that keeps it cheap: the docs edits join the run's **single handover commit** rather than needing a second commit, and they re-pass the same gates as the code (re-verify → re-`auto-task-code-review` → refreshed review hash, plus a Gate B re-run on STANDARD/HEAVY). It composes the bundled **`auto-task-docs`** skill, which you can also run on its own (`/auto-task-docs`) whenever docs have drifted.
+
+Three properties worth knowing, because they are what stop an "optional step" from becoming an annoyance:
+
+- **Scoped narrowly.** It edits `README.md` and `docs/**` only — never `CHANGELOG.md` (the release flow owns that), never `CLAUDE.md` or skill/agent instructions (those change *behavior*, not documentation), never code comments (they belong to the code diff). Staleness found outside that set is reported as a follow-up, not edited.
+- **Staleness is resolved before the prompt.** The skill produces a `file:line`-cited report first, so `ask` never interrupts you about a change that does not exist. A repo with no `README.md` and no `docs/` directory, or docs that are already current, is a silent no-op in every mode.
+- **It never blocks an unattended run.** Under `autonomy: autonomous` — or headless, where there is nobody to ask — `ask` applies the edits without yielding and records the decision in the run's assumptions ledger, which is surfaced at the merge gate. And a clean docs re-review does not consume the fix-loop budget, since no finding drove it.
+
+Every edit is evidence-backed (each traces to a `file:line` staleness finding tied to the diff) and minimal (it corrects what the change falsified, and leaves the rest alone) — so the docs portion of the commit stays trivially separable from the real change at review time.
 
 ### Post-PR bot-comment review (opt-in)
 

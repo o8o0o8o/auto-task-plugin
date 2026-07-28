@@ -54,9 +54,17 @@ flowchart TD
 
     P5 --> P5Verify{verify gates:<br/>code_review.passed AND<br/>(gate_b.passed OR skipped_reason)}
     P5Verify -- missing --> StopBug([STOP — pipeline bug,<br/>do NOT bypass hook])
-    P5Verify -- ok --> P5Stage[git restore --staged .auto-task/<br/>git add &lt;planned files only&gt;<br/>confirm no .auto-task/ in index]
+    P5Verify -- ok --> P5Docs{docs_update_mode?}
+    P5Docs -- "skip / invalid value" --> P5Stage
+    P5Docs -- "always / ask" --> P5DocsRun[skill: auto-task-docs<br/>staleness report first<br/>README.md + docs/** only]
+    P5DocsRun -- "empty report" --> P5Stage
+    P5DocsRun -- "ask + findings" --> P5DocsAsk{apply docs edits?<br/>degrades to always under<br/>autonomous / headless}
+    P5DocsAsk -- no --> P5Stage
+    P5DocsAsk -- yes --> P5DocsGate[re-verify + re-auto-task-code-review<br/>refresh reviewed_diff_sha<br/>reset + re-run Gate B on STANDARD/HEAVY]
+    P5DocsRun -- "always + findings" --> P5DocsGate
+    P5DocsGate --> P5Stage[git restore --staged .auto-task/<br/>git add &lt;planned files only&gt;<br/>confirm no .auto-task/ in index]
     P5Stage --> P5Commit[skill: auto-task-commit<br/>pre-commit hook validates gates]
-    P5Commit --> P5Push{push?<br/>only allowed prompt mid-run}
+    P5Commit --> P5Push{push?<br/>2nd of at most 2 Phase-5 prompts}
     P5Push -- yes --> P5PR[git push -u origin HEAD<br/>gh pr create]
     P5Push -- hold --> Done2([phase=done, no PR])
     P5PR --> P6{bot_review_autofix<br/>enabled?}
@@ -87,7 +95,7 @@ On a NEW run, before branch setup, Phase 1 also runs a best-effort **per-run ver
 | Gate A | `task-execution-verifier` Agent + literal AC commands | **no** | every AC satisfied | findings → back to Phase 2 |
 | 4 Code review | **`auto-task-code-review` skill** (no substitutes) | **no** | only follow-ups, no Blockers/Required | `auto-task-fix` → re-`auto-task-verify` → re-review |
 | Gate B | `task-execution-verifier` Agent (adversarial) | **no** | "No adversarial findings" or only follow-ups | resets `code_review.passed=false`, back to Phase 4 |
-| 5 Handover | `auto-task-commit` skill + `gh pr create` | **YES — single commit** | PR opened (or user holds push) | gates fail → surface (do not bypass hook) |
+| 5 Handover | optional `auto-task-docs` skill (step 1b) + `auto-task-commit` skill + `gh pr create` | **YES — single commit** (docs edits join it) | PR opened (or user holds push) | gates fail → surface (do not bypass hook) |
 | 6 Bot-comment review (opt-in) | `pr-bot-comments.sh` + full verify → `auto-task-code-review` → gate → commit loop | **YES — gate-reviewed bot-fix commits** (only when `bot_review_autofix`) | bot comments triaged; safe fixes applied + pushed, rest parked | fork-PR / no-push → fail-open skip |
 | 7 Preview verification (gated) | preview URL resolution + URL-AC checks (`playwright`/`curl`) | no | verdict PASS/FAIL/INCONCLUSIVE recorded (or handoff/timeout) | no URL → skip gracefully; FAIL → done-with-negative-verdict |
 
@@ -186,6 +194,7 @@ flowchart LR
     AT --> Fix[skill: auto-task-fix]
     AT --> CR[skill: auto-task-code-review<br/>MANDATORY tool for Phase 4]
     AT --> Commit[skill: auto-task-commit]
+    AT --> Docs[skill: auto-task-docs<br/>optional Phase 5 step 1b<br/>gated by docs_update_mode]
     AT --> Critique[Agent: general-purpose<br/>Phase 1 critique]
     AT --> TEV_A[Agent: task-execution-verifier<br/>Gate A — completeness]
     AT --> TEV_B[Agent: task-execution-verifier<br/>Gate B — adversarial]
@@ -198,6 +207,7 @@ flowchart LR
 - **`auto-task-fix`** — invoked on any failure; modifies the working tree, never commits during a run.
 - **`auto-task-code-review`** — 5-phase Investigate → Define → Execute → Prevent → Verify. **Hard-required** in Phase 4. Agents/hand-rolled prompts are forbidden and the pre-commit hook rejects any other `gates.code_review.tool` value.
 - **`auto-task-commit`** — used in Phase 5 only; pre-commit hook validates gates first.
+- **`auto-task-docs`** — **optional**, Phase 5 step 1b, gated by `docs_update_mode` (`skip` default / `always` / `ask`). Refreshes user-facing docs the run made stale, scoped to `README.md` + `docs/**` (never `CHANGELOG.md`, `CLAUDE.md`, or code comments). Returns a `file:line` staleness report *before* editing, so `ask` never prompts on a docs-current run; edits land in the single handover commit and force a re-verify + re-review (+ Gate B re-run on STANDARD/HEAVY).
 - **`task-execution-verifier`** — spawned twice. Gate A asks "is this complete?"; Gate B flips to "find what's wrong" (adversarial). Both get fresh context (diff + AC only — no conversation history).
 
 ---
@@ -208,7 +218,7 @@ These rules are enforced project-wide and the pipeline depends on them:
 
 - **Commit messages — no AI-attribution markers.** No `Co-Authored-By: Claude`, no `🤖 Generated with [Claude Code]`. Enforced both by the skill's Phase 5 instructions and by a global `PreToolUse` Bash hook that blocks any `git commit -m`/`gh pr create --body` containing those strings.
 - **Code review — always the skill.** Never a `code-reviewer` agent or a hand-rolled review prompt. Re-invoke after every fix. Mirrored by the pre-commit hook check on `gates.code_review.tool === "skill:auto-task-code-review"`.
-- **Mid-protocol non-yielding.** A sub-skill/sub-agent report is **input** to the next step, not an end-of-turn. The only legitimate stops between Phase 1 approval and Phase 5 are: a Loop-rule trigger, the one Phase 5 push prompt, or a destructive-action confirmation per "Executing actions with care".
+- **Mid-protocol non-yielding.** A sub-skill/sub-agent report is **input** to the next step, not an end-of-turn. The only legitimate stops between Phase 1 approval and Phase 5 are: a Loop-rule trigger, the Phase 5 push prompt, the Phase 5 docs-update ask (`docs_update_mode: ask`, and only when the docs step proposes a change), or a destructive-action confirmation per "Executing actions with care".
 - **Task Execution Protocol — Define → Execute → Verify.** Mirrored 1:1 by auto-task's phase structure.
 
 ---
@@ -330,6 +340,7 @@ Run state is keyed by branch under `.auto-task/<branch>/`, and the gate + Stop h
 | `~/.claude/skills/auto-task-fix/SKILL.md` | Composed by Phases 3, 4, Gate A, Gate B |
 | `~/.claude/skills/auto-task-code-review/SKILL.md` | **Mandatory** tool for Phase 4 |
 | `~/.claude/skills/auto-task-commit/SKILL.md` | Composed by Phase 5 |
+| `~/.claude/skills/auto-task-docs/SKILL.md` | **Optional**, composed by Phase 5 step 1b when `docs_update_mode` is `always`/`ask` |
 | `~/.claude/CLAUDE.md` | Global rules: commit-message ban, code-review-skill rule, non-yielding, DoD |
 | `~/.claude/settings.json` | Where the hooks are wired on the `install.sh`/manual fallback (marketplace installs use `hooks/hooks.json`): gate enforcement, AI-attribution ban, anti-stall, checkout-drift. The `git push` deny / `gh pr create` ask permissions are **opt-in, not shipped** (see "Recommended permissions"). |
 | `<project>/.auto-task/<branch>/STATE.json` | Per-run state machine (resumable) |

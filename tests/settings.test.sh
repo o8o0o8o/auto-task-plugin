@@ -266,6 +266,31 @@ expect "default risk_gate_threshold=6"    "$(AUTO_TASK_SETTINGS_FILE="$N" bash "
 expect "default budget_blowout_factor=3"  "$(AUTO_TASK_SETTINGS_FILE="$N" bash "$SH" get budget_blowout_factor)" "3"
 expect "default test_integrity_guard=true" "$(AUTO_TASK_SETTINGS_FILE="$N" bash "$SH" get test_integrity_guard)" "true"
 
+# --- docs_update_mode (the optional docs-update step) ------------------------
+# Default is `skip`, the backward-compatible reading: a project that never opted
+# in gets no docs step and no prompt.
+expect "default docs_update_mode=skip"    "$(AUTO_TASK_SETTINGS_FILE="$N" bash "$SH" get docs_update_mode)"       "skip"
+expect "keys lists docs_update_mode"      "$(bash "$SH" keys | grep -cx 'docs_update_mode')"                      "1"
+expect "all: docs_update_mode present"    "$(AUTO_TASK_SETTINGS_FILE="$N" bash "$SH" all | jq -r 'has("docs_update_mode")')" "true"
+expect "all: docs_update_mode=skip"       "$(AUTO_TASK_SETTINGS_FILE="$N" bash "$SH" all | jq -r '.docs_update_mode')" "skip"
+DUM="$T/docs_mode.json"; printf '{}' > "$DUM"
+for v in ask always skip; do
+  AUTO_TASK_SETTINGS_FILE="$DUM" bash "$SH" set docs_update_mode "$v" >/dev/null
+  expect "set/get docs_update_mode=$v"    "$(AUTO_TASK_SETTINGS_FILE="$DUM" bash "$SH" get docs_update_mode)"     "$v"
+done
+expect "present docs_update_mode: true after set" \
+  "$(AUTO_TASK_SETTINGS_FILE="$DUM" bash "$SH" present docs_update_mode)" "true"
+expect "present docs_update_mode: false when unset" \
+  "$(AUTO_TASK_SETTINGS_FILE="$N" AUTO_TASK_GLOBAL_SETTINGS_FILE="$T/noglob.json" bash "$SH" present docs_update_mode)" "false"
+# The reader does NO enum validation (it validates key presence, not value
+# domains), so a hand-edited bad value reaches the caller verbatim. This pins that
+# fact: the `-> skip` guard is the Phase-5 step's job, NOT the reader's.
+printf '{"docs_update_mode":"yes"}' > "$DUM"
+expect "reader does not validate the enum" "$(AUTO_TASK_SETTINGS_FILE="$DUM" bash "$SH" get docs_update_mode)"    "yes"
+# init template seeds the key so it is discoverable by hand-editing.
+ID="$T/initdocs"; AUTO_TASK_SETTINGS_FILE="$ID/settings.json" bash "$SH" init >/dev/null 2>&1
+expect "init template seeds docs_update_mode" "$(jq -r '.docs_update_mode' "$ID/settings.json" 2>/dev/null)"      "skip"
+
 # --- schema-status: unconfigured / stale / current ---------------------------
 SS="$T/schema.json"
 expect "schema-status: no file -> unconfigured" "$(AUTO_TASK_SETTINGS_FILE="$SS" bash "$SH" schema-status)" "unconfigured"
@@ -273,7 +298,12 @@ printf '{"autonomy":"autonomous"}' > "$SS"   # present but unstamped
 expect "schema-status: unstamped -> unconfigured" "$(AUTO_TASK_SETTINGS_FILE="$SS" bash "$SH" schema-status)" "unconfigured"
 printf '{"settings_schema_version":1}' > "$SS"
 expect "schema-status: old stamp -> stale" "$(AUTO_TASK_SETTINGS_FILE="$SS" bash "$SH" schema-status)" "stale"
+# v3 (docs_update_mode joined the first-run policy set): a file stamped at the
+# PREVIOUS version is now stale, so the one-time setup re-runs and asks the new
+# question. This pair is the regression guard for the bump itself.
 printf '{"settings_schema_version":2}' > "$SS"
+expect "schema-status: stamp 2 -> stale (v3 bump)" "$(AUTO_TASK_SETTINGS_FILE="$SS" bash "$SH" schema-status)" "stale"
+printf '{"settings_schema_version":3}' > "$SS"
 expect "schema-status: current stamp -> current" "$(AUTO_TASK_SETTINGS_FILE="$SS" bash "$SH" schema-status)" "current"
 
 # --- reset --backup: project cleared + backed up, GLOBAL untouched -----------
@@ -288,6 +318,22 @@ expect "reset: GLOBAL file untouched"    "$(cat "$RG")"                        '
 # restore = copy the backup back
 cp "$RP.pre-1" "$RP"
 expect "restore: backup copy restores"   "$(AUTO_TASK_SETTINGS_FILE="$RP" bash "$SH" get autonomy)" "autonomous"
+
+# The v2 -> v3 reset event specifically: a project stamped 2 backs up to `.pre-2`,
+# clears, leaves the GLOBAL file alone, and is restorable by a plain file copy.
+# This is what makes the docs_update_mode rollout recoverable rather than lossy.
+R2P="$T/reset2_proj.json"; R2G="$T/reset2_glob.json"
+printf '{"telemetry_enabled":true}' > "$R2G"
+printf '{"settings_schema_version":2,"telemetry_enabled":true,"docs_update_mode":"always","autonomy":"autonomous"}' > "$R2P"
+AUTO_TASK_SETTINGS_FILE="$R2P" AUTO_TASK_GLOBAL_SETTINGS_FILE="$R2G" bash "$SH" reset --backup >/dev/null
+expect "reset v2: project cleared to {}"      "$(cat "$R2P")"                                  "{}"
+expect "reset v2: .pre-2 backup written"      "$([ -f "$R2P.pre-2" ] && echo yes || echo no)"  "yes"
+expect "reset v2: backup keeps docs_update_mode" "$(jq -r '.docs_update_mode' "$R2P.pre-2")"   "always"
+expect "reset v2: backup keeps telemetry"     "$(jq -r '.telemetry_enabled' "$R2P.pre-2")"     "true"
+expect "reset v2: GLOBAL file untouched"      "$(cat "$R2G")"                                  '{"telemetry_enabled":true}'
+expect "reset v2: cleared file re-asks setup" "$(AUTO_TASK_SETTINGS_FILE="$R2P" bash "$SH" schema-status)" "unconfigured"
+cp "$R2P.pre-2" "$R2P"
+expect "restore v2: docs_update_mode returns" "$(AUTO_TASK_SETTINGS_FILE="$R2P" bash "$SH" get docs_update_mode)" "always"
 
 # --- present --scope project vs either (post-reset telemetry re-consent) ------
 printf '{}' > "$RP"   # project cleared (as after reset)
