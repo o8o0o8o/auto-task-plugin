@@ -291,6 +291,44 @@ expect "reader does not validate the enum" "$(AUTO_TASK_SETTINGS_FILE="$DUM" bas
 ID="$T/initdocs"; AUTO_TASK_SETTINGS_FILE="$ID/settings.json" bash "$SH" init >/dev/null 2>&1
 expect "init template seeds docs_update_mode" "$(jq -r '.docs_update_mode' "$ID/settings.json" 2>/dev/null)"      "skip"
 
+# --- release_mode / release_command (the optional release step, Phase 9) -----
+# Both default OFF, the backward-compatible reading: a project that never opted in
+# gets no release step and no prompt. Unlike docs_update_mode these are NOT
+# first-run-setup questions, which is exactly why the schema version must NOT have
+# moved for them — see the pin at the end of this block.
+expect "default release_mode=skip"        "$(AUTO_TASK_SETTINGS_FILE="$N" bash "$SH" get release_mode)"           "skip"
+expect "default release_command=''"       "$(AUTO_TASK_SETTINGS_FILE="$N" bash "$SH" get release_command)"        ""
+expect "keys lists release_mode"          "$(bash "$SH" keys | grep -cx 'release_mode')"                          "1"
+expect "keys lists release_command"       "$(bash "$SH" keys | grep -cx 'release_command')"                       "1"
+expect "all: release_mode present"        "$(AUTO_TASK_SETTINGS_FILE="$N" bash "$SH" all | jq -r 'has("release_mode")')"    "true"
+expect "all: release_command present"     "$(AUTO_TASK_SETTINGS_FILE="$N" bash "$SH" all | jq -r 'has("release_command")')" "true"
+expect "all: release_mode=skip"           "$(AUTO_TASK_SETTINGS_FILE="$N" bash "$SH" all | jq -r '.release_mode')"          "skip"
+expect "all: release_command=''"          "$(AUTO_TASK_SETTINGS_FILE="$N" bash "$SH" all | jq -r '.release_command')"       ""
+RM="$T/release_mode.json"; printf '{}' > "$RM"
+for v in ask always skip; do
+  AUTO_TASK_SETTINGS_FILE="$RM" bash "$SH" set release_mode "$v" >/dev/null
+  expect "set/get release_mode=$v"        "$(AUTO_TASK_SETTINGS_FILE="$RM" bash "$SH" get release_mode)"          "$v"
+done
+# A release command is free text and routinely contains spaces and flags — round-trip
+# one verbatim, since a mangled command is how a release step would run the wrong thing.
+AUTO_TASK_SETTINGS_FILE="$RM" bash "$SH" set release_command 'scripts/release.sh --yes' >/dev/null
+expect "set/get release_command verbatim" "$(AUTO_TASK_SETTINGS_FILE="$RM" bash "$SH" get release_command)"       "scripts/release.sh --yes"
+expect "present release_mode: true after set" \
+  "$(AUTO_TASK_SETTINGS_FILE="$RM" bash "$SH" present release_mode)" "true"
+expect "present release_mode: false when unset" \
+  "$(AUTO_TASK_SETTINGS_FILE="$N" AUTO_TASK_GLOBAL_SETTINGS_FILE="$T/noglob.json" bash "$SH" present release_mode)" "false"
+# Same no-enum-validation fact as docs_update_mode: the `-> skip` guard belongs to
+# the Phase-9 step, not the reader.
+printf '{"release_mode":"yes"}' > "$RM"
+expect "reader does not validate release enum" "$(AUTO_TASK_SETTINGS_FILE="$RM" bash "$SH" get release_mode)"     "yes"
+IR="$T/initrel"; AUTO_TASK_SETTINGS_FILE="$IR/settings.json" bash "$SH" init >/dev/null 2>&1
+expect "init template seeds release_mode"     "$(jq -r '.release_mode' "$IR/settings.json" 2>/dev/null)"          "skip"
+expect "init template seeds release_command"  "$(jq -r '.release_command' "$IR/settings.json" 2>/dev/null)"       ""
+# The release keys were added WITHOUT a schema bump, so no existing project's
+# settings are reset by them. If a later change does bump the stamp, this pin
+# fails and forces a deliberate decision rather than a silent mass reset.
+expect "release keys did not bump the schema"  "$(sed -n 's/^SETTINGS_SCHEMA_VERSION="\${AUTO_TASK_SETTINGS_SCHEMA_VERSION:-\([0-9]*\)}"$/\1/p' "$SH")" "3"
+
 # --- schema-status: unconfigured / stale / current ---------------------------
 SS="$T/schema.json"
 expect "schema-status: no file -> unconfigured" "$(AUTO_TASK_SETTINGS_FILE="$SS" bash "$SH" schema-status)" "unconfigured"

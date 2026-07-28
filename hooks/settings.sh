@@ -89,6 +89,8 @@ default_for() {
     landing_model)                printf 'pr' ;;
     unattended_external)          printf 'false' ;;
     docs_update_mode)             printf 'skip' ;;
+    release_mode)                 printf 'skip' ;;
+    release_command)              printf '' ;;
     risk_gate_threshold)          printf '6' ;;
     budget_blowout_factor)        printf '3' ;;
     test_integrity_guard)         printf 'true' ;;
@@ -145,6 +147,8 @@ defaults_json() {
     landing_model: "pr",
     unattended_external: false,
     docs_update_mode: "skip",
+    release_mode: "skip",
+    release_command: "",
     risk_gate_threshold: 6,
     budget_blowout_factor: 3,
     test_integrity_guard: true,
@@ -185,7 +189,7 @@ defaults_json() {
   }'
 }
 
-known_keys="settings_schema_version autonomy landing_model unattended_external docs_update_mode risk_gate_threshold budget_blowout_factor test_integrity_guard has_preview_deployment preview_autodetect preview_url preview_wait_mode preview_timeout_min preview_poll_interval_sec preview_bypass_header preview_post_verdict_comment bot_review_autofix bot_review_timeout_min bot_review_poll_interval_sec bot_review_bots external_actions_mode external_actions_timeout_min external_actions_poll_interval_sec visual_assets_enabled cloudinary_cloud_name cloudinary_upload_preset telemetry_enabled telemetry_endpoint telemetry_ingest_token telemetry_satisfaction_prompt history_reminder_enabled worktree_cleanup_nudge worktree_cleanup_throttle_hours worktree_cleanup_prune_dirty worktree_stale_days_default worktree_stale_days_feat worktree_stale_days_refactor worktree_stale_days_fix worktree_stale_days_chore worktree_stale_days_deps worktree_stale_days_docs worktree_stale_days_cleanup"
+known_keys="settings_schema_version autonomy landing_model unattended_external docs_update_mode release_mode release_command risk_gate_threshold budget_blowout_factor test_integrity_guard has_preview_deployment preview_autodetect preview_url preview_wait_mode preview_timeout_min preview_poll_interval_sec preview_bypass_header preview_post_verdict_comment bot_review_autofix bot_review_timeout_min bot_review_poll_interval_sec bot_review_bots external_actions_mode external_actions_timeout_min external_actions_poll_interval_sec visual_assets_enabled cloudinary_cloud_name cloudinary_upload_preset telemetry_enabled telemetry_endpoint telemetry_ingest_token telemetry_satisfaction_prompt history_reminder_enabled worktree_cleanup_nudge worktree_cleanup_throttle_hours worktree_cleanup_prune_dirty worktree_stale_days_default worktree_stale_days_feat worktree_stale_days_refactor worktree_stale_days_fix worktree_stale_days_chore worktree_stale_days_deps worktree_stale_days_docs worktree_stale_days_cleanup"
 
 # --- Path resolution ---------------------------------------------------------
 hash_str() {

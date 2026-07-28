@@ -66,14 +66,28 @@ flowchart TD
     P5Stage --> P5Commit[skill: auto-task-commit<br/>pre-commit hook validates gates]
     P5Commit --> P5Push{push?<br/>2nd of at most 2 Phase-5 prompts}
     P5Push -- yes --> P5PR[git push -u origin HEAD<br/>gh pr create]
-    P5Push -- hold --> Done2([phase=done, no PR])
+    P5Push -- hold --> P9
     P5PR --> P6{bot_review_autofix<br/>enabled?}
     P6 -- yes --> P6Do[Phase 6 — post-PR bot-comment review<br/>poll bot comments, triage,<br/>auto-apply safe fixes via full<br/>verify → review → gate → commit → push loop<br/>MAY add gate-reviewed commits]
     P6 -- no --> P7
     P6Do --> P7{preview applicable?<br/>has_preview_deployment /<br/>autodetect + PR}
     P7 -- yes --> P7Do[Phase 7 — preview verification<br/>resolve preview URL, run URL-ACs,<br/>record PASS/FAIL/INCONCLUSIVE verdict]
-    P7 -- no --> Done
-    P7Do --> Done([phase=done, verdict recorded])
+    P7 -- no --> P9
+    P7Do --> P9{release_mode?<br/>release terminal guard —<br/>checked at every done-writer}
+    P9 -- "skip / invalid value / skill absent" --> Done
+    P9 -- "landing is not an explicit direct" --> P9Defer[status deferred-pr<br/>release belongs on the default branch<br/>emit runbook for after the merge]
+    P9Defer --> Done
+    P9 -- "always / ask" --> P9Run[skill: auto-task-release<br/>report-only — derive bump + entry<br/>surface what release_command does]
+    P9Run -- "nothing to release" --> Done
+    P9Run -- "release_command unset" --> P9Book[status runbook<br/>paste-ready steps, nothing run]
+    P9Book --> Done
+    P9Run -- "ask + something to release" --> P9Ask{cut this release?<br/>degrades to always under<br/>autonomous / headless}
+    P9Ask -- no --> Done
+    P9Ask -- yes --> P9Gate
+    P9Run -- "always + something to release" --> P9Gate[re-verify + re-auto-task-code-review<br/>refresh reviewed_diff_sha<br/>reset + re-run Gate B on STANDARD/HEAVY]
+    P9Gate --> P9Cut[chore&#40;release&#41;: vX.Y.Z + annotated tag<br/>LOCAL ONLY — never push, never publish]
+    P9Cut --> Done([phase=done, run recorded])
+    P9Cut -. interrupted / commit without tag / blocker .-> P9Part([status in-progress / partial-failure / failed<br/>SURFACED for manual resolution —<br/>never auto-resumed, retried or reverted<br/>hands over the continuation AND the undo commands])
 
     %% Loop-rule global exits
     P3 -. no progress / out-of-scope /<br/>blocker / flakiness .-> Surface([Surfacing protocol<br/>save state, write status, wait])
@@ -98,8 +112,9 @@ On a NEW run, before branch setup, Phase 1 also runs a best-effort **per-run ver
 | 5 Handover | optional `auto-task-docs` skill (step 1b) + `auto-task-commit` skill + `gh pr create` | **YES — single commit** (docs edits join it) | PR opened (or user holds push) | gates fail → surface (do not bypass hook) |
 | 6 Bot-comment review (opt-in) | `pr-bot-comments.sh` + full verify → `auto-task-code-review` → gate → commit loop | **YES — gate-reviewed bot-fix commits** (only when `bot_review_autofix`) | bot comments triaged; safe fixes applied + pushed, rest parked | fork-PR / no-push → fail-open skip |
 | 7 Preview verification (gated) | preview URL resolution + URL-AC checks (`playwright`/`curl`) | no | verdict PASS/FAIL/INCONCLUSIVE recorded (or handoff/timeout) | no URL → skip gracefully; FAIL → done-with-negative-verdict |
+| 9 Release (gated, opt-in) | optional `auto-task-release` skill + the project's `release_command` | **YES — one gate-reviewed release commit** (+ annotated tag; only when `release_mode` is `always`/`ask`) | `chore(release): vX.Y.Z` committed and tagged **locally** — never pushed, never published | `release_command` unset → runbook; `landing_model=pr` → `deferred-pr`; command fails → `failed`; commit without tag → `partial-failure`, surfaced with the unwind |
 
-Phases 2–4 accumulate one growing uncommitted diff against the base branch. **Phase 5 produces the single authored commit; the opt-in Phase 6 may add further authored commits, each individually gate-reviewed** (the only exceptions to "one commit" beyond the main-sync merge). Post-PR Phases 6–7 run only when a push happened.
+Phases 2–4 accumulate one growing uncommitted diff against the base branch. **Phase 5 produces the single authored commit; the opt-in Phase 6 (bot-fixes) and Phase 9 (release) may add further authored commits, each individually gate-reviewed** (the only exceptions to "one commit" beyond the main-sync merge). Post-PR Phases 6–7 run only when a push happened.
 
 ---
 
@@ -195,6 +210,7 @@ flowchart LR
     AT --> CR[skill: auto-task-code-review<br/>MANDATORY tool for Phase 4]
     AT --> Commit[skill: auto-task-commit]
     AT --> Docs[skill: auto-task-docs<br/>optional Phase 5 step 1b<br/>gated by docs_update_mode]
+    AT --> Rel[skill: auto-task-release<br/>optional Phase 9<br/>gated by release_mode]
     AT --> Critique[Agent: general-purpose<br/>Phase 1 critique]
     AT --> TEV_A[Agent: task-execution-verifier<br/>Gate A — completeness]
     AT --> TEV_B[Agent: task-execution-verifier<br/>Gate B — adversarial]
@@ -207,6 +223,7 @@ flowchart LR
 - **`auto-task-fix`** — invoked on any failure; modifies the working tree, never commits during a run.
 - **`auto-task-code-review`** — 5-phase Investigate → Define → Execute → Prevent → Verify. **Hard-required** in Phase 4. Agents/hand-rolled prompts are forbidden and the pre-commit hook rejects any other `gates.code_review.tool` value.
 - **`auto-task-commit`** — used in Phase 5 only; pre-commit hook validates gates first.
+- **`auto-task-release`** — **optional**, **Phase 9** (the last phase), gated by `release_mode` (`skip` default / `always` / `ask`). Cuts a release for work that already landed: derives the version bump *with its evidence*, writes the `CHANGELOG.md` entry, runs the project's `release_command` (never hand-editing a version manifest — unset means a runbook, not a guess), then commits `chore(release): vX.Y.Z` and an annotated tag. **Local only — never pushes, never publishes.** Returns the release plan *before* acting, so `ask` never prompts when there is nothing to release; the commit re-passes the full gate loop first (Exception 3 to the single-commit rule) and is fully unwindable (`git tag -d` + `git reset --hard HEAD~1`).
 - **`auto-task-docs`** — **optional**, Phase 5 step 1b, gated by `docs_update_mode` (`skip` default / `always` / `ask`). Refreshes user-facing docs the run made stale, scoped to `README.md` + `docs/**` (never `CHANGELOG.md`, `CLAUDE.md`, or code comments). Returns a `file:line` staleness report *before* editing, so `ask` never prompts on a docs-current run; edits land in the single handover commit and force a re-verify + re-review (+ Gate B re-run on STANDARD/HEAVY).
 - **`task-execution-verifier`** — spawned twice. Gate A asks "is this complete?"; Gate B flips to "find what's wrong" (adversarial). Both get fresh context (diff + AC only — no conversation history).
 
@@ -218,7 +235,7 @@ These rules are enforced project-wide and the pipeline depends on them:
 
 - **Commit messages — no AI-attribution markers.** No `Co-Authored-By: Claude`, no `🤖 Generated with [Claude Code]`. Enforced both by the skill's Phase 5 instructions and by a global `PreToolUse` Bash hook that blocks any `git commit -m`/`gh pr create --body` containing those strings.
 - **Code review — always the skill.** Never a `code-reviewer` agent or a hand-rolled review prompt. Re-invoke after every fix. Mirrored by the pre-commit hook check on `gates.code_review.tool === "skill:auto-task-code-review"`.
-- **Mid-protocol non-yielding.** A sub-skill/sub-agent report is **input** to the next step, not an end-of-turn. The only legitimate stops between Phase 1 approval and Phase 5 are: a Loop-rule trigger, the Phase 5 push prompt, the Phase 5 docs-update ask (`docs_update_mode: ask`, and only when the docs step proposes a change), or a destructive-action confirmation per "Executing actions with care".
+- **Mid-protocol non-yielding.** A sub-skill/sub-agent report is **input** to the next step, not an end-of-turn. The only legitimate stops between Phase 1 approval and Phase 5 are: a Loop-rule trigger, the Phase 5 push prompt, the Phase 5 docs-update ask (`docs_update_mode: ask`, and only when the docs step proposes a change), or a destructive-action confirmation per "Executing actions with care". Past Phase 5 the post-PR phases add their own documented surfaces, including the Phase 9 release ask (`release_mode: ask`, and only when there is something to release).
 - **Task Execution Protocol — Define → Execute → Verify.** Mirrored 1:1 by auto-task's phase structure.
 
 ---
@@ -341,6 +358,7 @@ Run state is keyed by branch under `.auto-task/<branch>/`, and the gate + Stop h
 | `~/.claude/skills/auto-task-code-review/SKILL.md` | **Mandatory** tool for Phase 4 |
 | `~/.claude/skills/auto-task-commit/SKILL.md` | Composed by Phase 5 |
 | `~/.claude/skills/auto-task-docs/SKILL.md` | **Optional**, composed by Phase 5 step 1b when `docs_update_mode` is `always`/`ask` |
+| `~/.claude/skills/auto-task-release/SKILL.md` | **Optional**, composed by Phase 9 when `release_mode` is `always`/`ask` |
 | `~/.claude/CLAUDE.md` | Global rules: commit-message ban, code-review-skill rule, non-yielding, DoD |
 | `~/.claude/settings.json` | Where the hooks are wired on the `install.sh`/manual fallback (marketplace installs use `hooks/hooks.json`): gate enforcement, AI-attribution ban, anti-stall, checkout-drift. The `git push` deny / `gh pr create` ask permissions are **opt-in, not shipped** (see "Recommended permissions"). |
 | `<project>/.auto-task/<branch>/STATE.json` | Per-run state machine (resumable) |

@@ -911,14 +911,14 @@ expect "SKILL: guard cited at the Phase-8 done writer"   "$(sed -n '/^\*\*6\. Te
 # in behavior", the exact shape this guard exists to prevent.
 expect "SKILL: Phase-7 FAIL branch cites both guards"    "$(sed -n '/^   - \*\*FAIL\*\* — the preview was reachable/p' "$LBSKILL" | grep -qF 'run-metrics terminal guard' && echo y || echo n)" "y"
 expect "SKILL: Phase-7 terminal bullet cites the guard"  "$(sed -n '/^   - \*\*Terminal state (or handoff to Phase 8)/p' "$LBSKILL" | grep -qF 'run-metrics terminal guard' && echo y || echo n)" "y"
-expect "SKILL: Phase-7 step 1.4 cites both guards"       "$(sed -n '/^   4\. \*\*No URL by/p' "$LBSKILL" | grep -qF 'BOTH terminal guards' && echo y || echo n)" "y"
-expect "SKILL: the guard enumeration names step 3"       "$(grep -c "step 3's FAIL bullet" "$LBSKILL")" "1"
+expect "SKILL: Phase-7 step 1.4 cites all three guards"  "$(sed -n '/^   4\. \*\*No URL by/p' "$LBSKILL" | grep -qF 'ALL THREE terminal guards' && echo y || echo n)" "y"
+expect "SKILL: both guard enumerations name step 3"      "$(grep -c "step 3's FAIL bullet" "$LBSKILL")" "2"
 # The two hooks' agreement is scoped to well-formed states; on an unverifiable counter
 # they diverge BY DESIGN (opposite fail policies). The old absolute was false - fuzzing
 # found ~9 corrupt shapes where the gate blocks and the release stays silent.
 expect "SKILL: no false never-disagree absolute"         "$(grep -c 'can never disagree with each other' "$LBSKILL")" "0"
 expect "SKILL: divergence-by-design documented"          "$(grep -c 'they diverge \*by design\*' "$LBSKILL")" "1"
-expect "SKILL: guard cited at the Phase-7 done writers"  "$(grep -c 'Terminal guards . the external-actions terminal guard AND the run-metrics terminal guard' "$LBSKILL")" "1"
+expect "SKILL: guard cited at the Phase-7 done writers"  "$(grep -c 'Terminal guards . the external-actions terminal guard, the run-metrics terminal guard AND the release terminal guard' "$LBSKILL")" "1"
 expect "ARCH gate table lists the loop-budget gate"      "$(grep -q 'loop-budget gate' "$LBARCH" && echo y || echo n)" "y"
 # The gate skips when EITHER side is missing (`has_effort && has_iter`). The row used
 # to read as a conjunction ("no effort.tier AND no iteration counters"), which predicts

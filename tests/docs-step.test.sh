@@ -77,7 +77,7 @@ expect "spec: settings-table row"              "$(grep -c '^| `docs_update_mode`
 # Preflight must NAME the docs skill (so it is discoverable) while treating it as
 # optional (B3). Both halves matter: naming it satisfies R8; the optional framing
 # is what stops a missing symlink from hard-stopping every run.
-expect "spec: preflight names auto-task-docs"  "$(has "$SKILL" '`auto-task-docs` is OPTIONAL')" "yes"
+expect "spec: preflight names auto-task-docs"  "$(has "$SKILL" '`auto-task-docs` and `auto-task-release` are OPTIONAL')" "yes"
 expect "spec: preflight no longer demands seven" "$(grep -c 'all seven composed skills' "$SKILL")" "0"
 
 # --- Phase 5 step 1b: placed BEFORE staging ---------------------------------
@@ -115,7 +115,7 @@ expect "yield: per-transition docs row -> user-approval" \
 # Each of the six absolutes a new Phase-5 yield would falsify must now admit it.
 # Losing any one of these leaves the spec self-contradicting.
 expect "absolute 1 (only human surface) reconciled"  "$(has "$SKILL" 'Three kinds of later surface exist')"             "yes"
-expect "absolute 1 counts procedural prompts only"  "$(has "$SKILL" 'Two Phase-5 *procedural* prompts, neither of which gates the work')" "yes"
+expect "absolute 1 counts procedural prompts only"  "$(has "$SKILL" '*Procedural* prompts, none of which gates the work')" "yes"
 expect "absolute 1 keeps the by-default clause"     "$(has "$SKILL" 'nothing later stops the run *by default*')"      "yes"
 expect "absolute 1 states the trigger invariant"    "$(has "$SKILL" 'no surface stops the run unless its documented trigger fires')" "yes"
 # --- INVARIANT 2: a "no later gate" EXISTENCE claim must carry a qualifier -----
@@ -204,7 +204,7 @@ expect "step 5 stage rule admits the docs paths" \
 expect "preflight requires only the six mandatory skills" \
   "$(has "$SKILL" 'confirm the six **mandatory** composed skills')"           "yes"
 expect "preflight treats auto-task-docs as optional" \
-  "$(has "$SKILL" 'is OPTIONAL and is deliberately NOT a hard-stop')"         "yes"
+  "$(has "$SKILL" 'are OPTIONAL and deliberately NOT hard-stops')"           "yes"
 expect "absent docs skill degrades to skip, not a stop" \
   "$(has "$SKILL" 'docs-skill-absent')"                                      "yes"
 # R1: resetting gate_b without restoring it on a clean pass blocks the commit.
@@ -223,7 +223,8 @@ expect "docs skill has an invocation-mode gate"  "$(has "$DOCS" 'Read the invoca
 expect "docs skill: report-only is a hard stop"  "$(has "$DOCS" 'In `report-only` mode, STOP HERE')"    "yes"
 expect "docs skill: apply step is mode-guarded"  "$(has "$DOCS" '**`apply` mode only**')"               "yes"
 expect "1b invokes report-only first"            "$(has "$SKILL" 'explicitly in `report-only` mode')"   "yes"
-apply_sites="$(grep -o 'in \*\*`apply`\*\* mode' "$SKILL" | grep -c .)"
+p5_region="$(awk '/^1\. \*\*Verify gates\*\*/,/^2\. \*\*Build the change diagram/' "$SKILL")"
+apply_sites="$(printf '%s' "$p5_region" | grep -o 'in \*\*`apply`\*\* mode' | grep -c .)"
 expect "1b re-invokes apply at all 3 sites"      "$apply_sites"                                         "3"
 # Gate B #2: a plain diff hides untracked files — the new-capability staleness
 # class is unreachable without the untracked set, and a CREATED doc file escapes
@@ -260,7 +261,7 @@ expect "1b hands the approved report to apply"    "$(has "$SKILL" 'passing the a
 # presence) is deliberate — a probe that removed two of three once slipped past a
 # bare presence check, and this same assertion then caught the F7 fix adding a
 # legitimate fourth. If you add a site, update the number; do not relax to presence.
-pend_n="$(grep -o 'applied-pending-authorization' "$SKILL" | grep -c .)"
+pend_n="$(printf '%s' "$p5_region" | grep -o 'applied-pending-authorization' | grep -c .)"
 expect "pending marker present at all 4 sites"    "$pend_n"                                                          "4"
 # Gate B r3 #1: the anchor must be written BEFORE the apply call — an interrupt
 # across the sub-agent return boundary would otherwise leave edits on disk with no
@@ -357,7 +358,7 @@ expect "install.sh SKILLS includes it"       "$(grep -c 'auto-task-fix auto-task
 expect "install.sh syntax clean"             "$(bash -n "$INSTALL" 2>/dev/null && echo 0 || echo 1)"       "0"
 expect "README: settings-table row"          "$(grep -c '^| `docs_update_mode` |' "$README")"              "1"
 expect "README: feature section"             "$(grep -c '^### Docs update at handover' "$README")"         "1"
-expect "README: seven siblings"              "$(grep -c 'Seven namespaced sibling skills' "$README")"      "1"
+expect "README: sibling count is current"    "$(grep -c 'Eight namespaced sibling skills' "$README")"      "1"
 expect "README: no stale count/banner"       "$(grep -cE 'Six namespaced sibling skills|the six bundled sibling|four questions|upgrading to 0.22' "$README")" "0"
 expect "README: five-question setup"         "$(has "$README" 'five questions: telemetry, autonomy, landing style, unattended-external, docs update')" "yes"
 
