@@ -1,5 +1,4 @@
 {
-  "0.16.0": "Makes the before/after visual proof a first-class, required Acceptance Criterion rather than an implicit verification step.",
   "0.17.0": "Adds a worktree/disk space-control mechanism so auto-task's per-run worktrees (each carrying a full node_modules) no longer accumulate to tens of GB unmanaged.",
   "0.18.0": "Adds external actions — first-class handling for tasks that need a change in an external system (CMS, feature flags, a live data migration, a third-party API config) beyond shipping code. Shipping the script is no longer treated as \"done\": auto-task now applies the external change and verifies…",
   "0.19.0": "Adds a resume-run picker so you can see and continue any auto-task run across your worktrees — closing the gap where claude --resume resumes a conversation (not a run) and bare /auto-task only sees the current branch.",
@@ -8,5 +7,6 @@
   "0.23.0": "Reshapes run-outcome telemetry to be actionable, not vanity — and demotes the metric that was quietly misleading. Grounded in a review of how coding-agent teams actually measure quality.",
   "0.24.0": "Tightens both main-sync points so a run always starts from — and hands over against — the latest default branch, keeping merge conflicts small and surfaced early. Also adds a pipeline flowchart to the README.",
   "0.25.0": "Adds a what's new notice after the plugin updates. A SessionStart hook shows a short summary of the version you just received, read from a file bundled with the plugin — no network request. Only user-visible changes appear; internal releases produce no note at all.",
-  "0.26.0": "Adds two optional end-of-run steps: a docs update that refreshes the repo's user-facing docs when a run changed the behavior they describe, and a release step that cuts the version bump, changelog entry, commit and annotated tag — locally, never pushing or publishing. Both are off by default…"
+  "0.26.0": "Adds two optional end-of-run steps: a docs update that refreshes the repo's user-facing docs when a run changed the behavior they describe, and a release step that cuts the version bump, changelog entry, commit and annotated tag — locally, never pushing or publishing. Both are off by default…",
+  "0.26.1": "The orchestrator spec is now a spine plus reference files — the always-loaded half shrank 70%."
 }
