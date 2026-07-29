@@ -32,11 +32,24 @@ REFDIR="$ROOT/skills/auto-task/references"
 # accidental loss when it is an intentional edit.
 #
 # When that happens, do NOT simply delete the assertion (that retires the guard wholesale).
-# Re-baseline instead: confirm by eye that the reported lines were changed deliberately,
-# then set SPEC_BASE_REF to the commit that introduced the intentional edit, e.g.
-#   SPEC_BASE_REF=<new-commit> bash tests/spec-inventory.sh
-# and, once satisfied, update the default below in the same commit as the spec edit so the
-# guard keeps protecting everything from that point forward.
+# There are two sanctioned fixes; prefer the FIRST for an ordinary edit:
+#
+#   1. RETIRE THE SPECIFIC LINES (preferred). Add each reworded/deleted base line to
+#      RETIRED_PREFIXES in the inventory below, with a comment saying why. This forgives
+#      exactly the lines you name and keeps every other base line under guard — so a line
+#      lost by ACCIDENT in the same commit still reports. The list self-polices: a prefix
+#      matching zero or several distinct base lines is reported (BAD RETIRED PREFIX), and an
+#      entry that stops corresponding to a real shortfall is reported (STALE RETIRED), so it
+#      cannot rot into a blanket exemption.
+#   2. RE-BASELINE (only when a whole section is legitimately rewritten, i.e. when a
+#      line-by-line list would be longer than the diff). Confirm by eye that the reported
+#      lines were changed deliberately, then set SPEC_BASE_REF to the commit that introduced
+#      the intentional edit, e.g.
+#        SPEC_BASE_REF=<new-commit> bash tests/spec-inventory.sh
+#      and, once satisfied, update the default below in the same commit as the spec edit so
+#      the guard keeps protecting everything from that point forward. Note the cost: moving
+#      the base forgives every line the new base dropped, accidental ones included, which is
+#      why option 1 is preferred.
 BASE_REF="${SPEC_BASE_REF:-12aa8187e2e6af1261071ee0a68362c96ea264dc}"
 
 mode="${1:-inventory}"
@@ -139,9 +152,82 @@ for f in refs:
     now += lines_of(f)
 
 # 1. LOSS — every non-blank base line must survive, with multiplicity.
+#
+# RETIRED: base lines a later change deliberately reworded or deleted. Each entry
+# names WHY, so a retirement is reviewable in-repo instead of invisible.
+#
+# This list exists in preference to moving BASE_REF forward past the edit. Both
+# silence the MISSING report, but re-baselining silences it for EVERY line the new
+# base happens to have dropped — including any lost by accident in the same commit
+# — whereas an explicit list forgives exactly the lines named and keeps the other
+# ~1,320 under guard. The maintenance note above forbids deleting the assertion;
+# this is the narrow alternative to that and to a blanket re-baseline.
+#
+# Adding an entry is a claim that the line's contract still holds somewhere in
+# reworded form (or was intentionally repealed). Do not add one to quiet a report
+# you have not read.
+# Keys are a stable PREFIX of the retired base line (several run past 800 chars, so
+# quoting them whole would be unreadable and would itself rot). Each prefix must
+# resolve to exactly ONE distinct base line — enforced below — so a prefix cannot
+# quietly widen into a blanket exemption. The value is how many COPIES of that line
+# are retired. Only ONE line is genuinely duplicated between the estimate and actuals
+# blocks -- the `duration_min` one -- and only the estimate copy changed; the actuals
+# `tokens_breakdown` line differs (cache_read/cache_creation vs cache), so it was never
+# a collision. The count exists for that single shared line.
+RETIRED_PREFIXES = {
+  # --- estimate.sh output-token recalibration -------------------------------
+  # `estimate.sh` stopped emitting a cache-inclusive `tokens_total` and a
+  # `tokens_breakdown` it could not honestly predict (measured input ~1k;
+  # measured cache_read swings 189x-467x of output). The estimate/actual token
+  # comparison is now output-vs-output. Every line below is the OLD total-shaped
+  # wording, replaced in the same commit by an output-shaped equivalent that
+  # states the contract at least as strongly as the line it retires.
+  #
+  # state.estimate schema block — one of two identical lines; the actuals copy
+  # keeps tokens_total, because the ACTUAL total is a real measurement.
+  '    "duration_min": 0, "tokens_total": 0,': 1,
+  '    "tokens_breakdown": { "input": 0, "output": 0, "cache": 0 },': 1,
+  # Phase-1 estimate prose: the field list it names no longer exists.
+  'Write the parsed result to `state.estimate` (`duration_min`, `tokens_total`, `tokens_breakdown`': 1,
+  # Phase-5 "Estimate vs actual" table: the token row became output-vs-output and
+  # gained an un-compared total row; the caveat gained the sub-agent exclusion.
+  '   | Wall-clock (min) | <state.estimate.duration_min>': 1,
+  '   | Tokens (total)   | <state.estimate.tokens_total>': 1,
+  '   Token scope caveat: run-scoped via `--since`': 1,
+  # Quality panel + CONTEXT.md template: both named the ratio without saying which
+  # token figure it divides, which is the ambiguity that allowed the unit error.
+  '   - **Delivery reliability:** time <est_time_ratio>× · tokens <est_token_ratio>×': 1,
+  '   <compact table from state.estimate/actuals: metric | estimated | actual | actual/est': 1,
+  '   - **Quality signals (NOT a score).** Assemble `state.quality`': 1,
+  # settings.md: the payload schema_version claim moved 4 -> 5 with the est_tokens
+  # semantics change.
+  "**Remote telemetry (opt-in, off by default).** The endpoint + ingest token": 1,
+}
+
 bc = collections.Counter(l for l in base if l.strip())
 nc = collections.Counter(l for l in now if l.strip())
-missing = [(l, c, nc.get(l, 0)) for l, c in bc.items() if nc.get(l, 0) < c]
+
+# Resolve each prefix to exactly one distinct base line. A prefix matching zero
+# lines is stale (the base moved); matching several is too broad to be a named
+# retirement. Both are reported rather than silently tolerated.
+RETIRED = {}
+bad_prefixes = []
+for pref, n in RETIRED_PREFIXES.items():
+    hits = [l for l in bc if l.startswith(pref)]
+    if len(hits) != 1:
+        bad_prefixes.append((pref, len(hits)))
+        continue
+    RETIRED[hits[0]] = n
+
+# A retired line is forgiven up to its recorded multiplicity. Anything beyond that
+# still reports, so retiring one copy of a duplicated line cannot hide the others.
+missing = [(l, c, nc.get(l, 0)) for l, c in bc.items()
+           if c - nc.get(l, 0) - RETIRED.get(l, 0) > 0]
+
+# A RETIRED entry that no longer corresponds to a real shortfall is dead weight —
+# the line came back, or the entry was always wrong. Report it so the list cannot
+# rot into a permanent blanket exemption.
+stale_retired = [l for l, n in RETIRED.items() if bc.get(l, 0) - nc.get(l, 0) < n]
 
 # 2. DUPLICATION — a base heading must own exactly one home. Restating one
 #    would flip summed spec_count assertions from n to n+1.
@@ -167,8 +253,8 @@ for f in refs:
         if len(t) >= 40 and t in spine_sub:
             restated.append((os.path.basename(f), t))
 
-print("missing=%d duplicated=%d restated=%d base_lines=%d spec_files=%d"
-      % (len(missing), len(duplicated), len(restated), sum(bc.values()), 1 + len(refs)))
+print("missing=%d retired=%d duplicated=%d restated=%d base_lines=%d spec_files=%d"
+      % (len(missing), len(RETIRED), len(duplicated), len(restated), sum(bc.values()), 1 + len(refs)))
 bad = False
 for l, want, got in missing[:40]:
     print("  MISSING (want %d, got %d): %s" % (want, got, l[:100]), file=sys.stderr)
@@ -178,6 +264,14 @@ for h, got, want in duplicated:
     bad = True
 for f, t in restated[:40]:
     print("  RESTATED (in spine and %s): %s" % (f, t[:100]), file=sys.stderr)
+    bad = True
+for l in stale_retired:
+    print("  STALE RETIRED (entry no longer matches a real shortfall; remove it): %s"
+          % l[:100], file=sys.stderr)
+    bad = True
+for pref, n in bad_prefixes:
+    print("  BAD RETIRED PREFIX (matched %d distinct base lines, want exactly 1): %s"
+          % (n, pref[:100]), file=sys.stderr)
     bad = True
 sys.exit(1 if bad else 0)
 PYEOF

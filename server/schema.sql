@@ -52,11 +52,19 @@ CREATE TABLE IF NOT EXISTS runs (
   -- time & tokens (NULL when unmeasured — never 0)
   duration_min      INTEGER,
   est_duration_min  INTEGER,
-  est_tokens        INTEGER,
+  est_tokens        INTEGER,            -- SEMANTICS CHANGED IN v5: predicted OUTPUT
+                                        -- tokens, comparable to tokens_output below.
+                                        -- v1-v4 rows carry a cache-INCLUSIVE total
+                                        -- instead, so the est/act token ratio must
+                                        -- branch on schema_version before pooling
+                                        -- v4 and v5 rows (the two are ~100x apart).
   act_duration_min  INTEGER,
-  act_tokens        INTEGER,
+  act_tokens        INTEGER,            -- measured grand total (input+output+cache);
+                                        -- cache_read-dominated, so it is recorded but
+                                        -- is NOT the est-ratio numerator. Unchanged.
   tokens_input      INTEGER,            -- cache-excluded input tokens [v2]
-  tokens_output     INTEGER,            -- output tokens (meaningful est ratio) [v2]
+  tokens_output     INTEGER,            -- measured output tokens; the est-ratio actual,
+                                        -- paired with est_tokens as of v5 [v2]
 
   -- quality signals
   defects_early     INTEGER,

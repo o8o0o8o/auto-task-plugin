@@ -45,8 +45,9 @@ mk_state() {
   "phase": "done", "branch": "feat/secret-branch", "base": "deadbeef",
   "description": "TASK TEXT THAT MUST NOT LEAK",
   "effort": { "tier": "standard", "history": [ { "from": "light" } ] },
-  "estimate": { "duration_min": 100, "tokens_total": 5000 },
-  "actuals": { "duration_min": 90, "tokens_total": 6000 },
+  "estimate": { "duration_min": 100, "tokens_output": 5000 },
+  "actuals": { "duration_min": 90, "tokens_total": 6000,
+               "tokens_breakdown": { "input": 12, "output": 5500, "cache_read": 480, "cache_creation": 8 } },
   "quality": { "defects": { "early": 2, "late": 1 }, "flaky": false, "tests_added": true,
                "diff": { "loc_added": 40, "loc_removed": 8 }, "planning": { "first_pass_ac": 0.75 },
                "satisfaction": $satj, "correctness": $corj },
@@ -205,7 +206,20 @@ if [ -f "$RO" ]; then
   # sender derives itself. (Optional repo-metrics keys are NOT here — they only
   # appear when the measured merge runs, which needs a repo dir; this dry-run has
   # none. They're covered by the repo-metrics merge test below.)
-  expected="$( { printf '%s\n' "$ro_keys" | grep -vE '^(task|branch|base|at|pr_url)$'
+  #
+  # `act_tokens_output` is excluded deliberately, and it is a RENAME not a drop:
+  # the local row calls the measured output `act_tokens_output` (pairing it with
+  # `act_tokens`), while the payload has carried the identical value as
+  # `tokens_output` since v2 — both are `.actuals.tokens_breakdown.output`. Adding
+  # the second name would duplicate the measurement AND require a new server
+  # column, so the sender keeps the established one. If the payload ever stops
+  # carrying `tokens_output`, the v5 assertions above fail — that is the guard.
+  #
+  # `est_tokens_scale` is excluded for a different reason: it is a LOCAL-reader
+  # discriminator for pooling pre- and post-recalibration rows in one ledger. The
+  # payload has no need of it because `schema_version` already tells a consumer
+  # which scale `est_tokens` is on, which is exactly what the 4->5 bump is for.
+  expected="$( { printf '%s\n' "$ro_keys" | grep -vE '^(task|branch|base|at|pr_url|act_tokens_output|est_tokens_scale)$'
                  printf '%s\n' client_id plugin_version os schema_version \
                    satisfaction correctness comment \
                    difficulty risk task_type requirements_count drift_events \
@@ -238,8 +252,15 @@ expect "comment capped at 500 chars" "$(printf '%s' "$Pt" | jq -r '.comment | le
 # absent comment -> null
 expect "comment null when unset" "$(printf '%s' "$P" | jq -r '.comment')" "null"
 
-# --- 13c. schema v4 fields present + anonymized (task_type is prefix only) ----
-expect "schema_version is 4"        "$(printf '%s' "$P" | jq -r '.schema_version')" "4"
+# --- 13c. schema v5 fields present + anonymized (task_type is prefix only) ----
+# v5 changed est_tokens SEMANTICS (predicted OUTPUT tokens, comparable to
+# tokens_output) without changing the field set. The version bump is what lets a
+# consumer tell a v5 output-scale est_tokens from a v4 cache-inclusive total —
+# the two are ~100x apart, so pooling them without branching is a unit error.
+expect "schema_version is 5"        "$(printf '%s' "$P" | jq -r '.schema_version')" "5"
+expect "est_tokens is the OUTPUT estimate" "$(printf '%s' "$P" | jq -r '.est_tokens')" "5000"
+expect "tokens_output is the measured output" "$(printf '%s' "$P" | jq -r '.tokens_output')" "5500"
+expect "act_tokens keeps total semantics"  "$(printf '%s' "$P" | jq -r '.act_tokens')" "6000"
 for k in difficulty risk task_type requirements_count drift_events tokens_input tokens_output tokens_by_skill files_changed preview_verdict external_status model claude_code_version; do
   expect "v3 field present: $k" "$(printf '%s' "$P" | jq -r "has(\"$k\")")" "true"
 done
@@ -275,7 +296,8 @@ tt_case "main"             "other"
 tt_case ""                 "null"
 
 # --- 13d. repo-shape fields FROZEN as of v4: NOT emitted, even with a repo dir --
-# The client no longer merges repo-metrics into the payload (schema_version 4).
+# The client no longer merges repo-metrics into the payload (frozen at schema_version 4,
+# and still not emitted at v5).
 # Even when AUTO_TASK_REPO_DIR points at a real repo, none of the 7 repo-shape
 # fields may appear. (repo-metrics.sh itself is retained + unit-tested separately.)
 if command -v git >/dev/null 2>&1; then

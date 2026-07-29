@@ -48,7 +48,15 @@
 
 set -uo pipefail
 
-SCHEMA_VERSION=4
+# v5 (this version) changes the MEANING of `est_tokens`: it now carries the
+# estimate's predicted OUTPUT tokens, matching the `tokens_output` actual, so the
+# est/act ratio is output-vs-output. Through v4 it carried a cache-inclusive
+# "total" that was compared against `act_tokens` (also cache-inclusive but
+# measured), a unit mismatch worth 66x-434x on the four runs with actuals. Rows stored as
+# v4 are NOT wrong as v4 — they are simply on a different scale, so a consumer
+# pooling v4 and v5 rows MUST branch on schema_version before computing that
+# ratio. `act_tokens` keeps its total semantics unchanged in v5.
+SCHEMA_VERSION=5
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 settings_sh="$SCRIPT_DIR/settings.sh"
@@ -214,7 +222,7 @@ payload="$(jq -c \
       drift_events: ((.history // []) | map(select(.result == "drift")) | length),
       duration_min: $dur,
       est_duration_min: (.estimate.duration_min // null),
-      est_tokens: (.estimate.tokens_total // null),
+      est_tokens: (.estimate.tokens_output // null),
       act_duration_min: (.actuals.duration_min // $dur),
       act_tokens: (.actuals.tokens_total // null),
       tokens_input: (.actuals.tokens_breakdown.input // null),

@@ -121,6 +121,23 @@ fi
 # The metric fields mirror auto-task-stats.sh's DERIVE VERBATIM (lockstep — a
 # regression test asserts the two field sets match). est_*/act_* are `null` when
 # unmeasured so the reader's ratio can exclude them (no divide-by-zero / poison).
+#
+# TOKEN FIELDS — three, with distinct roles. `est_tokens` is the estimate's
+# predicted OUTPUT tokens (estimate.sh emits only that; see its header for why a
+# cache-inclusive total cannot be estimated). `act_tokens_output` is the measured
+# output — the ONLY actual that is comparable to `est_tokens`, and the numerator
+# of the reader's est/act ratio. `act_tokens` is the measured grand total
+# (input+output+cache_read+cache_creation); it is recorded because it is a real
+# measurement, but it is cache_read-dominated (107M-486M against ~500k of output
+# on real runs) and is therefore never compared against an estimate.
+#
+# `est_tokens_scale` records WHICH scale `est_tokens` is on ("output" post-change,
+# "total" for a run whose STATE.json predates it, null when unestimable). The
+# reader needs it because a row written by THIS builder always carries
+# `act_tokens_output`, so field-absence alone cannot distinguish a run that
+# started before the upgrade and completed after it from a current one — only the
+# marker can. Field-absence still identifies rows written by the OLD builder,
+# which predate the marker; the reader checks both.
 row="$(jq -c \
   --arg plugin_version "$plugin_version" \
   '
@@ -149,9 +166,13 @@ row="$(jq -c \
       followups: ((.followups // []) | length),
       duration_min: $dur,
       est_duration_min: (.estimate.duration_min // null),
-      est_tokens: (.estimate.tokens_total // null),
+      est_tokens: (.estimate.tokens_output // null),
+      est_tokens_scale: (if ((.estimate.tokens_output // null) != null) then "output"
+                         elif ((.estimate.tokens_total // null) != null) then "total"
+                         else null end),
       act_duration_min: (.actuals.duration_min // $dur),
       act_tokens: (.actuals.tokens_total // null),
+      act_tokens_output: (.actuals.tokens_breakdown.output // null),
       defects_early: (.quality.defects.early // 0),
       defects_late: (.quality.defects.late // 0),
       flaky: (.quality.flaky // false),

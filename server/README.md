@@ -42,8 +42,9 @@ wall-clock timestamp. Fields:
 | `gate_b` | string | `"passed"` or a skip reason. |
 | `followups` | number | Parked follow-up count. |
 | `duration_min` | number | Wall-clock (from history timestamps). |
-| `est_duration_min` / `est_tokens` | number \| null | Pre-run estimate (null when unmeasured). |
-| `act_duration_min` / `act_tokens` | number \| null | Measured actuals. |
+| `est_duration_min` | number \| null | Pre-run wall-clock estimate (null when unestimable). |
+| `est_tokens` | number \| null | Pre-run **output**-token estimate (null when unestimable). **Semantics changed in [v5]:** v1–v4 rows carry a cache-inclusive *total* instead — for the same run inputs the two stored values differ by only ~3.4× (the old estimator under-predicted the total badly, which is exactly why they are close), so the mismatch is NOT detectable by magnitude. Branch on `schema_version` before pooling v4 and v5 rows in an est/act ratio. Pair with `tokens_output`, never with `act_tokens`. |
+| `act_duration_min` / `act_tokens` | number \| null | Measured actuals. `act_tokens` is the grand total (input+output+cache_read+cache_creation) and is cache_read-dominated, so it is recorded but is not the est-ratio counterpart. Unchanged in v5. |
 | `defects_early` / `defects_late` | number | Findings caught early / late. |
 | `flaky` / `tests_added` | boolean | Stored as 0/1. |
 | `diff_loc` | number | Lines added+removed. |
@@ -64,6 +65,8 @@ wall-clock timestamp. Fields:
 | `repo_files_bucket`, `primary_language`, `is_monorepo`, `churn_ratio`, `hotspot_concentration`, `dirs_touched`, `max_depth` | mixed | Anonymized repo-shape block from `repo-metrics.sh` (coarse buckets/numbers only — no paths). [v2] |
 
 `tokens_by_skill` is also POSTed but has no dedicated column — it is preserved in the `raw` column. The `[v2]` fields require `schema_version` ≥ 2; the `[v3]` fields (`external_status`) require `schema_version` ≥ 3.
+
+A `[vN]` marker normally means **field presence** from version N. `est_tokens` is the one exception: it is present in every version, and its `[v5]` marker flags a **semantics** change — through v4 it held a cache-inclusive token *total*, from v5 it holds the predicted *output* tokens. The distinction matters because a presence-marker can be handled by a `NULL` check, whereas a semantics change cannot: the two scales are ~100× apart, so a query pooling v4 and v5 rows must branch on `schema_version` before computing any est/act ratio.
 
 Every request carries `Authorization: Bearer <telemetry_ingest_token>` when the token is non-empty (the bundled default token is non-empty, so this header is sent by default). A deployed endpoint should validate it (see "Harden" below).
 

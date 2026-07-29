@@ -51,6 +51,60 @@ done
 [ -n "$STALE_DAYS" ] || STALE_DAYS="${AUTO_TASK_STALL_DAYS:-7}"
 case "$STALE_DAYS" in ''|*[!0-9]*) STALE_DAYS=7 ;; esac
 
+# --- estimate.sh location (for the --recalibrate suggestion) -------------------
+# The recalibration suggestion prints estimate.sh's CURRENT constants scaled by
+# the pooled ratio, so it must READ them rather than carry its own copies. An
+# earlier version hardcoded them, which is how they silently went stale through a
+# recalibration — the exact failure mode this suggestion exists to fix. Resolved
+# as a sibling of this script; env-overridable so a test can point it at a fixture.
+EST_SH="${AUTO_TASK_ESTIMATE_SH:-}"
+if [ -z "$EST_SH" ]; then
+  _sd="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+  [ -n "$_sd" ] && EST_SH="$_sd/estimate.sh"
+fi
+
+# Read one `NAME=<digits>` assignment out of estimate.sh. Prints nothing when the
+# file is unreadable or the constant is absent/non-integer — callers treat empty as
+# "could not read" and must NOT substitute a literal.
+#
+# What the match requires, and why each part is there:
+#   * Comments stripped FIRST, full-line AND trailing. estimate.sh documents its
+#     constants in prose directly above them, so a comment mentioning e.g.
+#     `TIER_BASE_TOK_heavy=999` would otherwise be the first match and be reported
+#     as the current constant — and the AC-10 mutation probe, which edits the real
+#     assignment, could not catch that. Full-line stripping alone was insufficient:
+#     a TRAILING comment on any earlier line had the same effect.
+#   * Boundary `(^|[[:space:]]|;)` — the only things that precede a real shell
+#     assignment. This rejects a LONGER identifier ending in the same name
+#     (`MY_TIER_BASE_TOK_heavy=999`) and a token that merely contains one
+#     (`-TIER_BASE_TOK_heavy=999`, a flag, not an assignment). A looser "any
+#     non-identifier char" boundary accepted the second.
+#   * Trailing `([^0-9.]|$)` — rejects a non-integer rather than truncating it:
+#     `PER_AC_MIN=1.5` reads as empty (the honest "could not read" path) instead of
+#     silently becoming `1`.
+#
+# Known limit: awk `exit`s on the FIRST match, whereas bash would use the LAST
+# assignment. Only reachable if someone recalibrates by appending an override rather
+# than editing the constant in place.
+#
+# WHY awk AND NOT sed — load-bearing, not taste. This match needs alternation, and
+# BRE alternation (`\|`) is a GNU extension that BSD/macOS sed ignores SILENTLY:
+# every constant then reads empty, and the fail-open path reports "could not read
+# the constants", which looks like a correct message. That exact bug shipped twice
+# during this change; only the positive liveness assertions in
+# tests/stats-reshape.test.sh caught it. awk has real ERE everywhere. Do not
+# "simplify" this back to sed.
+est_const() {
+  [ -n "$EST_SH" ] && [ -r "$EST_SH" ] || return 0
+  awk -v name="$1" '
+    { sub(/[ \t]#.*$/, ""); sub(/^[ \t]*#.*$/, "") }
+    match($0, "(^|[[:space:]]|;)" name "=[0-9]+([^0-9.]|$)") {
+      seg = substr($0, RSTART, RLENGTH)
+      if (match(seg, /=[0-9]+/)) { print substr(seg, RSTART + 1, RLENGTH - 1); exit }
+    }
+  ' "$EST_SH" 2>/dev/null
+}
+
 # Regression-guard + recalibration thresholds (env-overridable).
 MDE_PP="${AUTO_TASK_STATS_MDE_PP:-15}";        case "$MDE_PP" in ''|*[!0-9]*) MDE_PP=15 ;; esac
 MIN_SAMPLE="${AUTO_TASK_STATS_MIN_SAMPLE:-10}"; case "$MIN_SAMPLE" in ''|*[!0-9]*) MIN_SAMPLE=10 ;; esac
@@ -111,9 +165,13 @@ DERIVE='
       followups: ((.followups // []) | length),
       duration_min: $dur,
       est_duration_min: (.estimate.duration_min // null),
-      est_tokens: (.estimate.tokens_total // null),
+      est_tokens: (.estimate.tokens_output // null),
+      est_tokens_scale: (if ((.estimate.tokens_output // null) != null) then "output"
+                         elif ((.estimate.tokens_total // null) != null) then "total"
+                         else null end),
       act_duration_min: (.actuals.duration_min // $dur),
       act_tokens: (.actuals.tokens_total // null),
+      act_tokens_output: (.actuals.tokens_breakdown.output // null),
       defects_early: (.quality.defects.early // 0),
       defects_late: (.quality.defects.late // 0),
       flaky: (.quality.flaky // false),
@@ -232,6 +290,69 @@ agg="$(jq -s \
         pct: (if $n==0 then null else (($k*1000/$n)|round)/10 end),
         ci: wilson($k; $n) };
   def vrate(cond): if length==0 then 0 else ((map(select(cond))|length)*1000/length|round)/10 end;
+  # --- Token-ratio row eligibility (the est/act comparison is OUTPUT-vs-OUTPUT) -
+  # NOTE: no apostrophes anywhere in this jq program — it is single-quoted in
+  # bash, so a lone apostrophe in a comment silently terminates the quote and
+  # unbinds $agg (which is how this block first broke).
+  #
+  # `est_tokens` is the predicted OUTPUT tokens and `act_tokens_output` the
+  # measured output. `act_tokens` (the cache_read-dominated grand total) is
+  # deliberately NOT the numerator: comparing it against an output-scale estimate
+  # is a unit error worth 66x-434x on the four runs that have actuals.
+  #
+  # The guard MUST test the same field the division uses. Testing `act_tokens`
+  # while dividing `act_tokens_output` would admit a legacy row and then evaluate
+  # `null / number`, which is a FATAL jq error — and per the --argjson note above,
+  # an error in this agg pass blanks the whole report rather than printing a
+  # wrong number.
+  #
+  # A pre-recalibration row carries an `est_tokens` on the old cache-inclusive
+  # total scale, so pooling it would reintroduce that same unit error. `tok_ok`
+  # rejects it (on the scale marker, not merely on positivity) and `tok_legacy`
+  # counts it, so the exclusion is REPORTED rather than silent — a dropped row must
+  # never look like "no measured runs yet".
+  #
+  # Legacy is detected in TWO ways, because one alone misses real rows:
+  #   (a) `est_tokens_scale == "total"` — the explicit marker both row builders
+  #       now emit. This is the ONLY thing that catches a live STATE.json whose
+  #       `estimate` predates the change, or a run that STARTED before the
+  #       upgrade and was archived after it. Key-absence cannot see either case,
+  #       because both row builders always CONSTRUCT `act_tokens_output`.
+  #   (b) `act_tokens_output` absent entirely — a row archived by the OLD builder,
+  #       which never emitted the field. Such rows also predate the marker, so (a)
+  #       is unavailable for them and only (b) works.
+  # Neither clause fires for a post-change row whose estimate was simply
+  # unestimable (`est_tokens_scale` null, `est_tokens` null): that is "not
+  # measured", not "measured on the old scale", and conflating them would
+  # mislabel it.
+  #
+  # Two guards make the classifier honest rather than merely wide:
+  #   * the leading `tok_ok | not` makes legacy and ratio-eligible MUTUALLY
+  #     EXCLUSIVE by construction. It resolves the overlap toward EXCLUSION only
+  #     because `tok_ok` is itself scale-aware (above) — that ordering matters and
+  #     was got wrong once: with a positivity-only `tok_ok`, this guard handed
+  #     precedence to the numbers over the `scale=="total"` marker,
+  #     so a foreign row was pooled into the ratio and the exclusion notice
+  #     disappeared. The pair must be read together, not separately.
+  #   * clause (a) additionally requires a measured output. An old-shape estimate
+  #     whose `actuals` came back null was never comparable for a reason unrelated
+  #     to the scale change (token-usage.sh legitimately returns null when the
+  #     transcript window holds no attributable messages), so attributing it to the
+  #     recalibration would over-count what the change cost. Clause (b) keeps
+  #     `est_tokens > 0` as its equivalent guard.
+  # `tok_ok` is scale-AWARE, and that is load-bearing: it is what the disjointness
+  # guard in tok_legacy defers to. A row declaring est_tokens_scale=="total" says its
+  # own estimate is on the ~100x cache-inclusive scale, so it must never enter the
+  # ratio no matter how positive its numbers look. Without this clause, adding
+  # `tok_ok | not` to tok_legacy gave positivity precedence over the numbers rather than
+  # the scale marker: such a row was POOLED (dragging a 1.1x median to 0.21x) and the
+  # exclusion notice vanished, which is strictly less information than reporting it.
+  def tok_ok: ((.est_tokens // 0) > 0) and ((.act_tokens_output // 0) > 0)
+              and (.est_tokens_scale? != "total");
+  def tok_legacy: (tok_ok | not)
+                  and ( ((.est_tokens_scale? == "total") and ((.act_tokens_output // 0) > 0))
+                        or ((has("act_tokens_output") | not) and ((.est_tokens // 0) > 0)) );
+  def tok_ratio: (.act_tokens_output / .est_tokens);
   length as $N
   | (map(select((.plugin_version | type) == "string" and .plugin_version != "" and .plugin_version != "unknown"))
      | group_by(.plugin_version)
@@ -239,11 +360,12 @@ agg="$(jq -s \
              late:  vrate((.defects_late // 0) > 0),
              tests: vrate(.tests_added == true),
              flaky: vrate(.flaky == true),
-             ratio_tokens: (map(select(((.est_tokens // 0) > 0) and ((.act_tokens // 0) > 0)) | (.act_tokens/.est_tokens)) | median),
-             n_tok: (map(select(((.est_tokens // 0) > 0) and ((.act_tokens // 0) > 0))) | length) })
+             ratio_tokens: (map(select(tok_ok) | tok_ratio) | median),
+             n_tok: (map(select(tok_ok)) | length) })
      | sort_by(.version | split(".") | map(tonumber? // 0))) as $versions
-  | (map(select(((.est_tokens // 0) > 0) and ((.act_tokens // 0) > 0)) | (.act_tokens/.est_tokens)) | median) as $rtok
-  | (map(select(((.est_tokens // 0) > 0) and ((.act_tokens // 0) > 0))) | length) as $ntok
+  | (map(select(tok_ok) | tok_ratio) | median) as $rtok
+  | (map(select(tok_ok)) | length) as $ntok
+  | (map(select(tok_legacy)) | length) as $nlegacy
   | (map(select(((.est_duration_min // 0) > 0) and ((.act_duration_min // 0) > 0)) | (.act_duration_min/.est_duration_min)) | median) as $rdur
   | (map(select(((.est_duration_min // 0) > 0) and ((.act_duration_min // 0) > 0))) | length) as $ndur
   | ($versions | map(select(.n >= $min_sample))) as $elig
@@ -268,7 +390,7 @@ agg="$(jq -s \
     sh_ran: (map(select((.tier=="standard" or .tier=="heavy") and (.gate_b=="passed"))) | length),
     pct_misscored: (if length==0 then 0 else ((map(select((.escalations // 0) > 0)) | length) * 100 / length | floor) end),
     avg_followups: (if length==0 then 0 else ((map(.followups // 0) | add) / length) end),
-    ratio_tokens: $rtok, n_tok: $ntok,
+    ratio_tokens: $rtok, n_tok: $ntok, n_tok_legacy: $nlegacy,
     ratio_dur: $rdur, n_dur: $ndur,
     versions: $versions,
     regression: (
@@ -427,17 +549,28 @@ rt="$(printf '%s' "$agg" | jq -r '(.ratio_tokens // 0) | (.*100|round)/100' 2>/d
 rd="$(printf '%s' "$agg" | jq -r '(.ratio_dur // 0) | (.*100|round)/100' 2>/dev/null || echo 0)"
 n_tok="$(printf '%s' "$agg" | jq -r '.n_tok // 0' 2>/dev/null || echo 0)"
 n_dur="$(printf '%s' "$agg" | jq -r '.n_dur // 0' 2>/dev/null || echo 0)"
+n_tok_legacy="$(printf '%s' "$agg" | jq -r '.n_tok_legacy // 0' 2>/dev/null || echo 0)"
+case "$n_tok_legacy" in ''|*[!0-9]*) n_tok_legacy=0 ;; esac
 
 echo "Estimate accuracy (calibration input)"
 if [ "$n_tok" -gt 0 ]; then
-  printf '  tokens: actual/est median %sx (n=%s)\n' "$rt" "$n_tok"
+  printf '  output tokens: actual/est median %sx (n=%s)\n' "$rt" "$n_tok"
 else
-  printf '  tokens: no measured runs yet\n'
+  printf '  output tokens: no measured runs yet\n'
 fi
 if [ "$n_dur" -gt 0 ]; then
-  printf '  time:   actual/est median %sx (n=%s)\n' "$rd" "$n_dur"
+  printf '  time:          actual/est median %sx (n=%s)\n' "$rd" "$n_dur"
 fi
-printf '  (median actual/est >1 means runs cost MORE than estimated; <1 means less. Pooled — read with the n.)\n'
+# Report legacy exclusions rather than dropping them silently — without this line
+# a ledger full of pre-recalibration rows renders as "no measured runs yet",
+# which reads as "never measured" instead of "measured on the old scale".
+if [ "$n_tok_legacy" -gt 0 ]; then
+  printf '  %s pre-recalibration row(s) excluded from the token ratio — their estimate was on the old\n' "$n_tok_legacy"
+  printf '    cache-inclusive total scale, which is not comparable to the output-token estimate.\n'
+fi
+printf '  (the token ratio is OUTPUT-vs-OUTPUT: estimate.sh predicts output tokens, and the measured\n'
+printf '   grand total is cache_read-dominated, so comparing against it would be a unit error.\n'
+printf '   median actual/est >1 means runs cost MORE than estimated; <1 means less. Pooled — read with the n.)\n'
 echo ""
 
 # --- Regression guard (version-over-version) ---------------------------------
@@ -475,18 +608,41 @@ if [ "$RECAL" = "1" ]; then
     rc_nt="$(printf '%s' "$agg" | jq -r '.recal.n_tok' 2>/dev/null)"
     rc_rd="$(printf '%s' "$agg" | jq -r '.recal.ratio_dur' 2>/dev/null)"
     rc_nd="$(printf '%s' "$agg" | jq -r '.recal.n_dur' 2>/dev/null)"
-    printf '  Pooled actual/est: tokens %sx (n=%s), time %sx (n=%s) — floor of %s met.\n' "$rc_rt" "$rc_nt" "$rc_rd" "$rc_nd" "$RECAL_MIN"
-    # Suggest scaling the estimate.sh token/time constants by the pooled ratio.
-    printf '%s' "$agg" | jq -rn --argjson rt "$rc_rt" '
-      def s(v): (v*$rt)|round;
-      "  Suggested TOKEN constants (× \($rt)):",
-      "    TIER_BASE_TOK  light 300000→\(s(300000))  standard 900000→\(s(900000))  heavy 1800000→\(s(1800000))",
-      "    PER_AC_TOK 40000→\(s(40000))   PER_FILE_TOK 50000→\(s(50000))"' 2>/dev/null
-    printf '%s' "$agg" | jq -rn --argjson rd "$rc_rd" '
-      def s(v): (v*$rd)|round;
-      "  Suggested TIME constants (× \($rd)):",
-      "    TIER_BASE_MIN  light 12→\(s(12))  standard 35→\(s(35))  heavy 70→\(s(70))",
-      "    PER_AC_MIN 2→\(s(2))   PER_FILE_MIN 2→\(s(2))"' 2>/dev/null
+    printf '  Pooled actual/est: output tokens %sx (n=%s), time %sx (n=%s) — floor of %s met.\n' "$rc_rt" "$rc_nt" "$rc_rd" "$rc_nd" "$RECAL_MIN"
+    # Suggest scaling estimate.sh's CURRENT constants by the pooled ratio. The
+    # values are read live (est_const) — never hardcoded here, or they go stale on
+    # the first recalibration and this block starts lying.
+    tbt_l="$(est_const TIER_BASE_TOK_light)";  tbt_s="$(est_const TIER_BASE_TOK_standard)"
+    tbt_h="$(est_const TIER_BASE_TOK_heavy)";  pat="$(est_const PER_AC_TOK)"
+    pft="$(est_const PER_FILE_TOK)"
+    tbm_l="$(est_const TIER_BASE_MIN_light)";  tbm_s="$(est_const TIER_BASE_MIN_standard)"
+    tbm_h="$(est_const TIER_BASE_MIN_heavy)";  pam="$(est_const PER_AC_MIN)"
+    pfm="$(est_const PER_FILE_MIN)"
+    if [ -n "$tbt_l" ] && [ -n "$tbt_s" ] && [ -n "$tbt_h" ] && [ -n "$pat" ] && [ -n "$pft" ] \
+       && [ -n "$tbm_l" ] && [ -n "$tbm_s" ] && [ -n "$tbm_h" ] && [ -n "$pam" ] && [ -n "$pfm" ]; then
+      printf '%s' "$agg" | jq -rn --argjson rt "$rc_rt" \
+        --argjson l "$tbt_l" --argjson s "$tbt_s" --argjson h "$tbt_h" \
+        --argjson a "$pat" --argjson f "$pft" '
+        def sc(v): (v*$rt)|round;
+        "  Suggested TOKEN constants (× \($rt)) — output tokens:",
+        "    TIER_BASE_TOK  light \($l)→\(sc($l))  standard \($s)→\(sc($s))  heavy \($h)→\(sc($h))",
+        "    PER_AC_TOK \($a)→\(sc($a))   PER_FILE_TOK \($f)→\(sc($f))"' 2>/dev/null
+      printf '%s' "$agg" | jq -rn --argjson rd "$rc_rd" \
+        --argjson l "$tbm_l" --argjson s "$tbm_s" --argjson h "$tbm_h" \
+        --argjson a "$pam" --argjson f "$pfm" '
+        def sc(v): (v*$rd)|round;
+        "  Suggested TIME constants (× \($rd)):",
+        "    TIER_BASE_MIN  light \($l)→\(sc($l))  standard \($s)→\(sc($s))  heavy \($h)→\(sc($h))",
+        "    PER_AC_MIN \($a)→\(sc($a))   PER_FILE_MIN \($f)→\(sc($f))"' 2>/dev/null
+    else
+      # Fail-open WITHOUT reinstating literals: a hardcoded fallback is precisely
+      # the staleness this block was rewritten to eliminate, so print the factors
+      # and say the constants could not be read.
+      printf '  Could not read the current constants from estimate.sh (%s) — no values suggested.\n' \
+        "${EST_SH:-not found}"
+      printf '  Apply by hand: multiply the TIER_BASE_TOK_*/PER_*_TOK constants by %sx and the\n' "$rc_rt"
+      printf '  TIER_BASE_MIN_*/PER_*_MIN constants by %sx.\n' "$rc_rd"
+    fi
     echo "  (Suggestion only — estimate.sh is unchanged. Review the n before applying; a small n is noisy.)"
   else
     rc_nt="$(printf '%s' "$agg" | jq -r '.recal.n_tok // 0' 2>/dev/null || echo 0)"

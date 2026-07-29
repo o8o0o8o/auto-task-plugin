@@ -148,8 +148,7 @@ Fail-open: if the engine cannot be located or errors, fall back to the original 
     ]
   },
   "estimate": {
-    "duration_min": 0, "tokens_total": 0,
-    "tokens_breakdown": { "input": 0, "output": 0, "cache": 0 },
+    "duration_min": 0, "tokens_output": 0,
     "basis": "<from estimate.sh; fields are null when unestimable>", "at": "ISO-8601"
   },
   "actuals": {
@@ -254,6 +253,7 @@ Update this file at every phase transition and at the end of every loop iteratio
 
 Two invariants restated inline, because getting either wrong silently corrupts telemetry or strands a run:
 - **`estimate`/`actuals` token+time fields are `null`, never `0`** when unmeasured — `auto-task-stats` excludes nulls instead of dividing by zero.
+- **The estimate side is OUTPUT tokens only.** `estimate.tokens_output` is the sole token figure `estimate.sh` produces; it emits no `tokens_total` and no `tokens_breakdown`, because measured `input` is ~1k and measured `cache_read` swings 189×–467× of output, so neither is estimable. `actuals` still records `tokens_total` plus the full breakdown as a real measurement — but the estimate/actual comparison is **output-vs-output** (`estimate.tokens_output` vs `actuals.tokens_breakdown.output`). Comparing the two `tokens_total`-shaped numbers is a unit error worth **66×–434×** (measured across the four runs that have actuals), which is exactly the bug this shape prevents.
 - **A task needing an external change is NOT `done` until Phase 8 applies AND verifies it.** `declared`/`awaiting-external` stay `phase: "external"`; only `applied-verified`, an accepted `applied-unverified`, `none`, or an explicit descope reach `done`.
 
 
@@ -506,7 +506,7 @@ Write D, R, and the resulting tier into both `.auto-task/<branch>/PLAN.md` and s
 est="$(bash "$estimate_sh" --tier "$TIER" --difficulty "$D" --risk "$R" --acs "$AC_COUNT" --files "$BLAST_FILES")"
 ```
 
-Write the parsed result to `state.estimate` (`duration_min`, `tokens_total`, `tokens_breakdown`, `basis`, `at`) and add an `## Estimate` section to `.auto-task/<branch>/PLAN.md` (a small table: metric | estimate | basis). Surface it in the plan presentation at the approval gate — this is the "estimate before execution" the metrics feature promises; the final summary later compares it against measured actuals. Log `{ phase: "define-estimate", result: "<duration>min/<tokens>tok", at: "ISO-8601" }` to `state.history`. **Fail-open:** if the helper cannot be located or returns null fields, record the estimate as unavailable (a visible note, never a fabricated number) and proceed — the estimate never blocks the run. **Bootstrap caveat:** if this run is itself modifying `estimate.sh`, the not-yet-installed helper cannot self-estimate; compute the estimate manually from the same heuristic and note it.
+Write the parsed result to `state.estimate` (`duration_min`, `tokens_output`, `basis`, `at`) and add an `## Estimate` section to `.auto-task/<branch>/PLAN.md` (a small table: metric | estimate | basis). Surface it in the plan presentation at the approval gate — this is the "estimate before execution" the metrics feature promises; the final summary later compares it against measured actuals. Log `{ phase: "define-estimate", result: "<duration>min/<tokens>tok", at: "ISO-8601" }` to `state.history`. **Fail-open:** if the helper cannot be located or returns null fields, record the estimate as unavailable (a visible note, never a fabricated number) and proceed — the estimate never blocks the run. **Bootstrap caveat:** if this run is itself modifying `estimate.sh`, the not-yet-installed helper cannot self-estimate; compute the estimate manually from the same heuristic and note it.
 
 **Critique pass, critique → re-plan loop, and the high-risk disclaimer.** Before stopping for approval: spawn a fresh-context `general-purpose` agent to critique `PLAN.md` on four dimensions (`[AC]`, `[Blast]`, `[Edge]`, `[Rollback]`); classify each finding **structural-fixable** (resolve it yourself) or **judgment-required** (needs the human); amend for every structural finding and re-critique, bounded by tier (LIGHT 1 round; STANDARD/HEAVY 2). Then assemble the disclaimer if any trigger fired.
 

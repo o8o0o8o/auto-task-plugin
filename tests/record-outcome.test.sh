@@ -88,6 +88,19 @@ expect "row.duration_min"      "$(printf '%s' "$ROW" | jq -r '.duration_min')"  
 # yields a valid row with the new metric fields defaulted (null / 0 / false).
 expect "row.est_tokens default null"   "$(printf '%s' "$ROW" | jq -r '.est_tokens')"    "null"
 expect "row.act_tokens default null"   "$(printf '%s' "$ROW" | jq -r '.act_tokens')"    "null"
+# act_tokens_output is the est-ratio counterpart to est_tokens (both OUTPUT-scale).
+# It must be PRESENT-and-null on a legacy/partial state, never absent: the reader
+# treats an ABSENT act_tokens_output as "row written before the recalibration, its
+# est_tokens is on the old total scale, exclude it from the ratio". A row this
+# archiver emits is post-recalibration by construction, so it must always carry
+# the key — otherwise every fresh row would be misread as legacy.
+expect "row.act_tokens_output default null" "$(printf '%s' "$ROW" | jq -r '.act_tokens_output')" "null"
+expect "row.act_tokens_output key present"  "$(printf '%s' "$ROW" | jq -r 'has("act_tokens_output")')" "true"
+# est_tokens_scale records WHICH scale est_tokens is on. On a state with no estimate
+# at all it is null ("unestimable"), NOT "total" — only a state that actually carries
+# the old tokens_total field is legacy, and mislabelling an unmeasured run as
+# pre-recalibration would put it in the reader's exclusion count under a false reason.
+expect "row.est_tokens_scale null when no estimate" "$(printf '%s' "$ROW" | jq -r '.est_tokens_scale')" "null"
 expect "row.est_duration_min null"     "$(printf '%s' "$ROW" | jq -r '.est_duration_min')" "null"
 expect "row.act_duration_min = dur"    "$(printf '%s' "$ROW" | jq -r '.act_duration_min')" "27"
 expect "row.checks_run default 0"      "$(printf '%s' "$ROW" | jq -r '.checks_run')"    "0"
@@ -214,7 +227,7 @@ echo "================ Lockstep: metric fields present in BOTH DERIVE blocks ===
 # SAME metric fields, or archived rows and live-done rows disagree. Assert every
 # metric field name appears in both scripts' derivations.
 REC_SH="$HOOKS/record-outcome.sh"; STATS_SH="$HOOKS/auto-task-stats.sh"
-for k in est_duration_min est_tokens act_duration_min act_tokens \
+for k in est_duration_min est_tokens est_tokens_scale act_duration_min act_tokens act_tokens_output \
          defects_early defects_late flaky tests_added diff_loc first_pass_ac \
          checks_run checks_failed plugin_version; do
   ir="$(grep -c "${k}:" "$REC_SH" 2>/dev/null || echo 0)"
@@ -225,6 +238,26 @@ for k in est_duration_min est_tokens act_duration_min act_tokens \
     FAIL=$((FAIL+1)); printf '  FAIL  %-52s rec=%s stats=%s\n' "lockstep: $k" "$ir" "$is"
   fi
 done
+# Name-parity above is necessary but not sufficient for est_tokens_scale: its entire
+# purpose is that BOTH builders classify a row the same way, so a drift in the
+# EXPRESSION (e.g. one reading .estimate.tokens_output, the other
+# .estimate.tokens_breakdown.output) would keep the names matching while silently
+# splitting the classification. Compare the normalized expression text too.
+# Extract from `est_tokens_scale:` up to and including the line that closes the
+# expression (`end),`), rather than a fixed line window: a hard `grep -A2` silently
+# degrades to comparing a PREFIX the moment a 4th elif/else line is added, so a
+# divergent line 4 would pass. awk range + an explicit terminator keeps the
+# comparison whole however the expression grows.
+scale_expr(){ awk '/est_tokens_scale:/,/end\),/' "$1" | tr -d ' \n'; }
+expect "lockstep: est_tokens_scale EXPRESSION identical" \
+  "$([ "$(scale_expr "$REC_SH")" = "$(scale_expr "$STATS_SH")" ] && echo yes || echo no)" "yes"
+expect "lockstep: est_tokens_scale expression is non-empty" \
+  "$([ -n "$(scale_expr "$REC_SH")" ] && echo yes || echo no)" "yes"
+# The extraction must actually reach the terminator, or the assertion above is
+# comparing truncated text and cannot see a drift past the cut.
+expect "lockstep: extraction reaches the closing end)," \
+  "$(scale_expr "$REC_SH" | grep -c 'end),')" "1"
+
 # pr_url is an identifying field (not a metric) but must be derived by BOTH, or a
 # live-done run's PR would be invisible to merge-acceptance until it is archived.
 ir="$(grep -c 'pr_url:' "$REC_SH" 2>/dev/null || echo 0)"

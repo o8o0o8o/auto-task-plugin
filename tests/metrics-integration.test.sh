@@ -33,14 +33,18 @@ echo "================ metrics data path: record-outcome ================"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 ( cd "$T" && git init -q && git checkout -q -b feat/metrics )
 SD="$T/.auto-task/feat/metrics"; mkdir -p "$SD"
-# Full-metrics done fixture. tokens actual/est = 2.0 ; duration actual/est = 1.2.
+# Full-metrics done fixture. OUTPUT tokens actual/est = 2.0 (2,000,000 / 1,000,000) ;
+# duration actual/est = 1.2. actuals.tokens_total is set to a realistic
+# cache_read-dominated 400M so that a ratio computed against the TOTAL instead of
+# the output would come out at 400x and fail loudly rather than silently.
 cat > "$SD/STATE.json" <<'EOF'
 {"phase":"done","approved":true,"branch":"feat/metrics","base":"BASEM",
  "description":"metrics integration fixture",
  "effort":{"tier":"heavy","history":[]},
  "iteration":{"review":1,"fix":1},
- "estimate":{"duration_min":100,"tokens_total":1000000},
- "actuals":{"duration_min":120,"tokens_total":2000000},
+ "estimate":{"duration_min":100,"tokens_output":1000000},
+ "actuals":{"duration_min":120,"tokens_total":400000000,
+            "tokens_breakdown":{"input":800,"output":2000000,"cache_read":396000000,"cache_creation":1999200}},
  "quality":{"defects":{"early":1,"late":2},"flaky":true,"tests_added":true,
             "diff":{"loc_added":50,"loc_removed":10},"planning":{"first_pass_ac":0.8}},
  "checks":[{"name":"secret-scan","result":"pass"},{"name":"conflict-markers","result":"pass"},
@@ -56,7 +60,8 @@ printf '{"cwd":"%s"}' "$T" | CLAUDE_PROJECT_DIR="$T" bash "$REC"
 ROW="$(head -1 "$T/.auto-task/outcomes.jsonl")"
 expect "ledger has exactly one row"   "$(wc -l < "$T/.auto-task/outcomes.jsonl" | tr -d ' ')" "1"
 expect "row.est_tokens"        "$(printf '%s' "$ROW" | jq -r '.est_tokens')"        "1000000"
-expect "row.act_tokens"        "$(printf '%s' "$ROW" | jq -r '.act_tokens')"        "2000000"
+expect "row.act_tokens (total)" "$(printf '%s' "$ROW" | jq -r '.act_tokens')"       "400000000"
+expect "row.act_tokens_output"  "$(printf '%s' "$ROW" | jq -r '.act_tokens_output')" "2000000"
 expect "row.est_duration_min"  "$(printf '%s' "$ROW" | jq -r '.est_duration_min')"  "100"
 expect "row.act_duration_min"  "$(printf '%s' "$ROW" | jq -r '.act_duration_min')"  "120"
 expect "row.defects_early"     "$(printf '%s' "$ROW" | jq -r '.defects_early')"      "1"
@@ -86,7 +91,7 @@ expect_has "stats: completion demoted to liveness" "$OUT" "NOT a quality signal"
 echo "================ divide-by-zero guard: null estimate excluded ================"
 # Append a second done row whose estimate FAILED (null) — must NOT poison/divide.
 cat >> "$T/.auto-task/outcomes.jsonl" <<'EOF'
-{"at":"2026-03-02T10:00:00Z","branch":"feat/other","base":"BASEO","terminal_state":"done","tier":"standard","est_tokens":null,"act_tokens":500000,"est_duration_min":null,"act_duration_min":30,"defects_late":0,"flaky":false,"tests_added":false,"gate_b":"passed","followups":0}
+{"at":"2026-03-02T10:00:00Z","branch":"feat/other","base":"BASEO","terminal_state":"done","tier":"standard","est_tokens":null,"act_tokens":100000000,"act_tokens_output":500000,"est_duration_min":null,"act_duration_min":30,"defects_late":0,"flaky":false,"tests_added":false,"gate_b":"passed","followups":0}
 EOF
 OUT2="$(CLAUDE_PROJECT_DIR="$T" bash "$STATS" 2>/dev/null)"
 expect_has "stats still exits cleanly (2 done)"  "$OUT2" "2 done"
