@@ -142,7 +142,7 @@ Tier can only **escalate** — never auto-de-escalate. Every change is logged to
 
 The pipeline is fully resumable. State is updated at every phase transition and every loop iteration. `<branch>` mirrors `git branch --show-current` verbatim (slashes preserved), so the gate and Stop hooks resolve the same path.
 
-The block below is **abridged** for readability — the full schema (including `title`, `estimate`, `actuals`, `quality`, `checks`, `requirements`, `settings`, `bot_review`, and `preview`) lives in `SKILL.md` → "State file".
+The block below is **abridged** for readability — the full JSON schema (including `title`, `estimate`, `actuals`, `quality`, `checks`, `requirements`, `settings`, `bot_review`, and `preview`) lives in `SKILL.md` → "State file", and the per-object semantics (additive rules, null-vs-zero, the terminal-vs-in-flight honesty rules) live in `skills/auto-task/references/state-schema.md`.
 
 ```json
 {
@@ -354,7 +354,8 @@ Run state is keyed by branch under `.auto-task/<branch>/`, and the gate + Stop h
 
 | Path | Role |
 |---|---|
-| `~/.claude/skills/auto-task/SKILL.md` | The skill spec (source of truth) |
+| `~/.claude/skills/auto-task/SKILL.md` | The skill spec — the always-loaded **spine** (source of truth for the pipeline, loop rule, effort tiers, yield-point contract, AC contract + INCONCLUSIVE floor, trace contract, and each phase's gate condition + non-negotiables) |
+| `~/.claude/skills/auto-task/references/*.md` | The spec's **on-demand half** — seven files (`phase-1-preamble`, `phase-3-gates`, `phase-5-handover`, `phase-6-8-post-pr`, `phase-9-release`, `settings`, `state-schema`) holding the full step-by-step contracts. Only `SKILL.md` is context-injected; the spine cites each reference with a `**MANDATORY READ:**` directive at its point of use. Guarded by `tests/spec-inventory.sh` (no content lost, no heading duplicated) and the spine-only assertions in `tests/enforcement-spine.test.sh` |
 | `~/.claude/skills/auto-task-plan/SKILL.md` | Composed by Phase 1 |
 | `~/.claude/skills/auto-task-implement/SKILL.md` | Composed by Phase 2 |
 | `~/.claude/skills/auto-task-verify/SKILL.md` | Composed by Phase 3 |

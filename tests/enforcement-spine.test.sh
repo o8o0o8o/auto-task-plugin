@@ -881,7 +881,14 @@ expect "lib does not leak cap/budget to the caller" \
 
 # Doc contracts: greps for claims this change FALSIFIED. A stale one means a
 # maintainer reads a guarantee the code no longer provides.
-LBSKILL="$HOOKS/../skills/auto-task/SKILL.md"
+# Spec search is union-scoped: the auto-task spec is a spine
+# (skills/auto-task/SKILL.md) plus skills/auto-task/references/*.md. $SKILL below is a
+# regenerated temp concatenation of both, so the assertions in this file keep resolving
+# wherever their prose lives. See tests/lib/spec.sh for the semantics.
+. "$HOOKS/../tests/lib/spec.sh"
+spec_concat_into LBSKILL
+SPINE_ONLY="$HOOKS/../skills/auto-task/SKILL.md"   # for spine-only assertions
+
 LBARCH="$HOOKS/../skills/auto-task/ARCHITECTURE.md"
 LBRDME="$HOOKS/../README.md"
 expect "Loop rule carries the converged clause"          "$(grep -c 'zero blockers and zero required findings means the loop has CONVERGED' "$LBSKILL")" "1"
@@ -936,6 +943,369 @@ expect "README gate list mentions the fix-loop budget"   "$(grep -c 'It also enf
 expect "README: no stale one-cap ack claim"              "$(grep -c 'buys one more cap' "$LBRDME")" "0"
 expect "README budget rows name both counters"           "$([ "$(grep -c 'max(iteration.fix, iteration.review)' "$LBRDME")" -ge 2 ] && echo y || echo n)" "y"
 expect "README has a budget troubleshooting row"         "$(grep -c 'over its fix-loop budget' "$LBRDME")" "1"
+
+
+# ============================================================================
+# SPINE-ONLY GUARDS — contracts that must never leave the always-loaded SKILL.md
+# ============================================================================
+# The spec is a spine plus references/*.md, and most assertions in this suite are
+# union-scoped (see tests/lib/spec.sh) so relocating prose costs no test churn.
+# That convenience has a cost: a union search cannot tell you WHERE a contract
+# lives, so a future edit could quietly demote a must-stay contract into a
+# reference file and the suite would stay green.
+#
+# These assertions close that hole. They grep SKILL.md DIRECTLY — never through
+# spec_has/spec_count — so each one fails if its content is moved to a reference.
+# tests/spec-helper.test.sh carries the mutation probe proving that failure
+# actually happens, which is what makes this a guarantee rather than a claim.
+#
+# Everything below is read on EVERY turn of EVERY run, or is the mechanism that
+# stops a run from stalling / committing ungated. None of it is deferrable.
+spine_has() { grep -qF -- "$2" "$1" 2>/dev/null && echo yes || echo no; }
+
+expect "spine: NON-YIELDING CONTRACT heading"      "$(spine_has "$SPINE_ONLY" '## NON-YIELDING CONTRACT')"            "yes"
+expect "spine: Operating principles heading"       "$(spine_has "$SPINE_ONLY" '## Operating principles')"              "yes"
+expect "spine: Loop rule heading"                  "$(spine_has "$SPINE_ONLY" '## Loop rule (the only exit conditions)')" "yes"
+expect "spine: Effort tiers table"                 "$(spine_has "$SPINE_ONLY" '| Tier     | Range |')"                 "yes"
+expect "spine: Fix-loop budget heading"            "$(spine_has "$SPINE_ONLY" '### Fix-loop budget (mechanically enforced)')" "yes"
+expect "spine: Surfacing protocol heading"         "$(spine_has "$SPINE_ONLY" '## Surfacing protocol')"                 "yes"
+# GATE-A ROUND-2 FINDING: the heading alone was relocation-blind — the round-2 verifier
+# moved the whole 11-line body (all four steps) into a reference and the suite stayed
+# 329/0. Assert the steps, which ARE the contract.
+expect "spine: surfacing step 1 (state write)" \
+  "$(spine_has "$SPINE_ONLY" 'Save current state to `.auto-task/<branch>/STATE.json`, setting `expected_next_action:')" "yes"
+expect "spine: surfacing step 2 (trace entry)"  "$(spine_has "$SPINE_ONLY" '`operation: auto-task:surfaced`')"                "yes"
+expect "spine: surfacing step 3 (why stopped)"  "$(spine_has "$SPINE_ONLY" '**Why stopped** — which loop-rule clause triggered')" "yes"
+expect "spine: surfacing step 4 (no auto-resume)" "$(spine_has "$SPINE_ONLY" 'Do not auto-resume. Wait for the user.')"       "yes"
+
+# The NON-YIELDING contract's two terminal states are the contract; its heading is not.
+expect "spine: non-yielding success terminal"   "$(spine_has "$SPINE_ONLY" '- **Success:** Phase 5 completes (commit landed + PR open')" "yes"
+expect "spine: non-yielding hard-stop terminal" "$(spine_has "$SPINE_ONLY" '- **Hard stop:** a Loop-rule trigger fires')"     "yes"
+
+# The per-transition table is the mapping that tells the model WHICH value to write at
+# each phase point. Relocating it left the suite green in round 2.
+expect "spine: per-transition table header"     "$(spine_has "$SPINE_ONLY" '| Transition / phase point | Set `expected_next_action` to |')" "yes"
+expect "spine: per-transition plan-approval row" "$(spine_has "$SPINE_ONLY" 'Phase 1 plan presented for approval')"           "yes"
+expect "spine: per-transition push-prompt row"  "$(spine_has "$SPINE_ONLY" 'Phase 5 just-before `git push` / `gh pr create`')" "yes"
+expect "spine: Rules heading"                      "$(spine_has "$SPINE_ONLY" '## Rules')"                              "yes"
+
+# The yield-point contract is the anti-stall mechanism: it is consulted at every
+# state write, so it must be inline, table and all.
+expect "spine: Yield-point contract heading"       "$(spine_has "$SPINE_ONLY" '### Yield-point contract')"              "yes"
+# GATE-A FINDING: these were originally `grep -c auto-continue >= 5` and a bare
+# `user-push-prompt` presence check. Both passed on a mutated spine with the ENTIRE
+# four-value table deleted, because `auto-continue` occurs 45 times and
+# `user-push-prompt` 9 times OUTSIDE the table. A location guard must key on text
+# UNIQUE to the contract's body, never on a word the rest of the spine also uses.
+expect "spine: yield table row — auto-continue semantics" \
+  "$(spine_has "$SPINE_ONLY" '| `"auto-continue"` | Pipeline is mid-flight; the model MUST make the next tool call.')" "yes"
+expect "spine: yield table row — user-approval semantics" \
+  "$(spine_has "$SPINE_ONLY" '| `"user-approval"` | A legitimate human gate. Stop hook allows.')"                      "yes"
+expect "spine: yield table row — user-push-prompt semantics" \
+  "$(spine_has "$SPINE_ONLY" '| `"user-push-prompt"` | The single allowed Phase 5 push/PR/hold prompt.')"              "yes"
+expect "spine: yield table row — null semantics" \
+  "$(spine_has "$SPINE_ONLY" '| `null` | Pre-approval or terminal state. Stop hook allows.')"                          "yes"
+expect "spine: yield table four-value preamble" \
+  "$(spine_has "$SPINE_ONLY" 'MUST be one of these four values at all times after')"                                   "yes"
+
+# Loop rule: the HEADING is not the contract — the five clauses are. The heading-only
+# assertion above passed with all five clauses deleted.
+expect "spine: loop clause 1 (progress)"      "$(spine_has "$SPINE_ONLY" '**Progress** — each iteration makes measurable progress')"      "yes"
+expect "spine: loop clause 2 (in-scope)"      "$(spine_has "$SPINE_ONLY" '**In-scope** — remaining issues map to the approved Acceptance Criteria')" "yes"
+expect "spine: loop clause 3 (unblocked)"     "$(spine_has "$SPINE_ONLY" '**Unblocked** — no external blocker')"                          "yes"
+expect "spine: loop clause 4 (no flakiness)"  "$(spine_has "$SPINE_ONLY" '**No test flakiness** — every test failure is reproducible')"   "yes"
+expect "spine: loop clause 5 (diminishing returns)" \
+  "$(spine_has "$SPINE_ONLY" '**Returns have not diminished**')"                                                        "yes"
+
+# Effort tiers: assert the actual cap numbers, not just the table header.
+expect "spine: tier row LIGHT"    "$(spine_has "$SPINE_ONLY" '| LIGHT    | 0-2   |')"    "yes"
+expect "spine: tier row STANDARD" "$(spine_has "$SPINE_ONLY" '| STANDARD | 3-5   |')"    "yes"
+expect "spine: tier row HEAVY"    "$(spine_has "$SPINE_ONLY" '| HEAVY    | 6-8   |')"    "yes"
+
+# The AC correctness core stays inline by explicit design decision: its silent
+# degradation would be the hardest failure in the pipeline to notice.
+expect "spine: Acceptance Criteria contract"       "$(spine_has "$SPINE_ONLY" '**Acceptance Criteria contract (NON-NEGOTIABLE)')" "yes"
+# GATE-A FINDING: the line above asserts only the contract's intro sentence, so the
+# eleven rules it introduces could be relocated with the suite green. Assert the rules.
+expect "spine: AC rule 1 observable"          "$(spine_has "$SPINE_ONLY" '**Observable** — phrased as something a third party can witness')"      "yes"
+expect "spine: AC rule 2 bound to a check"    "$(spine_has "$SPINE_ONLY" '**Bound to a check** —')"                                              "yes"
+expect "spine: AC rule 3 falsifiable"         "$(spine_has "$SPINE_ONLY" '**Falsifiable** —')"                                                   "yes"
+expect "spine: AC rule 4 gate-bound"          "$(spine_has "$SPINE_ONLY" '**Gate-bound** — every row')"                                          "yes"
+expect "spine: AC rule 5 complete"            "$(spine_has "$SPINE_ONLY" '**Complete** — together, the AC rows cover every behavior')"           "yes"
+expect "spine: AC rule 9 local dev first"     "$(spine_has "$SPINE_ONLY" '**Local dev first, then preview** —')"                                  "yes"
+expect "spine: AC rule 6 method is binding"   "$(spine_has "$SPINE_ONLY" '**Verification method is binding**')"                                  "yes"
+expect "spine: AC rule 7 data precondition"   "$(spine_has "$SPINE_ONLY" '**Data precondition is explicit**')"                                   "yes"
+expect "spine: AC rule 8 visual-by-default"   "$(spine_has "$SPINE_ONLY" '**Visual-by-default for UI changes**')"                                "yes"
+expect "spine: AC rule 10 before/after pair"  "$(spine_has "$SPINE_ONLY" 'A before/after pair is REQUIRED to call a visual change done')"         "yes"
+expect "spine: AC rule 11 external actions"   "$(spine_has "$SPINE_ONLY" '**External actions are declared and gated on Phase 8')"                "yes"
+# INCONCLUSIVE floor: its resolution vocabulary is the contract, not its heading.
+expect "spine: floor — verify-now resolution"  "$(spine_has "$SPINE_ONLY" '**Verify now** —')"                                                   "yes"
+expect "spine: floor — descope resolution"     "$(spine_has "$SPINE_ONLY" '**Descope from this run** —')"                                        "yes"
+expect "spine: floor — never PASS never FAIL"  "$(spine_has "$SPINE_ONLY" '**INCONCLUSIVE is never PASS and never FAIL.**')"                      "yes"
+expect "spine: INCONCLUSIVE floor"                 "$(spine_has "$SPINE_ONLY" '**The INCONCLUSIVE floor')"              "yes"
+expect "spine: requirements decomposition"         "$(spine_has "$SPINE_ONLY" '**Requirements decomposition')"          "yes"
+expect "spine: D/R rubric"                         "$(spine_has "$SPINE_ONLY" '**Difficulty / Risk rubric')"            "yes"
+
+# Phase 4 (code review + fix loop) is the anti-stall keystone and stays WHOLLY
+# inline — unlike Phase 3 / Gate A / Gate B, whose bodies moved to a reference.
+# The per-phase "Non-negotiables restated inline" bullets ARE the mitigation the
+# Phase-1 silent-degradation acknowledgment rests on. Round 2 showed they were unguarded.
+expect "spine: P3 non-negotiable — execute every self-verify AC" \
+  "$(spine_has "$SPINE_ONLY" '**Execute EVERY AC row gated `self-verify`**')"                                                "yes"
+expect "spine: P3 non-negotiable — never substitute a weaker method" \
+  "$(spine_has "$SPINE_ONLY" '**Never substitute a weaker method.**')"                                                       "yes"
+expect "spine: P3 non-negotiable — inconclusive blocks the gate" \
+  "$(spine_has "$SPINE_ONLY" 'An `inconclusive` AC is NOT a pass and blocks the gate exactly like a fail.')"                  "yes"
+expect "spine: GateA non-negotiable — short-circuit on fail" \
+  "$(spine_has "$SPINE_ONLY" 'Any `fail` **short-circuits Gate A**')"                                                        "yes"
+expect "spine: GateA non-negotiable — never passes while inconclusive" \
+  "$(spine_has "$SPINE_ONLY" '**`gates.gate_a.passed` never becomes `true` while any AC is recorded `inconclusive`.**')"      "yes"
+expect "spine: GateB non-negotiable — diff the working tree" \
+  "$(spine_has "$SPINE_ONLY" '**Diff the working tree, not HEAD.**')"                                                        "yes"
+expect "spine: Phase 4 heading"                    "$(spine_has "$SPINE_ONLY" '### Phase 4 — Code review + fix loop')"  "yes"
+expect "spine: Phase 4 mandates the review skill"  "$(spine_has "$SPINE_ONLY" 'skill:auto-task-code-review')"           "yes"
+expect "spine: Phase 4 trip-wire retained inline"  "$(spine_has "$SPINE_ONLY" 'Trip-wire test before ending the turn here.')" "yes"
+
+# The trace contract stays inline for a load-bearing reason, not by accident:
+# three sibling skills cite it by section path (auto-task-fix, auto-task-verify,
+# auto-task-code-review all say "orchestrator SKILL.md -> Persistent history &
+# trace contract -> TRACE.md format"). Moving it would dangle those citations.
+expect "spine: trace contract heading"             "$(spine_has "$SPINE_ONLY" '## Persistent history & trace contract')" "yes"
+expect "spine: TRACE.md format subheading"         "$(spine_has "$SPINE_ONLY" '### TRACE.md format')"                    "yes"
+expect "spine: read-before-review contract"        "$(spine_has "$SPINE_ONLY" '### Read-before-review contract')"        "yes"
+
+# Every reference must be reachable from the spine, and the spine must stay under
+# the always-loaded budget. These two are the point of the whole split.
+# GATE-B FINDING: the guards above were HEADING-ONLY for several every-turn contracts, so
+# their bodies could be relocated with the suite green (only the CHANGELOG byte-count
+# assertion fired, and that is not a location guard — its routine repair is to update the
+# number). Gate A round 2 fixed this shape for the Surfacing protocol; the same defect was
+# left in place for the contracts below. Assert their BODIES, keyed on unique text.
+
+# Fix-loop budget: the ack ritual is the user gate that bounds review volume.
+expect "spine: budget loop-count definition"   "$(spine_has "$SPINE_ONLY" '**Loop count** = `max(iteration.fix, iteration.review)`')"        "yes"
+expect "spine: budget effective-budget rule"   "$(spine_has "$SPINE_ONLY" '**Effective budget** = `max(cap, gates.loop_budget.acked_through)`')" "yes"
+expect "spine: budget ack is a USER gate"      "$(spine_has "$SPINE_ONLY" 'this is a user gate, not a self-serve flag')"                     "yes"
+expect "spine: budget ack records acked_through" "$(spine_has "$SPINE_ONLY" 'gates.loop_budget = { acked_through:')"                         "yes"
+
+# Stop-hook decision algorithm: this three-branch rule IS the anti-stall mechanism.
+expect "spine: stop-hook allow on done"        "$(spine_has "$SPINE_ONLY" '`phase === "done"` → allow stop.')"                             "yes"
+expect "spine: stop-hook allow pre-approval"   "$(spine_has "$SPINE_ONLY" '`approved !== true` → allow stop.')"                              "yes"
+expect "spine: stop-hook blocks otherwise"     "$(spine_has "$SPINE_ONLY" 'allow only when `expected_next_action ∈ {"user-approval", "user-push-prompt"}')" "yes"
+
+# TRACE.md format: three sibling skills cite this block by section path, so its BODY (the
+# field list), not just its heading, must stay inline.
+expect "spine: trace field Phase / context"    "$(spine_has "$SPINE_ONLY" '- **Phase / context:**')"                                         "yes"
+expect "spine: trace field Outcome"            "$(spine_has "$SPINE_ONLY" '- **Outcome:** <pass | fail | partial | surfaced | no-op>')"      "yes"
+expect "spine: trace field Artifacts produced" "$(spine_has "$SPINE_ONLY" '- **Artifacts produced:**')"                                      "yes"
+
+# Read-before-review contract: the numbered steps are what downstream tools must follow.
+expect "spine: read-before-review step 1"      "$(spine_has "$SPINE_ONLY" '1. **Discover.** `git branch --show-current`')"                    "yes"
+expect "spine: read-before-review step 2"      "$(spine_has "$SPINE_ONLY" '2. **Read CONTEXT.md**')"                                          "yes"
+expect "spine: read-before-review step 3"      "$(spine_has "$SPINE_ONLY" '3. **Read TRACE.md**')"                                            "yes"
+
+# Rules: the commit-hygiene rules are the last line of defence before a bad commit.
+expect "spine: rule AC mandatory"              "$(spine_has "$SPINE_ONLY" '- **Acceptance Criteria are mandatory and load-bearing.**')"        "yes"
+expect "spine: rule expected_next_action"      "$(spine_has "$SPINE_ONLY" '- **`expected_next_action` is mandatory and mechanically enforced.**')" "yes"
+expect "spine: rule never commit .auto-task"   "$(spine_has "$SPINE_ONLY" '- **Never commit anything under `.auto-task/`.**')"                 "yes"
+expect "spine: rule never commit others work"  "$(spine_has "$SPINE_ONLY" "- **Never commit other people's pre-staged work.**")"            "yes"
+
+# GATE-B ROUND-2 FINDING: every guard above is a hand-curated instance, so a contract
+# NOT on the list could be relocated with the suite green. Gate B demonstrated it on
+# `### Single-commit rule (NON-NEGOTIABLE)` and on all of Phase 2: inventory stayed clean
+# (`missing=0 duplicated=0 restated=0`), directives stayed 7/7, every other suite stayed
+# green, and the ONLY failure was the CHANGELOG byte-count pin — which is a doc-freshness
+# check, not a location guard, and which anyone doing the relocation would update in the
+# same edit. So R10's guarantee did not hold for the class.
+#
+# This manifest closes it structurally: it pins the COMPLETE set of headings that must
+# live in the always-loaded spine. The last two entries sit inside fenced examples (the
+# AC-table template and the TRACE-entry block format) rather than being sections in their
+# own right — they are pinned because those templates are themselves spine contracts that
+# downstream tools and three sibling skills reproduce verbatim. A relocation of any of them fails here regardless of
+# whether someone remembered to add a bespoke guard for it.
+spine_manifest() {
+  cat <<'MANIFEST'
+## NON-YIELDING CONTRACT (read first — the highest-priority rule in this skill)
+## Operating principles
+## Loop rule (the only exit conditions)
+## Effort tiers
+### Fix-loop budget (mechanically enforced)
+## Inputs
+### Resume (no-args) dispatch
+## State file
+### Yield-point contract (mechanical anti-stall enforcement)
+## User settings
+## Autonomy modes & the merge gate
+## Comment voice
+## Pipeline
+### Phase 1 — Define (HUMAN GATE)
+### Single-commit rule (NON-NEGOTIABLE)
+### Phase 2 — Execute (auto, NO COMMIT)
+### Phase 3 — Self-verify (auto, NO COMMIT)
+### Gate A — Independent verifier (auto, NO COMMIT)
+### Phase 4 — Code review + fix loop (auto, NO COMMIT)
+### Gate B — Adversarial verifier (auto, NO COMMIT)
+### Phase 5 — Handover (auto, SINGLE COMMIT)
+### Phase 6 — PR bot-comment review & conservative fix (auto, GATED, opt-in)
+### Phase 7 — Preview verification & final verdict (auto, GATED, NO new authored commit)
+### Phase 8 — External change application & verification (auto, GATED, NO new authored commit)
+### Phase 9 — Release (auto, GATED, opt-in, ONE additional authored commit)
+## Persistent history & trace contract
+### Folder layout (per branch)
+### TRACE.md format
+### When to append a trace entry
+### Read-before-review contract
+### Pruning
+## Surfacing protocol (when loop rule triggers)
+## Rules
+## Acceptance Criteria
+## <ISO-8601 timestamp> · <operation> · <source>
+MANIFEST
+}
+missing_sections=0
+while IFS= read -r _sec; do
+  [ -n "$_sec" ] || continue
+  grep -qxF "$_sec" "$SPINE_ONLY" || { missing_sections=$((missing_sections+1)); printf '        MISSING FROM SPINE: %s\n' "$_sec" >&2; }
+done < <(spine_manifest)
+expect "spine: complete section manifest present (none relocated)" "$missing_sections" "0"
+expect "spine: manifest covers every spine heading (no unlisted section)" \
+  "$(comm -13 <(spine_manifest | LC_ALL=C sort) <(grep -E '^#{2,3} ' "$SPINE_ONLY" | LC_ALL=C sort -u) | wc -l | tr -d ' ')" "0"
+
+# Bodies of the two sections Gate B actually relocated, so the manifest is not the only
+# thing standing between a demotion and a green suite.
+expect "spine: single-commit rule body — phases that do NOT commit" \
+  "$(spine_has "$SPINE_ONLY" '**Phases 2, 3, Gate A, Phase 4, and Gate B do NOT commit.**')"                    "yes"
+expect "spine: single-commit rule body — one authored commit" \
+  "$(spine_has "$SPINE_ONLY" 'Phase 5 produces exactly one **authored** commit')"                               "yes"
+expect "spine: phase-2 body — drift checkpoint" \
+  "$(spine_has "$SPINE_ONLY" '<!-- DRIFT CHECKPOINT -->')"                                                      "yes"
+expect "spine: phase-2 body — out-of-scope drift surfaces" \
+  "$(spine_has "$SPINE_ONLY" 'treat as out-of-scope per Loop rule clause 2')"                                   "yes"
+
+# GATE-B ROUND-3 FINDING: the manifest above only checks that the heading LINE is present,
+# so a heading-KEPT body relocation slipped through — which is the shape a real carve takes.
+# Reproduced: moving the BODY of `## Comment voice`, `## Operating principles` or
+# `## Autonomy modes & the merge gate` into a reference left conservation clean, the manifest
+# satisfied, and exactly ONE failure — the CHANGELOG byte pin — after which the routine
+# resync that the pin's own comment invites made the suite FULLY GREEN. Body guards existed
+# for only the two sections round 2 happened to demonstrate.
+#
+# This floor closes the class for every section at once: each spine section must retain at
+# least half its current non-blank body lines. Normal editing passes; wholesale relocation
+# (which drops a body to ~0) cannot. Floors are a ratchet — raise them deliberately, never
+# lower one to make a relocation pass.
+spine_body_floors() {
+  cat <<'FLOORS'
+8|## NON-YIELDING CONTRACT (read first — the highest-priority rule in this skill)
+8|## Operating principles
+5|## Loop rule (the only exit conditions)
+4|## Effort tiers
+5|### Fix-loop budget (mechanically enforced)
+1|## Inputs
+2|### Resume (no-args) dispatch
+62|## State file
+35|### Yield-point contract (mechanical anti-stall enforcement)
+2|## User settings
+6|## Autonomy modes & the merge gate
+4|## Comment voice
+0|## Pipeline
+47|### Phase 1 — Define (HUMAN GATE)
+3|### Single-commit rule (NON-NEGOTIABLE)
+6|### Phase 2 — Execute (auto, NO COMMIT)
+5|### Phase 3 — Self-verify (auto, NO COMMIT)
+4|### Gate A — Independent verifier (auto, NO COMMIT)
+11|### Phase 4 — Code review + fix loop (auto, NO COMMIT)
+4|### Gate B — Adversarial verifier (auto, NO COMMIT)
+10|### Phase 5 — Handover (auto, SINGLE COMMIT)
+3|### Phase 6 — PR bot-comment review & conservative fix (auto, GATED, opt-in)
+4|### Phase 7 — Preview verification & final verdict (auto, GATED, NO new authored commit)
+4|### Phase 8 — External change application & verification (auto, GATED, NO new authored commit)
+4|### Phase 9 — Release (auto, GATED, opt-in, ONE additional authored commit)
+0|## Persistent history & trace contract
+6|### Folder layout (per branch)
+11|### TRACE.md format
+3|### When to append a trace entry
+4|### Read-before-review contract
+0|### Pruning
+4|## Surfacing protocol (when loop rule triggers)
+6|## Rules
+FLOORS
+}
+thin_sections=0
+while IFS='|' read -r _floor _sec; do
+  [ -n "$_sec" ] || continue
+  _start="$(grep -nxF "$_sec" "$SPINE_ONLY" | head -1 | cut -d: -f1)"
+  [ -n "$_start" ] || continue   # absence is the manifest check's job, not this one's
+  _body="$(awk -v s="$_start" 'NR<=s {next} /^```/ {f=!f; next} f {print; next} /^#{2,3} / {exit} {print}' "$SPINE_ONLY" | grep -c '[^[:space:]]')"
+  if [ "$_body" -lt "$_floor" ]; then
+    thin_sections=$((thin_sections+1))
+    printf '        BODY TOO THIN IN SPINE: %s (%s non-blank lines, floor %s)\n' "$_sec" "$_body" "$_floor" >&2
+  fi
+done < <(spine_body_floors)
+expect "spine: every section retains its body (no heading-kept relocation)" "$thin_sections" "0"
+
+expect "spine: references/ dir exists"             "$([ -d "$HOOKS/../skills/auto-task/references" ] && echo yes || echo no)" "yes"
+# What matters is that EVERY reference file is cited, not the raw directive count
+# (several phases carry more than one directive, which is fine and not brittle).
+expect "spine: every reference is cited by a directive" \
+  "$(grep -o 'references/[a-z0-9-]*\.md' "$SPINE_ONLY" | sort -u | wc -l | tr -d ' ')"                                "7"
+expect "spine: at least one directive per reference"    \
+  "$([ "$(grep -c '\*\*MANDATORY READ' "$SPINE_ONLY")" -ge 7 ] && echo yes || echo no)"                               "yes"
+# The CHANGELOG quotes the spine's byte size, and that number drifted out of date twice
+# during this change (each re-carve shifts it). Pin it to reality so it cannot rot again.
+# GATE-B ROUND-2 FINDING: the byte-size claim was pinned but the two assertion COUNTS one
+# line either side of it were not, and both had rotted 3x stale (26 vs 47, 26 vs 95) across
+# seven fix rounds. Pin them too — a published release note for a marketplace plugin should
+# not understate its own guard coverage.
+expect "spine: CHANGELOG spec-helper count is current" \
+  "$(grep -oE '`tests/spec-helper\.test\.sh`\*\* — [0-9]+ assertions' "$HOOKS/../CHANGELOG.md" | grep -oE '[0-9]+')" \
+  "$(bash "$HOOKS/../tests/spec-helper.test.sh" </dev/null 2>&1 | grep -oE '[0-9]+ passed' | head -1 | grep -oE '[0-9]+')"
+expect "spine: CHANGELOG spine-guard count is current" \
+  "$(grep -oE 'enforcement-spine\.test\.sh`\*\* \(([0-9]+) assertions' "$HOOKS/../CHANGELOG.md" | grep -oE '[0-9]+')" \
+  "$(grep -cE '^expect "spine: ' "$HOOKS/../tests/enforcement-spine.test.sh" | tr -d ' ')"
+
+# GATE-B ROUND-4 FINDING: README carried its own size claim and its own "no behavior
+# change" assertion, and neither was pinned — the CHANGELOG's equivalent number had already
+# rotted twice. README is the marketplace-published doc, so pin its number too.
+expect "spine: README size claim matches the actual spine" \
+  "$(grep -oE '\*\*[0-9,]+ B to [0-9,]+ B' "$HOOKS/../README.md" | head -1 | sed 's/.* to //' | tr -d ', B')" \
+  "$(wc -c < "$SPINE_ONLY" | tr -d ' ')"
+expect "spine: README does not claim a pure no-behavior-change move" \
+  "$(grep -c 'with no behavior change: the content is relocated' "$HOOKS/../README.md")" "0"
+
+expect "spine: CHANGELOG size claim matches the actual spine" \
+  "$(grep -oE '\*\*[0-9,]+ B spine\*\*' "$HOOKS/../CHANGELOG.md" | head -1 | tr -d '*, B spine' )" \
+  "$(wc -c < "$SPINE_ONLY" | tr -d ' ')"
+
+expect "spine: under the 120 KB budget"            "$([ "$(wc -c < "$SPINE_ONLY")" -le 122880 ] && echo yes || echo no)" "yes"
+# CO-LOCATION — positionally-coupled prose must stay in ONE file, or an ordering
+# assertion silently degrades into a meaningless cross-file line comparison.
+# Phase 5's three step anchors are the live case (tests/docs-step.test.sh indexes
+# on them with a +40-line window and two `-lt` comparisons).
+expect "spine: phase-5 anchors co-located (1b vs main-sync)" \
+  "$(spec_same_file '1b. **Docs update' 'Pre-commit main-sync' && echo yes || echo no)"              "yes"
+expect "spine: phase-5 anchors co-located (1b vs diagram)" \
+  "$(spec_same_file '1b. **Docs update' '2. **Build the change diagram' && echo yes || echo no)"     "yes"
+expect "spine: phase-5 anchor order preserved" \
+  "$(spec_before '1b. **Docs update' 'Pre-commit main-sync' && echo yes || echo no)"                 "yes"
+# CODE-REVIEW FINDING: the guards above covered only the Phase-5 `1b` trio. Two more
+# live positional pairs existed with no co-location assertion; if a future carve
+# separated either, the `-lt` comparison would become a meaningless cross-file compare.
+expect "spine: clarify-router anchors co-located" \
+  "$(spec_same_file 'Resume short-circuit (checked before the router)' 'Step 4a — routing question' && echo yes || echo no)" "yes"
+expect "spine: phase-5 docs sub-step anchors co-located" \
+  "$(spec_same_file '5. **Authorize the edited paths' '6. **Re-pass the gates' && echo yes || echo no)"   "yes"
+# `6. **Re-pass the gates` is AMBIGUOUS across the spec (it also occurs in
+# phase-9-release.md), so pin the count: if a third copy appears, the anchor becomes
+# order-dependent and callers must switch to an owning-file grep.
+expect "spine: re-pass-the-gates anchor occurs exactly twice" "$(spec_count '6. **Re-pass the gates')" "2"
+
+expect "spine: no cross-boundary restatement" \
+  "$(bash "$HOOKS/../tests/spec-inventory.sh" 2>&1 | grep -oE 'restated=[0-9]+')"                    "restated=0"
+
+expect "spine: structural inventory clean"         "$(bash "$HOOKS/../tests/spec-inventory.sh" >/dev/null 2>&1 && echo yes || echo no)" "yes"
+expect "spine: directives land in owning sections" "$(bash "$HOOKS/../tests/spec-inventory.sh" --directives >/dev/null 2>&1 && echo yes || echo no)" "yes"
 
 # restore a sane state file for anything appended after this block
 printf '%s' '{"approved":true,"phase":"review","expected_next_action":"auto-continue"}' > "$ST"

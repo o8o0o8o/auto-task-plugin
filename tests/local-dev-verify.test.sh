@@ -18,7 +18,14 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SKILL="$ROOT/skills/auto-task/SKILL.md"
+# Spec search is union-scoped: the auto-task spec is a spine
+# (skills/auto-task/SKILL.md) plus skills/auto-task/references/*.md. $SKILL below is a
+# regenerated temp concatenation of both, so the assertions in this file keep resolving
+# wherever their prose lives. See tests/lib/spec.sh for the semantics.
+. "$ROOT/tests/lib/spec.sh"
+spec_concat_into SKILL
+SPINE_ONLY="$ROOT/skills/auto-task/SKILL.md"   # for spine-only assertions
+
 SETTINGS="$ROOT/hooks/settings.sh"
 README="$ROOT/README.md"
 

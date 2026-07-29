@@ -16,7 +16,14 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SKILL="$ROOT/skills/auto-task/SKILL.md"
+# Spec search is union-scoped: the auto-task spec is a spine
+# (skills/auto-task/SKILL.md) plus skills/auto-task/references/*.md. $SKILL below is a
+# regenerated temp concatenation of both, so the assertions in this file keep resolving
+# wherever their prose lives. See tests/lib/spec.sh for the semantics.
+. "$ROOT/tests/lib/spec.sh"
+spec_concat_into SKILL
+SPINE_ONLY="$ROOT/skills/auto-task/SKILL.md"   # for spine-only assertions
+
 ARCH="$ROOT/skills/auto-task/ARCHITECTURE.md"
 DOCS="$ROOT/skills/auto-task-docs/SKILL.md"
 SETTINGS="$ROOT/hooks/settings.sh"
@@ -84,18 +91,22 @@ expect "spec: preflight no longer demands seven" "$(grep -c 'all seven composed 
 # Ordering is load-bearing: after the stage step, docs edits would miss the
 # single handover commit entirely.
 expect "phase5: step 1b present"             "$(grep -c '^1b\. \*\*Docs update' "$SKILL")" "1"
-docs_at="$(grep -n '^1b\. \*\*Docs update' "$SKILL" | head -1 | cut -d: -f1)"
-stage_at="$(grep -n 'Pre-commit main-sync' "$SKILL" | head -1 | cut -d: -f1)"
-diagram_at="$(grep -n '^2\. \*\*Build the change diagram' "$SKILL" | head -1 | cut -d: -f1)"
+# Positional/region assertions must read the file that OWNS the prose, not the union
+# concatenation: the section heading stayed in the spine while its body moved to a
+# reference, so a first-match anchor on $SKILL would land on the spine summary.
+P5REF="$ROOT/skills/auto-task/references/phase-5-handover.md"
+docs_at="$(grep -n '^1b\. \*\*Docs update' "$P5REF" | head -1 | cut -d: -f1)"
+stage_at="$(grep -n 'Pre-commit main-sync' "$P5REF" | head -1 | cut -d: -f1)"
+diagram_at="$(grep -n '^2\. \*\*Build the change diagram' "$P5REF" | head -1 | cut -d: -f1)"
 expect "phase5: 1b precedes staging"         "$([ -n "$docs_at" ] && [ -n "$stage_at" ] && [ "$docs_at" -lt "$stage_at" ] && echo yes || echo no)" "yes"
 expect "phase5: 1b precedes change diagram"  "$([ -n "$docs_at" ] && [ -n "$diagram_at" ] && [ "$docs_at" -lt "$diagram_at" ] && echo yes || echo no)" "yes"
 
 # --- Phase 5 step 1b: the four components it must name ----------------------
 for n in auto-task-docs auto-task-verify auto-task-code-review reviewed_diff_sha; do
-  expect "phase5 1b names $n" "$(sed -n "${docs_at},$((docs_at+40))p" "$SKILL" | grep -cF "$n" | awk '{print ($1>0)?"yes":"no"}')" "yes"
+  expect "phase5 1b names $n" "$(sed -n "${docs_at},$((docs_at+40))p" "$P5REF" | grep -cF "$n" | awk '{print ($1>0)?"yes":"no"}')" "yes"
 done
 expect "phase5 1b: Gate B reset on STANDARD/HEAVY" \
-  "$(sed -n "${docs_at},$((docs_at+40))p" "$SKILL" | grep -cF 'gates.gate_b.passed = false' | awk '{print ($1>0)?"yes":"no"}')" "yes"
+  "$(sed -n "${docs_at},$((docs_at+40))p" "$P5REF" | grep -cF 'gates.gate_b.passed = false' | awk '{print ($1>0)?"yes":"no"}')" "yes"
 
 # --- the four behavioral guarantees of step 1b -------------------------------
 expect "1b: unknown value reads as skip"     "$(has "$SKILL" 'Any unrecognized value')"                    "yes"
@@ -223,7 +234,7 @@ expect "docs skill has an invocation-mode gate"  "$(has "$DOCS" 'Read the invoca
 expect "docs skill: report-only is a hard stop"  "$(has "$DOCS" 'In `report-only` mode, STOP HERE')"    "yes"
 expect "docs skill: apply step is mode-guarded"  "$(has "$DOCS" '**`apply` mode only**')"               "yes"
 expect "1b invokes report-only first"            "$(has "$SKILL" 'explicitly in `report-only` mode')"   "yes"
-p5_region="$(awk '/^1\. \*\*Verify gates\*\*/,/^2\. \*\*Build the change diagram/' "$SKILL")"
+p5_region="$(awk '/^1\. \*\*Verify gates\*\*/,/^2\. \*\*Build the change diagram/' "$P5REF")"
 apply_sites="$(printf '%s' "$p5_region" | grep -o 'in \*\*`apply`\*\* mode' | grep -c .)"
 expect "1b re-invokes apply at all 3 sites"      "$apply_sites"                                         "3"
 # Gate B #2: a plain diff hides untracked files — the new-capability staleness
@@ -310,8 +321,12 @@ expect "recovery covers both gate flags"          "$(has "$SKILL" 'if **either**
 # the created file or is invalidated by it (hard-blocking the commit).
 expect "authorize precedes the re-gate"           "$(has "$SKILL" 'BEFORE the re-gate (REQUIRED; ordering is load-bearing)')" "yes"
 expect "intent-to-add lands before the sha pin"   "$(has "$SKILL" 'before sub-step 6 pins the sha')"                 "yes"
-auth_at="$(grep -n '^   5\. \*\*Authorize the edited paths' "$SKILL" | head -1 | cut -d: -f1)"
-regate_at="$(grep -n '^   6\. \*\*Re-pass the gates' "$SKILL" | head -1 | cut -d: -f1)"
+# Anchor on the OWNING reference, not the union concat: `6. **Re-pass the gates`
+# also occurs in references/phase-9-release.md, so a first-match on the concat
+# resolves to phase-5 only by spec_files sort order — a rename could silently
+# repoint it at phase-9 and make the ordering assertion meaningless.
+auth_at="$(grep -n '^   5\. \*\*Authorize the edited paths' "$P5REF" | head -1 | cut -d: -f1)"
+regate_at="$(grep -n '^   6\. \*\*Re-pass the gates' "$P5REF" | head -1 | cut -d: -f1)"
 expect "sub-step order: 5 authorize < 6 re-gate" \
   "$([ -n "$auth_at" ] && [ -n "$regate_at" ] && [ "$auth_at" -lt "$regate_at" ] && echo yes || echo no)" "yes"
 # #5: the sibling skill Phase 5 composes right after the docs ask no longer claims

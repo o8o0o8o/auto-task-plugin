@@ -102,7 +102,20 @@ auto-task can run in two modes, chosen once per project in a **first-run setup**
 
 ## What it ships
 
-- **`auto-task` skill** — the orchestrator. Composes the eight bundled sibling skills and the verifier agent across the pipeline (Define → Execute → Self-verify → Review → Handover, plus the optional post-push Preview-verification and Release phases).
+- **`auto-task` skill** — the orchestrator. Composes the eight bundled sibling skills and the verifier agent across the pipeline (Define → Execute → Self-verify → Review → Handover, plus the optional post-push Preview-verification and Release phases). Ships as a **spine plus reference files** — see below.
+- **`skills/auto-task/references/` — the spec's on-demand half.** Only `SKILL.md` is loaded into context on every turn of every run, so the spec is split: `SKILL.md` is the always-loaded **spine** (the pipeline, the loop rule, the effort tiers, the yield-point/anti-stall contract, the Acceptance-Criteria contract and INCONCLUSIVE floor, the trace contract, and each phase's gate condition + non-negotiables), while the bulky step-by-step contracts live in seven reference files the spine points at with a `**MANDATORY READ:**` directive at the point of use:
+
+  | Reference | Carries |
+  |---|---|
+  | `phase-1-preamble.md` | Phase 1's procedural steps, AC pre-flight, the critique loop, the risk disclaimer, comment-voice resolution |
+  | `phase-3-gates.md` | Phase 3 (self-verify), Gate A, Gate B — full contracts |
+  | `phase-5-handover.md` | All twelve Phase-5 handover steps + the single-commit rule's exceptions |
+  | `phase-6-8-post-pr.md` | Phases 6 (bot review), 7 (preview), 8 (external changes) |
+  | `phase-9-release.md` | Phase 9 (release) |
+  | `settings.md` | The full settings-key table, two-scope merge, remote telemetry, autonomy sub-contracts |
+  | `state-schema.md` | `STATE.json` per-object semantics |
+
+  This cut the always-loaded spine from **397,676 B to 122,163 B (−69.3%)** — roughly 97k tokens down to ~30k on every turn. **Every line of the original spec is preserved byte-for-byte**, so no contract was dropped or reworded. It is not a *pure* move, though: 138 of the spine's 621 non-blank lines are freshly written per-phase summaries and `MANDATORY READ` directives, and since this spec *is* the behavior, treat that as a real (if narrow) behavioral surface. Reviewing this change caught several summaries that over-generalised their source contract; the guards described below exist to keep that class from recurring. Two guards keep it honest: `tests/spec-inventory.sh` proves every base line survives somewhere and no heading is duplicated, and `tests/enforcement-spine.test.sh` asserts the must-stay contracts are in **`SKILL.md` specifically** (with a mutation probe in `tests/spec-helper.test.sh` proving those assertions really fail if the content is moved). Test assertions search the spine *and* the references via `tests/lib/spec.sh`, so a future boundary adjustment costs no test churn.
 - **`hooks/settings.sh` — project settings (opt-in).** Reads a per-project, per-user JSON settings file kept **outside your repo** (`~/.claude/auto-task/<project-key>/settings.json`), with a built-in default for every key. First key: `has_preview_deployment`, which turns on the post-push preview verification. See "Project settings (opt-in)" below. Pure, fail-open, `tests/settings.test.sh`.
 - **Eight namespaced sibling skills** — `auto-task-plan`, `auto-task-implement`, `auto-task-verify`, `auto-task-code-review`, `auto-task-commit`, `auto-task-fix`, `auto-task-docs`, `auto-task-release`. The first six are forked from the upstream skills and patched to participate in the read-before-review contract; `auto-task-docs` and `auto-task-release` are new to this plugin (the two optional steps — see "Docs update at handover" and "Release at handover"). The `auto-task-` prefix keeps them distinct from your existing `/plan`, `/verify`, etc.; under a marketplace install they are further namespaced (`auto-task:auto-task-plan`), and under the `install.sh` fallback they keep the bare `auto-task-plan` form.
 - **`task-execution-verifier` agent** — read-only verifier spawned at Gate A (completeness) and Gate B (adversarial). Fresh context per spawn.

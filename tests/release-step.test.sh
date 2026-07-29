@@ -21,7 +21,14 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SKILL="$ROOT/skills/auto-task/SKILL.md"
+# Spec search is union-scoped: the auto-task spec is a spine
+# (skills/auto-task/SKILL.md) plus skills/auto-task/references/*.md. $SKILL below is a
+# regenerated temp concatenation of both, so the assertions in this file keep resolving
+# wherever their prose lives. See tests/lib/spec.sh for the semantics.
+. "$ROOT/tests/lib/spec.sh"
+spec_concat_into SKILL
+SPINE_ONLY="$ROOT/skills/auto-task/SKILL.md"   # for spine-only assertions
+
 ARCH="$ROOT/skills/auto-task/ARCHITECTURE.md"
 REL="$ROOT/skills/auto-task-release/SKILL.md"
 SETTINGS="$ROOT/hooks/settings.sh"
@@ -40,7 +47,11 @@ has(){ grep -qF "$2" "$1" 2>/dev/null && echo yes || echo no; }
 # (that bug bit twice in this file: `$enum` and `$p9_region`). Keep new region/segment
 # captures HERE, not inline next to their first use — and delete any that stop being
 # used, so a stale capture cannot quietly become an empty string feeding an assertion.
-p9_region="$(awk '/^### Phase 9 — Release/,/^## Persistent history/' "$SKILL")"
+# Positional/region assertions must read the file that OWNS the prose, not the union
+# concatenation: the section heading stayed in the spine while its body moved to a
+# reference, so a first-match anchor on $SKILL would land on the spine summary.
+P9REF="$ROOT/skills/auto-task/references/phase-9-release.md"
+p9_region="$(cat "$P9REF")"
 
 echo "================ release step ===================="
 
@@ -358,11 +369,15 @@ expect "marker: descoped named only as legacy"  "$(printf '%s' "$p9_region" | gr
 # enumerations, so this check is correspondingly simpler — and still derives BOTH
 # sides from the file. FAIL CLOSED: any extraction failure prints a sentinel, so a
 # drifted anchor cannot silently switch the check off.
-closure_gaps="$(python3 - "$SKILL" <<'PYCLOSURE'
+closure_gaps="$(python3 - "$SKILL" "$P9REF" <<'PYCLOSURE'
 import io,re,sys
 try:
     s=io.open(sys.argv[1],encoding='utf-8').read()
-    p9=s[s.index('### Phase 9 — Release'):s.index('## Persistent history')]
+    # The Phase-9 HEADING stays in the always-loaded spine while its body lives in
+    # references/phase-9-release.md, so slicing the union between the heading and the
+    # next spine heading would capture only the spine summary. Read the owning
+    # reference instead; the status enum still comes from the state schema in `s`.
+    p9=io.open(sys.argv[2],encoding='utf-8').read()
     m=re.search(r'"status": "(skipped-disabled\|skipped-invalid-value[^"]*)"', s)
     if not m:
         print('EXTRACTION-FAILED: release status enum not found'); raise SystemExit(0)
@@ -832,7 +847,9 @@ expect "state: no hook reads the object"       "$(has "$SKILL" '**No hook reads 
 # --- the run-state hooks handle phase=release, with NO hook edited ---------
 # Independent of every grep above: build a synthetic release-phase STATE and run
 # the three hooks that parse run state against it.
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+# Chain the spec-concat cleanup: this trap is set AFTER spec_concat_into, so a bare
+# trap here would clobber the cleanup it registered.
+tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"; _spec_concat_cleanup' EXIT
 (
   cd "$tmp" || exit 1
   git init -q . 2>/dev/null
