@@ -136,6 +136,7 @@ Paths below are absolute and point at this clone ($REPO_ROOT).
       {
         "matcher": "Bash",
         "hooks": [
+          { "type": "command", "command": "$REPO_ROOT/hooks/stamp-run-clock.sh" },
           { "type": "command", "command": "$REPO_ROOT/hooks/block-ai-attribution.sh" },
           { "type": "command", "command": "$REPO_ROOT/hooks/enforce-gates.sh" },
           { "type": "command", "command": "$REPO_ROOT/hooks/warn-checkout-drift.sh" },
@@ -147,6 +148,7 @@ Paths below are absolute and point at this clone ($REPO_ROOT).
       {
         "matcher": "",
         "hooks": [
+          { "type": "command", "command": "$REPO_ROOT/hooks/stamp-run-clock.sh" },
           { "type": "command", "command": "$REPO_ROOT/hooks/prevent-mid-protocol-stall.sh" },
           { "type": "command", "command": "$REPO_ROOT/hooks/record-outcome.sh" },
           { "type": "command", "command": "$REPO_ROOT/hooks/send-telemetry.sh" }

@@ -111,6 +111,49 @@ if [ -z "$plugin_version" ]; then
 fi
 [ -n "$plugin_version" ] || plugin_version="unknown"
 
+# --- Resolve the MEASURED run duration ----------------------------------------
+# The duration used to come from the first and last `state.history[].at` strings,
+# which the model writes without access to a clock — a narrated number, not a
+# measured one. It now comes from the hook-stamped run clock
+# (.auto-task/<branch>/.run-clock.json, written by stamp-run-clock.sh from
+# `date -u`), with the history formula kept ONLY as the fallback for a run that
+# has no clock (a legacy or in-flight run).
+#
+# THREE STATES, not two — and this is load-bearing. jq's `//` treats `null`
+# exactly like absent, so a duration deliberately REJECTED to `null` by the
+# sanity assertion would fall straight through `(.actuals.duration_min // $dur)`
+# to the history-derived number, fabricating the very value the assertion exists
+# to forbid. So the verdict is passed as a VALUE plus a STATE, and the jq below
+# branches on the state:
+#   ok       -> the clock value wins
+#   rejected -> null, and NEVER the history fallback
+#   absent   -> the pre-existing history formula, unchanged
+# The definition (including the negative / >12h bounds) lives in
+# hooks/lib/run-clock.sh so all three DERIVE sites cannot drift apart.
+#
+# Fail-open: if the helper cannot be sourced, the state stays `absent` and this
+# hook behaves exactly as it did before the run clock existed.
+#
+# STAMP BEFORE READING — do not rely on the `Stop` stamper having run first. Hooks
+# for one event execute in PARALLEL, so registration order is not an
+# execution-order contract: a reader that only read could race the stamper's write
+# and record a row whose `updated_at` predates the final (and typically longest)
+# turn, which the write-once sentinel above would then make permanent. `rc_stamp`
+# is idempotent, seals a `done` run, and refuses to start a clock for a run that
+# was already over — so calling it here is safe and makes the guarantee local
+# instead of assumed.
+clock_state="absent"; clock_dur="null"
+if [ -f "$SCRIPT_DIR/lib/run-clock.sh" ]; then
+  # shellcheck source=lib/run-clock.sh
+  if . "$SCRIPT_DIR/lib/run-clock.sh" 2>/dev/null && command -v rc_duration_min >/dev/null 2>&1; then
+    _rc_clock="$(rc_clock_path "$state")"
+    rc_stamp "$_rc_clock" "$state" 2>/dev/null || true
+    _rc_verdict="$(rc_duration_min "$_rc_clock" "$state" 2>/dev/null || echo absent)"
+    clock_state="$(rc_verdict_state "$_rc_verdict")"
+    clock_dur="$(rc_verdict_value "$_rc_verdict")"
+  fi
+fi
+
 # --- Derive the one-line row from STATE.json ----------------------------------
 # Every field guarded with a default so a partial/legacy state never errors.
 # Free-text fields are length-capped (task ~140, gate_b ~120). The row now also
@@ -140,6 +183,8 @@ fi
 # which predate the marker; the reader checks both.
 row="$(jq -c \
   --arg plugin_version "$plugin_version" \
+  --argjson clock_dur "$clock_dur" \
+  --arg clock_state "$clock_state" \
   '
   (.history // []) as $h
   | ($h | map(.at // empty)) as $ats
@@ -147,7 +192,11 @@ row="$(jq -c \
   | ($ats | last) as $t1
   | (if ($t0 != null and $t1 != null)
        then (((($t1 | fromdateiso8601?) // 0) - (($t0 | fromdateiso8601?) // 0)) / 60 | floor)
-       else 0 end) as $dur
+       else 0 end) as $hdur
+  | (if $clock_state == "ok" then $clock_dur
+     elif $clock_state == "rejected" then null
+     else $hdur end) as $dur
+  | (if $clock_state == "absent" then (.actuals.duration_min // $dur) else $dur end) as $adur
   | {
       at: ($t1 // ""),
       branch: (.branch // ""),
@@ -170,7 +219,7 @@ row="$(jq -c \
       est_tokens_scale: (if ((.estimate.tokens_output // null) != null) then "output"
                          elif ((.estimate.tokens_total // null) != null) then "total"
                          else null end),
-      act_duration_min: (.actuals.duration_min // $dur),
+      act_duration_min: $adur,
       act_tokens: (.actuals.tokens_total // null),
       act_tokens_output: (.actuals.tokens_breakdown.output // null),
       defects_early: (.quality.defects.early // 0),

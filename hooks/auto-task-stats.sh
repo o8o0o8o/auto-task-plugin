@@ -38,6 +38,21 @@
 
 set -uo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+
+# --- The run clock (fail-open) -------------------------------------------------
+# Supplies the MEASURED duration for live STATE.json files below. Archived ledger
+# rows already carry their own `duration_min`, so only the live path needs this.
+# If the helper cannot be sourced, RC_AVAILABLE stays 0 and every live row falls
+# back to the history-timestamp formula — exactly the pre-clock behavior.
+RC_AVAILABLE=0
+if [ -f "$SCRIPT_DIR/lib/run-clock.sh" ]; then
+  # shellcheck source=lib/run-clock.sh
+  if . "$SCRIPT_DIR/lib/run-clock.sh" 2>/dev/null && command -v rc_duration_min >/dev/null 2>&1; then
+    RC_AVAILABLE=1
+  fi
+fi
+
 # --- Parse args: an optional numeric STALE_DAYS + an optional --recalibrate ----
 RECAL=0
 STALE_DAYS=""
@@ -141,6 +156,13 @@ fi
 # + quality-signal trend fields) MUST match that block VERBATIM (a regression test
 # asserts the two field sets are identical). est_*/act_* are `null` when unmeasured
 # so the accuracy ratio below can exclude them.
+#
+# DURATION: supplied by the caller as `$clock_dur` + `$clock_state`, resolved per
+# state file from the hook-stamped run clock (hooks/lib/run-clock.sh). The state
+# is a separate arg because jq's `//` treats `null` identically to absent, so a
+# duration deliberately REJECTED by the sanity assertion cannot be expressed as a
+# nullable value — it would fall through to the history-derived number. `absent`
+# is the only state that reaches the legacy history formula.
 DERIVE='
   (.history // []) as $h
   | ($h | map(.at // empty)) as $ats
@@ -148,7 +170,11 @@ DERIVE='
   | ($ats | last) as $t1
   | (if ($t0 != null and $t1 != null)
        then (((($t1 | fromdateiso8601?) // 0) - (($t0 | fromdateiso8601?) // 0)) / 60 | floor)
-       else 0 end) as $dur
+       else 0 end) as $hdur
+  | (if $clock_state == "ok" then $clock_dur
+     elif $clock_state == "rejected" then null
+     else $hdur end) as $dur
+  | (if $clock_state == "absent" then (.actuals.duration_min // $dur) else $dur end) as $adur
   | {
       at: ($t1 // ""),
       branch: (.branch // ""),
@@ -169,7 +195,7 @@ DERIVE='
       est_tokens_scale: (if ((.estimate.tokens_output // null) != null) then "output"
                          elif ((.estimate.tokens_total // null) != null) then "total"
                          else null end),
-      act_duration_min: (.actuals.duration_min // $dur),
+      act_duration_min: $adur,
       act_tokens: (.actuals.tokens_total // null),
       act_tokens_output: (.actuals.tokens_breakdown.output // null),
       defects_early: (.quality.defects.early // 0),
@@ -225,7 +251,16 @@ while IFS= read -r sf; do
     key="$(norm_key "$br" "$ba")"
     grep -qxF "$key" "$seen" 2>/dev/null && continue   # already archived → ledger wins
     printf '%s\n' "$key" >> "$seen"
-    jq -c "$DERIVE" "$sf" 2>/dev/null >> "$rows" || true
+    # Per-state clock verdict. Resolved here (not once for the whole run) because
+    # each STATE.json has its own sibling clock file.
+    clock_state="absent"; clock_dur="null"
+    if [ "$RC_AVAILABLE" -eq 1 ]; then
+      _rc_verdict="$(rc_duration_min "$(rc_clock_path "$sf")" "$sf" 2>/dev/null || echo absent)"
+      clock_state="$(rc_verdict_state "$_rc_verdict")"
+      clock_dur="$(rc_verdict_value "$_rc_verdict")"
+    fi
+    jq -c --argjson clock_dur "$clock_dur" --arg clock_state "$clock_state" \
+      "$DERIVE" "$sf" 2>/dev/null >> "$rows" || true
     continue
   fi
 
@@ -627,21 +662,41 @@ if [ "$RECAL" = "1" ]; then
         "  Suggested TOKEN constants (× \($rt)) — output tokens:",
         "    TIER_BASE_TOK  light \($l)→\(sc($l))  standard \($s)→\(sc($s))  heavy \($h)→\(sc($h))",
         "    PER_AC_TOK \($a)→\(sc($a))   PER_FILE_TOK \($f)→\(sc($f))"' 2>/dev/null
-      printf '%s' "$agg" | jq -rn --argjson rd "$rc_rd" \
-        --argjson l "$tbm_l" --argjson s "$tbm_s" --argjson h "$tbm_h" \
-        --argjson a "$pam" --argjson f "$pfm" '
-        def sc(v): (v*$rd)|round;
-        "  Suggested TIME constants (× \($rd)):",
-        "    TIER_BASE_MIN  light \($l)→\(sc($l))  standard \($s)→\(sc($s))  heavy \($h)→\(sc($h))",
-        "    PER_AC_MIN \($a)→\(sc($a))   PER_FILE_MIN \($f)→\(sc($f))"' 2>/dev/null
+      # The TIME suggestion needs its OWN sample guard. `$RECAL_MIN` is checked
+      # against n_tok, and `median` of an empty array returns 0 (not null), so a
+      # ledger whose durations are all null yields ratio_dur 0 and this block would
+      # advise multiplying every wall-clock constant by ZERO — from a sample of
+      # none. Durations are null far more often than tokens now that an implausible
+      # span (negative, or over 12h — a run paused overnight) is deliberately
+      # rejected rather than recorded, so the two sample counts genuinely diverge
+      # and the token guard cannot stand in for this one. The report body already
+      # guards its time line on n_dur; the actionable-constants path must too.
+      if [ "${rc_nd:-0}" -gt 0 ] 2>/dev/null; then
+        printf '%s' "$agg" | jq -rn --argjson rd "$rc_rd" \
+          --argjson l "$tbm_l" --argjson s "$tbm_s" --argjson h "$tbm_h" \
+          --argjson a "$pam" --argjson f "$pfm" '
+          def sc(v): (v*$rd)|round;
+          "  Suggested TIME constants (× \($rd)):",
+          "    TIER_BASE_MIN  light \($l)→\(sc($l))  standard \($s)→\(sc($s))  heavy \($h)→\(sc($h))",
+          "    PER_AC_MIN \($a)→\(sc($a))   PER_FILE_MIN \($f)→\(sc($f))"' 2>/dev/null
+      else
+        printf '  No TIME constants suggested — no run in the sample has a measured duration.\n'
+      fi
     else
       # Fail-open WITHOUT reinstating literals: a hardcoded fallback is precisely
       # the staleness this block was rewritten to eliminate, so print the factors
       # and say the constants could not be read.
       printf '  Could not read the current constants from estimate.sh (%s) — no values suggested.\n' \
         "${EST_SH:-not found}"
-      printf '  Apply by hand: multiply the TIER_BASE_TOK_*/PER_*_TOK constants by %sx and the\n' "$rc_rt"
-      printf '  TIER_BASE_MIN_*/PER_*_MIN constants by %sx.\n' "$rc_rd"
+      printf '  Apply by hand: multiply the TIER_BASE_TOK_*/PER_*_TOK constants by %sx (n=%s).\n' "$rc_rt" "$rc_nt"
+      # Same sample guard as the values branch above — this fail-open path emits the
+      # very same ×0 advice when no run in the sample has a measured duration, and it
+      # printed no `n`, so nothing on screen revealed the factor came from zero runs.
+      if [ "${rc_nd:-0}" -gt 0 ] 2>/dev/null; then
+        printf '  Multiply the TIER_BASE_MIN_*/PER_*_MIN constants by %sx (n=%s).\n' "$rc_rd" "$rc_nd"
+      else
+        printf '  Do NOT scale the TIER_BASE_MIN_*/PER_*_MIN constants — no run in the sample has a measured duration.\n'
+      fi
     fi
     echo "  (Suggestion only — estimate.sh is unchanged. Review the n before applying; a small n is noisy.)"
   else

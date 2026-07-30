@@ -19,6 +19,7 @@
 set -uo pipefail
 
 HOOKS="$(cd "$(dirname "${BASH_SOURCE[0]}")/../hooks" && pwd)"
+REPO_ROOT="$(cd "$HOOKS/.." && pwd)"
 SH="$HOOKS/send-telemetry.sh"
 RO="$HOOKS/record-outcome.sh"
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not installed"; exit 0; }
@@ -252,12 +253,35 @@ expect "comment capped at 500 chars" "$(printf '%s' "$Pt" | jq -r '.comment | le
 # absent comment -> null
 expect "comment null when unset" "$(printf '%s' "$P" | jq -r '.comment')" "null"
 
-# --- 13c. schema v5 fields present + anonymized (task_type is prefix only) ----
+# --- 13c. schema v6 fields present + anonymized (task_type is prefix only) ----
 # v5 changed est_tokens SEMANTICS (predicted OUTPUT tokens, comparable to
 # tokens_output) without changing the field set. The version bump is what lets a
 # consumer tell a v5 output-scale est_tokens from a v4 cache-inclusive total —
 # the two are ~100x apart, so pooling them without branching is a unit error.
-expect "schema_version is 5"        "$(printf '%s' "$P" | jq -r '.schema_version')" "5"
+#
+# v6 bumps on the same reasoning for `duration_min`, which changed on TWO axes at
+# once: narrated (derived from model-written history timestamps) -> measured (from
+# a hook-stamped `date -u` clock), AND always-a-number (it fell back to 0) ->
+# nullable (null when unmeasured or rejected as implausible). Neither is visible in
+# the value — a v5 fallback 0 reads as a real fast run — so the version is the only
+# thing that lets a consumer know whether a duration was ever actually measured.
+# EVERY surface that states the payload version must move together. The 5->6 bump was
+# closed against its reproducer (the server-side consumer docs), and README.md was caught
+# only incidentally by the Phase-5 docs step — whose scope is README.md + docs/**, so it
+# structurally cannot reach skills/**. A fourth surface (the orchestrator's own telemetry
+# reference) was left declaring v5, contradicting the shipped sender with every suite
+# green. Derive the expected value from the sender rather than pinning a literal, so the
+# next bump fails here instead of silently splitting the surfaces again.
+SV="$(grep -oE '^SCHEMA_VERSION=[0-9]+' "$SH" | cut -d= -f2)"
+expect "sender declares a numeric SCHEMA_VERSION" "$([ -n "$SV" ] && echo yes || echo no)" "yes"
+for doc in "$REPO_ROOT/README.md" "$REPO_ROOT/skills/auto-task/references/settings.md"; do
+  expect "$(basename "$doc") states schema_version $SV" \
+    "$(grep -c "schema_version: $SV" "$doc")" "1"
+  expect "$(basename "$doc") has no stale schema_version literal" \
+    "$(grep -oE 'schema_version: [0-9]+' "$doc" | grep -vc "schema_version: $SV")" "0"
+done
+
+expect "schema_version is 6"        "$(printf '%s' "$P" | jq -r '.schema_version')" "6"
 expect "est_tokens is the OUTPUT estimate" "$(printf '%s' "$P" | jq -r '.est_tokens')" "5000"
 expect "tokens_output is the measured output" "$(printf '%s' "$P" | jq -r '.tokens_output')" "5500"
 expect "act_tokens keeps total semantics"  "$(printf '%s' "$P" | jq -r '.act_tokens')" "6000"
@@ -385,6 +409,72 @@ expect "enable-only: bundled token sent" \
   "$(grep -c 'Authorization: Bearer bundled-tok' "$T/cap3.txt" 2>/dev/null)" "1"
 expect "enable-only: bundled endpoint used" \
   "$(grep -c 'https://central.example/api/ingest' "$T/cap3.txt" 2>/dev/null)" "1"
+
+
+# --- 16. duration is MEASURED from the run clock ------------------------------
+# The payload's duration used to come from the first/last `state.history[].at`
+# strings, which the model writes without a clock. It now comes from the
+# hook-stamped .run-clock.json sitting beside this STATE.json.
+#
+# The fixture is chosen so a broken implementation is caught rather than
+# coincidentally right: its history spans 45 min and `actuals.duration_min` is 90.
+# Because jq's `//` treats `null` like absent, expressing the sanity rejection as a
+# nullable value would resolve it to one of those instead of to null — so the
+# rejection assertions below are what prove the state is really being branched on.
+CLK="$(dirname "$STATE")/.run-clock.json"
+mk_clk(){ # <minutes wide>
+  jq -n --argjson m "$1" '{created_at:"2026-07-09T00:00:00Z",
+    updated_at:("2026-07-09T00:00:00Z"|fromdateiso8601|.+($m*60)|todateiso8601),base:"deadbeef",sealed:true}' > "$CLK"
+}
+pf(){ printf '%s' "$1" | jq -r "$2"; }
+# Same invocation the payload assertions above use: settings via SETTINGS, dry-run,
+# and IGNORE_SENTINEL so the write-once guard does not swallow repeated runs.
+emit(){ SETTINGS="$T/on.json" run AUTO_TASK_TELEMETRY_DRYRUN=1 AUTO_TASK_TELEMETRY_IGNORE_SENTINEL=1; }
+
+rm -f "$CLK"
+Pn="$(emit)"
+expect "no clock: duration from history (45)"  "$(pf "$Pn" .duration_min)"      "45"
+expect "no clock: act from actuals (90)"       "$(pf "$Pn" .act_duration_min)"  "90"
+
+mk_clk 120
+Pc="$(emit)"
+expect "clock 120m: payload duration measured" "$(pf "$Pc" .duration_min)"      "120"
+expect "clock 120m: act uses the clock"        "$(pf "$Pc" .act_duration_min)"  "120"
+
+mk_clk 720
+expect "clock 720m (on the bound): sent"       "$(pf "$(emit)" .duration_min)" "720"
+
+mk_clk 721
+Pr="$(emit)"
+expect "clock 721m: duration null (not 45/90)" "$(pf "$Pr" .duration_min)"      "null"
+expect "clock 721m: act null (not 90)"         "$(pf "$Pr" .act_duration_min)"  "null"
+# The key must remain PRESENT-and-null: the receiver's column is nullable, but an
+# absent key would be indistinguishable from a payload built before this change.
+expect "clock 721m: key still present"         "$(pf "$Pr" 'has("duration_min")')" "true"
+expect "clock 721m: payload still valid JSON"  "$(printf '%s' "$Pr" | jq -e . >/dev/null 2>&1 && echo ok)" "ok"
+
+# STAMP-BEFORE-READ, behaviorally. Every case above uses a SEALED clock, on which
+# rc_stamp is a no-op by design — so none of them prove this hook stamps at all, and
+# a neutered call (renamed helper, broken source guard) would leave them green while
+# the payload silently undercounts the final turn. Here the clock is UNSEALED with a
+# zero span 45 minutes back: without the self-stamp the payload reads 0, with it ~45.
+ago_min(){ date -u -v-"$1"M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "$1 minutes ago" +%Y-%m-%dT%H:%M:%SZ; }
+A45="$(ago_min 45)"
+jq -n --arg c "$A45" '{created_at:$c,updated_at:$c,base:"deadbeef",sealed:false}' > "$CLK"
+Pu="$(emit)"
+DU="$(pf "$Pu" .duration_min)"
+expect "unsealed clock: sender stamped before reading (~45, not 0)" \
+  "$([ "$DU" -ge 44 ] && [ "$DU" -le 46 ] && echo yes || echo "no($DU)")"                     "yes"
+expect "the self-stamp sealed the clock"       "$(jq -r '.sealed' "$CLK")"                     "true"
+expect "the self-stamp preserved created_at"   "$(jq -r '.created_at' "$CLK")"                 "$A45"
+
+mk_clk -120
+Pneg="$(emit)"
+expect "negative clock: duration null"         "$(pf "$Pneg" .duration_min)"     "null"
+expect "negative clock: act null"              "$(pf "$Pneg" .act_duration_min)" "null"
+# A rejection must not suppress the payload — the rest of the row is still useful.
+expect "negative clock: payload still emitted" "$(printf '%s' "$Pneg" | jq -r '.terminal_state')" "done"
+rm -f "$CLK"
 
 echo "send-telemetry.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1

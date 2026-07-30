@@ -50,7 +50,22 @@ CREATE TABLE IF NOT EXISTS runs (
   external_status   TEXT,               -- Phase-8 external-change status enum | null [v3]
 
   -- time & tokens (NULL when unmeasured — never 0)
-  duration_min      INTEGER,
+  duration_min      INTEGER,            -- SEMANTICS + NULLABILITY CHANGED IN v6:
+                                        -- MEASURED from the sender's hook-stamped
+                                        -- run clock, and NULL when the span was
+                                        -- rejected as implausible (negative, >12h).
+                                        -- NOT null merely when unmeasured: with no
+                                        -- clock the sender falls back to the pre-v6
+                                        -- history derivation, which still yields 0
+                                        -- on unusable history. Treat 0 as suspect
+                                        -- in every version.
+                                        -- v1-v5 rows were derived from model-written
+                                        -- history timestamps and were ALWAYS a
+                                        -- number (falling back to 0), so a v5 `0`
+                                        -- reads like a real fast run: branch on
+                                        -- schema_version before treating any
+                                        -- duration as measured. Same for
+                                        -- act_duration_min below.
   est_duration_min  INTEGER,
   est_tokens        INTEGER,            -- SEMANTICS CHANGED IN v5: predicted OUTPUT
                                         -- tokens, comparable to tokens_output below.

@@ -98,6 +98,46 @@ expect_has "stats still exits cleanly (2 done)"  "$OUT2" "2 done"
 expect_has "null-est row excluded: still n=1"    "$OUT2" "(n=1)"
 expect_has "ratio unchanged at 2x"               "$OUT2" "median 2x"
 
+echo "================ duration is MEASURED end-to-end (clock -> ledger -> report) ================"
+# The full data path with a run clock present. The fixture's history spans 120 min
+# and its `actuals.duration_min` is 120 against an estimate of 100 (ratio 1.2x), so
+# a 300-minute clock must move the ledger row to 300 and the report to 3x — a
+# number neither fallback can produce.
+TK="$(mktemp -d)"
+( cd "$TK" && { git init -q -b feat/metrics . 2>/dev/null || { git init -q .; git symbolic-ref HEAD refs/heads/feat/metrics; }; } )
+KD="$TK/.auto-task/feat/metrics"; mkdir -p "$KD"
+cp "$SD/STATE.json" "$KD/STATE.json"
+mk_k(){ jq -n --argjson m "$1" '{created_at:"2026-03-01T00:00:00Z",
+  updated_at:("2026-03-01T00:00:00Z"|fromdateiso8601|.+($m*60)|todateiso8601),base:"BASEM",sealed:true}' > "$KD/.run-clock.json"; }
+arch(){ rm -f "$KD/.outcome-recorded"; : > "$TK/.auto-task/outcomes.jsonl"
+        printf '{"cwd":"%s"}' "$TK" | CLAUDE_PROJECT_DIR="$TK" bash "$REC" >/dev/null 2>&1
+        head -1 "$TK/.auto-task/outcomes.jsonl"; }
+
+mk_k 300
+RK="$(arch)"
+expect "clock 300m: ledger duration_min"      "$(printf '%s' "$RK" | jq -r '.duration_min')"     "300"
+expect "clock 300m: ledger act_duration_min"  "$(printf '%s' "$RK" | jq -r '.act_duration_min')" "300"
+OUTK="$(CLAUDE_PROJECT_DIR="$TK" bash "$STATS" 2>/dev/null)"
+expect_rx  "report: time ratio is 3x from the clock" "$OUTK" 'time: +actual/est median 3x \(n=1\)'
+expect_has "report: token ratio still 2x"            "$OUTK" "median 2x"
+
+# Rejected clock: the row keeps every other metric but its duration is null, and
+# the report must EXCLUDE it from the time ratio rather than fall back to 120.
+mk_k 800
+RR="$(arch)"
+expect "clock 800m: ledger duration null"     "$(printf '%s' "$RR" | jq -r '.duration_min')"     "null"
+expect "clock 800m: ledger act null (not 120)" "$(printf '%s' "$RR" | jq -r '.act_duration_min')" "null"
+expect "rejected row keeps its token metric"  "$(printf '%s' "$RR" | jq -r '.act_tokens_output')" "2000000"
+OUTR="$(CLAUDE_PROJECT_DIR="$TK" bash "$STATS" 2>/dev/null)"
+expect_has "report survives a null duration"  "$OUTR" "Estimate accuracy"
+expect_has "report: token ratio unaffected"   "$OUTR" "median 2x"
+if printf '%s' "$OUTR" | grep -qE 'time: +actual/est median'; then
+  FAIL=$((FAIL+1)); printf '  FAIL  %-52s (rejected duration was pooled)\n' "report excludes the rejected duration"
+else
+  PASS=$((PASS+1)); printf '  PASS  %-52s (excluded)\n' "report excludes the rejected duration"
+fi
+rm -rf "$TK"
+
 echo ""
 echo "================ SUMMARY: $PASS passed, $FAIL failed ================"
 [ "$FAIL" -eq 0 ]

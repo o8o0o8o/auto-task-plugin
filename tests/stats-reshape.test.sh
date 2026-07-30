@@ -264,6 +264,99 @@ hasnt "(D3) est_tokens did not fall back to null"           "$O_DV" 'output toke
 hasnt "(D4) a current-shape live row is not called legacy"  "$O_DV" 'pre-recalibration row'
 has   "(D5) its duration still pools"                       "$O_DV" 'time: +actual/est median [0-9.]+x \(n=1\)'
 
+echo "================ live DERIVE takes duration from the run clock ================"
+# The live DERIVE's duration used to come from the first/last `state.history[].at`
+# strings, which the model writes without a clock. It now comes from the
+# hook-stamped .run-clock.json beside each STATE.json.
+#
+# The fixture is chosen so a broken implementation is visibly wrong rather than
+# accidentally right: `estimate.duration_min` is 100, the history spans 125 min,
+# and `actuals.duration_min` is 125 — so the pre-clock ratio is 1.25x. A 200-minute
+# clock must move it to 2x, which no fallback path can produce.
+PCK="$(mkproj)"; mkdir -p "$PCK/.auto-task/feat/clocked"
+cat > "$PCK/.auto-task/feat/clocked/STATE.json" <<'EOS'
+{"phase":"done","approved":true,"branch":"feat/clocked","base":"CK","plugin_version":"0.27.0",
+ "effort":{"tier":"heavy","history":[]},"iteration":{"review":1,"fix":1},
+ "estimate":{"duration_min":100,"tokens_output":800000,"basis":"calibrated(n=4) tier=heavy"},
+ "actuals":{"duration_min":125,"tokens_total":200000000,
+            "tokens_breakdown":{"input":800,"output":1000000,"cache_read":198000000,"cache_creation":999200}},
+ "quality":{"defects":{"early":1,"late":0},"flaky":false,"tests_added":true,
+            "diff":{"loc_added":10,"loc_removed":2},"planning":{"first_pass_ac":1}},
+ "checks":[],"gates":{"gate_b":{"passed":true}},"followups":[],
+ "history":[{"phase":"execute","result":"ok","at":"2026-05-01T10:00:00Z"},
+            {"phase":"handover","result":"done","at":"2026-05-01T12:05:00Z"}]}
+EOS
+CKF="$PCK/.auto-task/feat/clocked/.run-clock.json"
+mk_ck(){ jq -n --argjson m "$1" '{created_at:"2026-05-01T00:00:00Z",
+  updated_at:("2026-05-01T00:00:00Z"|fromdateiso8601|.+($m*60)|todateiso8601),base:"CK",sealed:true}' > "$CKF"; }
+
+# (C1) baseline with no clock: the pre-existing fallback still yields 1.25x.
+rm -f "$CKF"
+O_CK0="$(runs "$PCK")"
+has   "(C1) no clock -> history/actuals ratio 1.25x"  "$O_CK0" 'time: +actual/est median 1\.25x \(n=1\)'
+
+# (C2) a 200-minute clock overrides both, giving 2x.
+mk_ck 200
+O_CK1="$(runs "$PCK")"
+has   "(C2) clock 200m -> ratio 2x (clock wins)"      "$O_CK1" 'time: +actual/est median 2x \(n=1\)'
+hasnt "(C2b) the 1.25x fallback ratio is gone"        "$O_CK1" 'time: +actual/est median 1\.25x'
+
+# (C3) a rejected clock must EXCLUDE the row from the time ratio, not fall back to
+# 125. This is the assertion that catches a `//`-collapsed null: with `//` the row
+# would silently reappear at 1.25x.
+mk_ck 900
+O_CK2="$(runs "$PCK")"
+hasnt "(C3) rejected clock does not resurface as 1.25x" "$O_CK2" 'time: +actual/est median 1\.25x'
+hasnt "(C3b) rejected clock is not pooled at all"       "$O_CK2" 'time: +actual/est median'
+# A null duration must not blank the report — a fatal jq error would kill every
+# section, which is exactly how a mis-guarded ratio has broken this reporter before.
+has   "(C3c) the report still renders"                  "$O_CK2" 'Completion rate +[0-9]+%'
+has   "(C3d) token ratio unaffected by a null duration" "$O_CK2" 'output tokens: actual/est median 1\.25x \(n=1\)'
+
+# (C4) same for a negative clock.
+mk_ck -200
+O_CK3="$(runs "$PCK")"
+hasnt "(C4) negative clock is not pooled"               "$O_CK3" 'time: +actual/est median'
+has   "(C4b) the report still renders"                  "$O_CK3" 'Completion rate +[0-9]+%'
+
+# (C5) 720 minutes is ON the bound and must still pool (720/100 = 7.2x).
+mk_ck 720
+has   "(C5) clock 720m pools at 7.2x"                   "$(runs "$PCK")" 'time: +actual/est median 7\.2x \(n=1\)'
+
+echo "================ --recalibrate never advises scaling time by 0 ================"
+# The sample floor is checked against the TOKEN count, and `median` of an empty array
+# returns 0 (not null), so a ledger whose durations are all null yields ratio_dur 0.
+# Unguarded, the suggestion told the operator to zero out every estimate.sh wall-clock
+# constant from a sample of NONE. Rejecting an implausible span makes null durations
+# routine, so this is reachable by design — and it has TWO emitters (the values branch
+# and the fail-open branch taken when estimate.sh is unreadable). Both are pinned here;
+# reverting either guard must redden this file.
+PRC="$(mkproj)"
+emit_nulldur(){ local n="$1" i
+  for i in $(seq 1 "$n"); do
+    printf '{"at":"2026-05-01T10:00:00Z","branch":"feat/nd%d","base":"ND%d","plugin_version":"0.27.0","terminal_state":"done","tier":"heavy","tier_initial":"heavy","escalations":0,"fix_iterations":0,"review_iterations":1,"gate_b":"passed","followups":0,"est_tokens":800000,"act_tokens":200000000,"act_tokens_output":880000,"est_duration_min":40,"act_duration_min":null,"defects_early":1,"defects_late":0,"flaky":false,"tests_added":true,"diff_loc":10,"first_pass_ac":1,"checks_run":1,"checks_failed":0,"pr_url":null}\n' "$i" "$i"
+  done
+}
+emit_nulldur 10 > "$PRC/.auto-task/outcomes.jsonl"
+O_ND="$(runs "$PRC" --recalibrate)"
+hasnt "(ND1) no x0 TIME-constant suggestion"        "$O_ND" 'Suggested TIME constants \(× 0\)'
+hasnt "(ND2) no zeroed TIER_BASE_MIN"               "$O_ND" 'TIER_BASE_MIN.*→0'
+has   "(ND3) it says why instead"                   "$O_ND" 'No TIME constants suggested'
+has   "(ND4) token constants still suggested"       "$O_ND" 'Suggested TOKEN constants'
+# The fail-open twin: estimate.sh unreadable -> the by-hand instructions branch.
+O_NF="$(AUTO_TASK_ESTIMATE_SH=/nonexistent AUTO_TASK_PR_RESOLVE=0 CLAUDE_PROJECT_DIR="$PRC" bash "$STATS" --recalibrate 2>&1)"
+hasnt "(ND5) fail-open branch does not say 'by 0x'" "$O_NF" 'MIN constants by 0x'
+has   "(ND6) fail-open branch says do NOT scale"    "$O_NF" 'Do NOT scale'
+has   "(ND7) fail-open branch still scales tokens"  "$O_NF" '_TOK constants by [0-9.]+x'
+# CONTROL: with measured durations both emitters must still suggest.
+: > "$PRC/.auto-task/outcomes.jsonl"
+emit_nulldur 10 | sed 's/"act_duration_min":null/"act_duration_min":50/' > "$PRC/.auto-task/outcomes.jsonl"
+O_MD="$(runs "$PRC" --recalibrate)"
+has   "(ND8) measured durations -> TIME suggested"  "$O_MD" 'Suggested TIME constants \(× 1.25\)'
+O_MF="$(AUTO_TASK_ESTIMATE_SH=/nonexistent AUTO_TASK_PR_RESOLVE=0 CLAUDE_PROJECT_DIR="$PRC" bash "$STATS" --recalibrate 2>&1)"
+has   "(ND9) measured -> fail-open scales time too" "$O_MF" 'MIN constants by 1.25x'
+rm -rf "$PRC"
+
 echo "================ tok_legacy is honest, not merely wide (R10) ================"
 # (D6) legacy and ratio-eligible must be MUTUALLY EXCLUSIVE. A row carrying
 # scale=="total" alongside a usable est_tokens is not producible by either builder
@@ -372,7 +465,7 @@ has   "recal fail-open: report still renders"     "$O_NOF" 'Estimate accuracy'
 rm -rf "$ESTTMP"
 
 # cleanup
-rm -rf "$P1" "$P0" "$PA" "$PB" "$PC" "$PD" "$PX" "$PL" "$PM" "$PN" "$PO" "$PV" "$PW" "$PY2" "$PZ"
+rm -rf "$PCK" "$P1" "$P0" "$PA" "$PB" "$PC" "$PD" "$PX" "$PL" "$PM" "$PN" "$PO" "$PV" "$PW" "$PY2" "$PZ"
 
 echo ""
 echo "================ SUMMARY: $PASS passed, $FAIL failed ================"

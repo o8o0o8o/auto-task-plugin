@@ -56,7 +56,19 @@ set -uo pipefail
 # v4 are NOT wrong as v4 — they are simply on a different scale, so a consumer
 # pooling v4 and v5 rows MUST branch on schema_version before computing that
 # ratio. `act_tokens` keeps its total semantics unchanged in v5.
-SCHEMA_VERSION=5
+#
+# v6 (this version) changes `duration_min` / `act_duration_min` on BOTH axes, which
+# is why it earns a bump on the same reasoning v5 did. (a) MEANING: through v5 the
+# duration was derived from the model-written `state.history[].at` timestamps — the
+# model has no clock, so those were guesses; from v6 it is measured from a
+# hook-stamped run clock (`date -u`). (b) NULLABILITY: through v5 the field was
+# always a number (it fell back to 0); from v6 it is null whenever the span was
+# unmeasured OR rejected as implausible (negative, or over 12h — typically a run
+# paused overnight). A consumer cannot tell the two apart by value: a v5 row and a
+# v6 row are both plain integers, and v5's fallback `0` looks like a real fast run.
+# So a query pooling v5 and v6 rows MUST branch on schema_version before treating
+# any duration as measured, and must expect NULL from v6.
+SCHEMA_VERSION=6
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 settings_sh="$SCRIPT_DIR/settings.sh"
@@ -186,11 +198,36 @@ os="$(uname -s 2>/dev/null || echo unknown)"
 # see the freeze note below). Every field is defaulted so a partial state never
 # errors. `comment` is the ONE free-text field — user-authored at the Phase-5
 # prompt, capped to 500 chars, null unless the user typed a note.
+# --- Resolve the MEASURED run duration ----------------------------------------
+# Identical contract to record-outcome.sh: the duration comes from the
+# hook-stamped run clock (.run-clock.json beside this STATE.json), with the
+# history-timestamp formula kept ONLY as the fallback for a run that has no clock.
+# The verdict is a VALUE plus a STATE because jq's `//` cannot express a
+# deliberate `null` — see hooks/lib/run-clock.sh for why. Fail-open: an
+# unsourceable helper leaves the state `absent` and this hook behaves exactly as
+# it did before the run clock existed.
+# Stamps before reading for the same reason record-outcome.sh does: an event's
+# hooks run in PARALLEL, so this must not depend on the Stop stamper winning a
+# race. `rc_stamp` is idempotent and seals a done run.
+clock_state="absent"; clock_dur="null"
+if [ -f "$SCRIPT_DIR/lib/run-clock.sh" ]; then
+  # shellcheck source=lib/run-clock.sh
+  if . "$SCRIPT_DIR/lib/run-clock.sh" 2>/dev/null && command -v rc_duration_min >/dev/null 2>&1; then
+    _rc_clock="$(rc_clock_path "$state")"
+    rc_stamp "$_rc_clock" "$state" 2>/dev/null || true
+    _rc_verdict="$(rc_duration_min "$_rc_clock" "$state" 2>/dev/null || echo absent)"
+    clock_state="$(rc_verdict_state "$_rc_verdict")"
+    clock_dur="$(rc_verdict_value "$_rc_verdict")"
+  fi
+fi
+
 payload="$(jq -c \
   --arg client_id "$client_id" \
   --arg plugin_version "$plugin_version" \
   --arg os "$os" \
   --argjson schema_version "$SCHEMA_VERSION" \
+  --argjson clock_dur "$clock_dur" \
+  --arg clock_state "$clock_state" \
   '
   (.history // []) as $h
   | ($h | map(.at // empty)) as $ats
@@ -198,7 +235,11 @@ payload="$(jq -c \
   | ($ats | last)  as $t1
   | (if ($t0 != null and $t1 != null)
        then (((($t1 | fromdateiso8601?) // 0) - (($t0 | fromdateiso8601?) // 0)) / 60 | floor)
-       else 0 end) as $dur
+       else 0 end) as $hdur
+  | (if $clock_state == "ok" then $clock_dur
+     elif $clock_state == "rejected" then null
+     else $hdur end) as $dur
+  | (if $clock_state == "absent" then (.actuals.duration_min // $dur) else $dur end) as $adur
   | (((.branch // "") | split("/") | .[0]) // "") as $ttype0
   | (if $ttype0 == "" then null
      else ($ttype0 | ascii_downcase) as $lc
@@ -223,7 +264,7 @@ payload="$(jq -c \
       duration_min: $dur,
       est_duration_min: (.estimate.duration_min // null),
       est_tokens: (.estimate.tokens_output // null),
-      act_duration_min: (.actuals.duration_min // $dur),
+      act_duration_min: $adur,
       act_tokens: (.actuals.tokens_total // null),
       tokens_input: (.actuals.tokens_breakdown.input // null),
       tokens_output: (.actuals.tokens_breakdown.output // null),

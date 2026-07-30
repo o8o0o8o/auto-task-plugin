@@ -143,6 +143,85 @@ expect "empty-base: rerun does NOT duplicate"        "$(rec "$TE"; rec "$TE"; ro
 expect "empty-base row.pr_url defaults null"         "$(head -1 "$TE/.auto-task/outcomes.jsonl" | jq -r '.pr_url')" "null"
 rm -rf "$TE"
 
+echo ""
+echo "================ Duration: MEASURED from the run clock ================"
+# The duration used to be derived from the first and last `state.history[].at`
+# strings, which the model writes without a clock — narrated, not measured. It now
+# comes from the hook-stamped .run-clock.json, with the history formula kept ONLY
+# as the fallback for a run that has no clock.
+#
+# Every fixture below deliberately carries a VALID 5-minute history AND non-null
+# `actuals.duration_min`, because those are exactly the two values a broken
+# implementation would fall back to. jq's `//` treats `null` like absent, so if the
+# rejection were expressed as a nullable value it would silently resolve to 7 (from
+# actuals) or 5 (from history). Seeing `null` here is what proves the three-state
+# verdict is actually branching on the state.
+TC="$(mktemp -d)"
+( cd "$TC" && { git init -q -b feat/clocked . 2>/dev/null || { git init -q .; git symbolic-ref HEAD refs/heads/feat/clocked; }; } )
+CD="$TC/.auto-task/feat/clocked"; mkdir -p "$CD"
+cat > "$CD/STATE.json" <<'EOF'
+{"phase":"done","approved":true,"branch":"feat/clocked","base":"CLK","description":"d",
+ "effort":{"tier":"standard","history":[]},"iteration":{"fix":0,"review":1},
+ "history":[{"phase":"execute","at":"2026-03-01T10:00:00Z"},{"phase":"handover","at":"2026-03-01T10:05:00Z"}],
+ "actuals":{"duration_min":7,"tokens_total":11,"tokens_breakdown":{"output":5}},
+ "gates":{"gate_b":{"passed":true}},"followups":[]}
+EOF
+# Re-run the archiver from a clean ledger + sentinel and read back one field.
+clk(){ # <minutes-wide | "none"> <jq field>
+  rm -f "$CD/.outcome-recorded"; : > "$TC/.auto-task/outcomes.jsonl"
+  if [ "$1" = "none" ]; then rm -f "$CD/.run-clock.json"
+  elif [ "$1" = "corrupt" ]; then printf 'not json\n' > "$CD/.run-clock.json"
+  else
+    jq -n --argjson m "$1" '{created_at:"2026-03-01T00:00:00Z",
+      updated_at:("2026-03-01T00:00:00Z"|fromdateiso8601|.+($m*60)|todateiso8601),base:"CLK",sealed:true}' > "$CD/.run-clock.json"
+  fi
+  rec "$TC" >/dev/null
+  head -1 "$TC/.auto-task/outcomes.jsonl" | jq -r "$2"
+}
+: > "$TC/.auto-task/outcomes.jsonl"
+
+expect "no clock: duration falls back to history"  "$(clk none .duration_min)"           "5"
+expect "no clock: act falls back to actuals"       "$(clk none .act_duration_min)"       "7"
+expect "clock 90m: duration is MEASURED"           "$(clk 90 .duration_min)"             "90"
+expect "clock 90m: act uses the clock, not actuals" "$(clk 90 .act_duration_min)"        "90"
+expect "clock 0m: a real zero is recorded"         "$(clk 0 .duration_min)"              "0"
+expect "clock 720m (on the bound): recorded"       "$(clk 720 .duration_min)"            "720"
+# The two rejection cases — null, and NOT the 5 / 7 a `//` fallback would produce.
+expect "clock 721m: duration rejected to null"     "$(clk 721 .duration_min)"            "null"
+expect "clock 721m: act rejected to null (not 7)"  "$(clk 721 .act_duration_min)"        "null"
+expect "negative clock: duration null"             "$(clk "-90" .duration_min)"          "null"
+expect "negative clock: act null (not 7)"          "$(clk "-90" .act_duration_min)"      "null"
+# A rejected row must still be a well-formed row — the key is present-and-null, not
+# dropped, so the reader can tell "rejected" from "field predates this build".
+expect "rejected row still has the key"            "$(clk 721 'has("duration_min")')"    "true"
+expect "rejected row is valid JSON"                "$(clk 721 . >/dev/null 2>&1; echo $?)" "0"
+# A corrupt clock is unmeasurable, NOT rejected → the history fallback applies.
+expect "corrupt clock: falls back, not rejected"   "$(clk corrupt .duration_min)"        "5"
+
+# STAMP-BEFORE-READ, behaviorally. Every case above uses a SEALED clock, which
+# makes rc_stamp a no-op — so none of them prove the archiver stamps at all, and a
+# reader that only read would pass them. Here the clock is UNSEALED with
+# updated_at == created_at (a zero span) and created_at set 45 minutes in the past.
+# Without the self-stamp the row would read 0; with it, updated_at moves to now and
+# the row reads ~45. That difference is the whole R1 guarantee (an event's hooks run
+# in parallel, so the archiver cannot depend on the Stop stamper winning the race).
+ago(){ date -u -v-"$1"M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "$1 minutes ago" +%Y-%m-%dT%H:%M:%SZ; }
+C45="$(ago 45)"
+rm -f "$CD/.outcome-recorded"; : > "$TC/.auto-task/outcomes.jsonl"
+jq -n --arg c "$C45" '{created_at:$c,updated_at:$c,base:"CLK",sealed:false}' > "$CD/.run-clock.json"
+rec "$TC" >/dev/null
+D_STAMPED="$(head -1 "$TC/.auto-task/outcomes.jsonl" | jq -r '.duration_min')"
+expect "unsealed clock: archiver stamped before reading (~45, not 0)" \
+  "$([ "$D_STAMPED" -ge 44 ] && [ "$D_STAMPED" -le 46 ] && echo yes || echo "no($D_STAMPED)")" "yes"
+expect "the self-stamp also sealed the clock"      "$(jq -r '.sealed' "$CD/.run-clock.json")" "true"
+expect "the self-stamp preserved created_at"       "$(jq -r '.created_at' "$CD/.run-clock.json")" "$C45"
+# The archiver never blocks or leaks on a rejection.
+rm -f "$CD/.outcome-recorded"; : > "$TC/.auto-task/outcomes.jsonl"
+jq -n '{created_at:"2026-03-01T12:00:00Z",updated_at:"2026-03-01T00:00:00Z",base:"CLK",sealed:true}' > "$CD/.run-clock.json"
+expect "rejection: hook still exits 0"             "$(rec "$TC")"                        "0"
+expect "rejection: nothing on stdout"              "$(rec_out "$TC" | wc -c | tr -d ' ')" "0"
+rm -rf "$TC"
+
 echo "================ Reader: auto-task-stats.sh ================"
 
 T2="$(mktemp -d)"
@@ -227,7 +306,7 @@ echo "================ Lockstep: metric fields present in BOTH DERIVE blocks ===
 # SAME metric fields, or archived rows and live-done rows disagree. Assert every
 # metric field name appears in both scripts' derivations.
 REC_SH="$HOOKS/record-outcome.sh"; STATS_SH="$HOOKS/auto-task-stats.sh"
-for k in est_duration_min est_tokens est_tokens_scale act_duration_min act_tokens act_tokens_output \
+for k in duration_min est_duration_min est_tokens est_tokens_scale act_duration_min act_tokens act_tokens_output \
          defects_early defects_late flaky tests_added diff_loc first_pass_ac \
          checks_run checks_failed plugin_version; do
   ir="$(grep -c "${k}:" "$REC_SH" 2>/dev/null || echo 0)"
@@ -257,6 +336,38 @@ expect "lockstep: est_tokens_scale expression is non-empty" \
 # comparing truncated text and cannot see a drift past the cut.
 expect "lockstep: extraction reaches the closing end)," \
   "$(scale_expr "$REC_SH" | grep -c 'end),')" "1"
+
+# The duration selection carries the same "both must classify identically" burden
+# as est_tokens_scale, and a sharper one: it is the expression that keeps a
+# REJECTED duration from collapsing into the history fallback via jq's `//`. If one
+# builder branched on the state and the other did not, an archived row and a
+# live-done row for the same run would disagree — one `null`, one a fabricated
+# number — and nothing else in this suite compares the two builders' output.
+# The top-level `duration_min` is the field this whole change is named after, and the
+# expression slice below stops before the object literal — so its ASSIGNMENT could
+# drift between the two builders undetected. Compare it directly. The pattern excludes
+# a preceding `_` so it cannot match `act_duration_min`.
+dur_field(){ grep -oE '(^|[^_a-z])duration_min: \$[a-z]+' "$1" | head -1 | tr -d ' '; }
+expect "lockstep: duration_min assignment identical" \
+  "$([ "$(dur_field "$REC_SH")" = "$(dur_field "$STATS_SH")" ] && echo yes || echo no)" "yes"
+expect "lockstep: duration_min assignment is non-empty" \
+  "$([ -n "$(dur_field "$REC_SH")" ] && echo yes || echo no)" "yes"
+dur_expr(){ awk '/if \$clock_state == "ok" then/,/end\) as \$adur/' "$1" | tr -d ' \n'; }
+expect "lockstep: duration selection EXPRESSION identical" \
+  "$([ "$(dur_expr "$REC_SH")" = "$(dur_expr "$STATS_SH")" ] && echo yes || echo no)" "yes"
+expect "lockstep: duration selection expression is non-empty" \
+  "$([ -n "$(dur_expr "$REC_SH")" ] && echo yes || echo no)" "yes"
+# As above: prove the slice reached its terminator, or it is comparing truncated
+# text and blind to any drift past the cut.
+expect "lockstep: duration extraction reaches \$adur" \
+  "$(dur_expr "$REC_SH" | grep -c 'as\$adur')" "1"
+# Both must also actually RESOLVE the verdict, not merely contain the jq branch —
+# a builder that never sourced the helper would leave clock_state permanently
+# absent and silently report the old narrated number.
+for f in "$REC_SH" "$STATS_SH"; do
+  expect "lockstep: $(basename "$f") resolves the clock verdict" \
+    "$([ "$(grep -c 'rc_duration_min' "$f")" -ge 1 ] && echo yes || echo no)" "yes"
+done
 
 # pr_url is an identifying field (not a metric) but must be derived by BOTH, or a
 # live-done run's PR would be invisible to merge-acceptance until it is archived.

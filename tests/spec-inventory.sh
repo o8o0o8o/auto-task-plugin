@@ -202,6 +202,25 @@ RETIRED_PREFIXES = {
   # settings.md: the payload schema_version claim moved 4 -> 5 with the est_tokens
   # semantics change.
   "**Remote telemetry (opt-in, off by default).** The endpoint + ingest token": 1,
+
+  # --- duration is measured, not narrated -----------------------------------
+  # The run duration used to be derived from the first and last
+  # `state.history[].at` strings, which the model writes without access to a
+  # clock. It now comes from a hook-stamped sidecar (`hooks/stamp-run-clock.sh` +
+  # `hooks/lib/run-clock.sh`) and a span that is negative or over 12h is rejected
+  # to `null`. Both lines below are the OLD history-derived wording, replaced in
+  # the same commit by a clock-derived equivalent that states the contract more
+  # strongly than the line it retires (each now also names the three-state
+  # verdict, which is what keeps a rejection from collapsing into the fallback).
+  #
+  # Phase-5 actuals step: it told the orchestrator to recompute the duration with
+  # "the same first→last history-timestamp formula record-outcome.sh uses" — the
+  # narration this change removes.
+  '   - **Actuals.** Locate `hooks/token-usage.sh` (three-probe pattern)': 1,
+  # state-schema null-not-zero contract: it was scoped to "a measurement could not
+  # be taken", which does not cover a measurement that WAS taken and rejected, and
+  # it predates `duration_min` becoming nullable.
+  '**Run-metrics objects (`estimate`, `actuals`, `quality`, `checks`).**': 1,
 }
 
 bc = collections.Counter(l for l in base if l.strip())
