@@ -7,10 +7,21 @@
 # (via the auto-task-stats reader), preserving a record even after a per-branch
 # .auto-task/<branch>/ folder is pruned.
 #
-# OPT-IN: the hook is a no-op unless the append-only ledger .auto-task/outcomes.jsonl
-# already exists. Opt in with `touch .auto-task/outcomes.jsonl`; opt out by
-# deleting it. No network, no data leaves the machine — the row is derived from
-# fields already present locally in STATE.json.
+# OPT-IN: the hook is a no-op unless the append-only ledger already exists. Opt in
+# with `touch .auto-task/outcomes.jsonl` at the repo root; opt out by deleting it.
+# No network, no data leaves the machine — the row is derived from fields already
+# present locally in STATE.json.
+#
+# CLONE-WIDE LEDGER, not per-worktree. The ledger path is resolved through
+# hooks/lib/clone-scope.sh to the MAIN working tree, NOT to `$project_dir` — which
+# is retargeted below to whichever linked worktree the turn-end ran in. Those are
+# deliberately different roots, and conflating them was a real bug: because
+# auto-task isolates every run in its own worktree, `$project_dir/.auto-task/
+# outcomes.jsonl` named a file a fresh worktree never has, so the opt-in gate
+# failed closed and NOTHING was ever recorded — while the `auto-task-stats` reader
+# looked at the main tree. Per-run state (STATE.json, the run clock, the sentinel
+# below) stays per-worktree; only the cross-run ledger is clone-wide, because
+# surviving individual branch folders is its entire purpose.
 #
 # Failure policy: FAIL OPEN, ALWAYS. Every path exits 0. Telemetry must never
 # break a session: a missing jq, an unreadable state file, a write error — all
@@ -62,7 +73,18 @@ state="$project_dir/.auto-task/$branch/STATE.json"
 [ -f "$state" ] || exit 0    # no run for this branch
 
 # --- OPT-IN gate: the ledger must already exist -------------------------------
-ledger="$project_dir/.auto-task/outcomes.jsonl"
+# Resolved CLONE-WIDE (main working tree), not from the worktree-retargeted
+# $project_dir — see the header. Fail open: if the helper cannot be sourced or
+# cannot resolve a main worktree (no git, bare repo, not a repo), fall back to the
+# pre-existing per-tree path so this hook behaves exactly as it did before.
+ledger=""
+if [ -f "$SCRIPT_DIR/lib/clone-scope.sh" ]; then
+  # shellcheck source=lib/clone-scope.sh
+  if . "$SCRIPT_DIR/lib/clone-scope.sh" 2>/dev/null && command -v cs_ledger_path >/dev/null 2>&1; then
+    ledger="$(cs_ledger_path "$project_dir" 2>/dev/null || true)"
+  fi
+fi
+[ -n "$ledger" ] || ledger="$project_dir/.auto-task/outcomes.jsonl"
 [ -f "$ledger" ] || exit 0   # not opted in → silent no-op
 
 # --- jq required (fail open) --------------------------------------------------
@@ -157,10 +179,15 @@ fi
 # --- Derive the one-line row from STATE.json ----------------------------------
 # Every field guarded with a default so a partial/legacy state never errors.
 # Free-text fields are length-capped (task ~140, gate_b ~120). The row now also
-# carries run metrics (estimate/actual time+tokens, quality-signal trend fields);
-# it may exceed the old 512B PIPE_BUF target, so append atomicity relies on the
-# single O_APPEND `printf >>` write (a completing run is effectively single-writer
-# per working tree — concurrent same-tree completions are not a real scenario).
+# carries run metrics (estimate/actual time+tokens, quality-signal trend fields)
+# and runs ~800-1000B, past the 512B PIPE_BUF size where a single write is
+# comfortably indivisible.
+#
+# CONCURRENCY — the ledger is CLONE-WIDE, so it has multiple writers. The older
+# note here reasoned that "a completing run is effectively single-writer per
+# working tree"; that held only while the ledger was per-worktree. Two runs in two
+# worktrees of one clone can now finish at the same instant and append to the SAME
+# file. The append below is therefore guarded three ways (see the append section).
 # The metric fields mirror auto-task-stats.sh's DERIVE VERBATIM (lockstep — a
 # regression test asserts the two field sets match). est_*/act_* are `null` when
 # unmeasured so the reader's ratio can exclude them (no divide-by-zero / poison).
@@ -186,6 +213,23 @@ row="$(jq -c \
   --argjson clock_dur "$clock_dur" \
   --arg clock_state "$clock_state" \
   '
+  # NUMERIC COERCION AT THE SOURCE. Every field below that a consumer does arithmetic
+  # on is read through num0/numN, because these all come from model-written STATE.json
+  # and any of them can legitimately hold a string or a boolean. Two properties of jq
+  # make an untyped read dangerous rather than merely wrong: `add` and `/` are FATAL on
+  # a mixed type, and a bare `> 0` guard does NOT filter strings out (jq sorts strings
+  # after numbers, so "40" > 0 is true) — so a positivity guard passes the bad value
+  # straight into the division. A fatal error in the aggregator blanks EVERY metric
+  # section of the report instead of one field, which is how a non-numeric
+  # first_pass_ac silently emptied a real 9-run report.
+  def num0: if type == "number" then . else 0 end;
+  def numN: if type == "number" then . else null end;
+  # Same discipline for the STRING fields, and for the same reason: a `.[0:N]`
+  # slice is just as fatal on a wrong type as `add` is, and it lives outside both
+  # numeric guard layers. A numeric `effort.tier` made the whole By-tier table
+  # render as headers with no rows, losing the well-formed rows too, with no skip
+  # counter touched — the failure was invisible on screen.
+  def str0: if type == "string" then . else "" end;
   (.history // []) as $h
   | ($h | map(.at // empty)) as $ats
   | ($ats | first) as $t0
@@ -196,38 +240,47 @@ row="$(jq -c \
   | (if $clock_state == "ok" then $clock_dur
      elif $clock_state == "rejected" then null
      else $hdur end) as $dur
-  | (if $clock_state == "absent" then (.actuals.duration_min // $dur) else $dur end) as $adur
+  | (if $clock_state == "absent" then ((.actuals.duration_min | numN) // $dur) else $dur end) as $adur
   | {
       at: ($t1 // ""),
       branch: (.branch // ""),
       base: (.base // ""),
       pr_url: (.pr_url // null),
-      task: ((.description // "") | .[0:140]),
+      task: ((.description | str0) | .[0:140]),
       terminal_state: "done",
       plugin_version: $plugin_version,
-      tier: (.effort.tier // ""),
-      tier_initial: (((.effort.history // []) | first | .from) // (.effort.tier // "")),
+      tier: (.effort.tier | str0),
+      tier_initial: ((((.effort.history // []) | first | .from) | str0) as $f
+                     | if $f == "" then (.effort.tier | str0) else $f end),
       escalations: ((.effort.history // []) | length),
-      fix_iterations: (.iteration.fix // 0),
-      review_iterations: (.iteration.review // 0),
+      fix_iterations: (.iteration.fix | num0),
+      review_iterations: (.iteration.review | num0),
       gate_b: (if (.gates.gate_b.passed // false) then "passed"
-               else ((.gates.gate_b.skipped_reason // "") | .[0:120]) end),
+               else ((.gates.gate_b.skipped_reason | str0) | .[0:120]) end),
       followups: ((.followups // []) | length),
       duration_min: $dur,
-      est_duration_min: (.estimate.duration_min // null),
-      est_tokens: (.estimate.tokens_output // null),
-      est_tokens_scale: (if ((.estimate.tokens_output // null) != null) then "output"
-                         elif ((.estimate.tokens_total // null) != null) then "total"
+      est_duration_min: (.estimate.duration_min | numN),
+      est_tokens: (.estimate.tokens_output | numN),
+      est_tokens_scale: (if ((.estimate.tokens_output | numN) != null) then "output"
+                         elif ((.estimate.tokens_total | numN) != null) then "total"
                          else null end),
       act_duration_min: $adur,
-      act_tokens: (.actuals.tokens_total // null),
-      act_tokens_output: (.actuals.tokens_breakdown.output // null),
-      defects_early: (.quality.defects.early // 0),
-      defects_late: (.quality.defects.late // 0),
+      act_tokens: (.actuals.tokens_total | numN),
+      act_tokens_output: (.actuals.tokens_breakdown.output | numN),
+      defects_early: (.quality.defects.early | num0),
+      defects_late: (.quality.defects.late | num0),
       flaky: (.quality.flaky // false),
       tests_added: (.quality.tests_added // false),
-      diff_loc: (((.quality.diff.loc_added // 0) + (.quality.diff.loc_removed // 0))),
-      first_pass_ac: (.quality.planning.first_pass_ac // null),
+      diff_loc: (((.quality.diff.loc_added | num0) + (.quality.diff.loc_removed | num0))),
+      # NUMBER-ONLY. `quality.planning.first_pass_ac` is model-written and is, in real
+      # state files, freely a string ("6/6 self-verify ACs green") or a boolean. The
+      # aggregator sums this field, and jq cannot add a number to a string — that is a
+      # FATAL error in the single agg pass, which blanks EVERY metric section of the
+      # report rather than printing one wrong number. Coercing here keeps the bad value
+      # out of the row entirely; the aggregator additionally re-filters, because rows
+      # already appended to an append-only ledger cannot be fixed retroactively.
+      first_pass_ac: (if ((.quality.planning.first_pass_ac | type) == "number")
+                      then .quality.planning.first_pass_ac else null end),
       checks_run: ((.checks // []) | length),
       checks_failed: ((.checks // []) | map(select(.result=="fail")) | length),
       external_status: (.external.status // null),
@@ -243,8 +296,189 @@ row="$(jq -c \
 [ -n "$row" ] || exit 0
 printf '%s' "$row" | jq empty 2>/dev/null || exit 0
 
-# --- Append (single atomic write) + stamp the run-scoped sentinel -------------
-printf '%s\n' "$row" >> "$ledger" 2>/dev/null || exit 0
-printf '%s' "$base" > "$sentinel" 2>/dev/null || true
+# --- Append + stamp the run-scoped sentinel -----------------------------------
+# Three guards, because the ledger is clone-wide and therefore multi-writer:
+#
+#   1. PREVENT — a bounded, best-effort `mkdir` mutex. `mkdir` is atomic on every
+#      POSIX filesystem and needs no external tool; `flock(1)` is unavailable on
+#      macOS, which ships none. MEASURED ceiling ~2.0s on the full 15-attempt
+#      contention path (~2.5s when a stale reclaim is also attempted each pass) —
+#      the 15 sleeps are only 1.5s of it, plus the one-off granularity probe and
+#      ~25ms per iteration of `mkdir`/`date`/`stat`/`cat`. On a shell whose `sleep`
+#      takes only whole seconds the attempt count adapts to 2, so ~2s either way.
+#      FAIL-OPEN: this is a Stop hook, so it must never hold up a turn-end. Not
+#      acquiring the lock only means falling back to guard 2.
+#   2. DETECT — after appending, confirm the exact row is present in the file.
+#      Checked with `grep -qxF` (whole-line, literal) rather than `tail -n 1`
+#      deliberately: a concurrent writer may legitimately append after us, so a
+#      position-based check would misreport our intact row as torn. This detects a
+#      genuinely torn/interleaved write regardless of who else wrote.
+#   3. RETRY — stamp the sentinel ONLY after guard 2 passes. An unstamped sentinel
+#      IS the pre-existing retry path (the run is still `done`, so the next
+#      turn-end re-derives and re-appends), which is what stops a torn write from
+#      silently destroying a completed run's telemetry — `printf` reports success
+#      on a torn write, so without this the row would be lost permanently and the
+#      reader would discard the fragment without a word.
+#
+# Biased toward retrying when unsure, because the two failure modes are NOT
+# symmetric: the reader de-duplicates on branch+base (auto-task-stats.sh), so a
+# duplicate row is collapsed and harmless, whereas a dropped row is unrecoverable
+# data loss. The reader also now COUNTS and REPORTS unparseable lines, so the
+# residual garbage a torn write can leave behind is visible rather than silent.
+lock="$ledger.lock"
+lock_token="$lock/owner"
+locked=0
+# An OWNERSHIP TOKEN, not just a directory. Identifying "my lock" by path alone is
+# not sufficient once stale-reclaim exists, and the gap is real (reproduced): if our
+# critical section outlives the staleness window — a big ledger, a throttled CI
+# runner, an NFS home dir, a laptop sleeping mid-write — another writer reclaims our
+# live lock, and our own unconditional `rmdir` on completion would then delete THEIR
+# lock, admitting a third writer while they still believe they hold the mutex. So the
+# holder stamps an id and release is conditional on that id still being ours.
+_ro_id="$$-$base"
+_ro_lock_is_stale() {
+  # A lock dir left behind by a killed process must not wedge later writers.
+  #
+  # `stat` is GNU-FIRST (`-c %Y`), then BSD (`-f %m`), and the order is load-bearing
+  # — this repo already measured and documented the trap at
+  # hooks/auto-task-resume-list.sh:167-175: on GNU/Linux `stat -f %m` selects
+  # *filesystem* mode, where `%m` is not a valid directive yet the statfs SUCCEEDS
+  # (exit 0) printing garbage. A BSD-first order therefore never falls through on
+  # Linux, the numeric guard below rejects the garbage, and this function returns
+  # false forever — silently turning the orphaned-lock self-healing described here
+  # into dead code on every Linux host. On macOS `stat -c` is rejected (exit 1) and
+  # falls through to `-f %m`, which is exactly why a BSD-first order looks correct
+  # when every reviewer is on a Mac. If neither form works we never declare a lock
+  # stale, which is the safe direction.
+  #
+  # The window is deliberately much longer than any plausible critical section
+  # (append + one `grep` over the ledger). It only has to be short enough that an
+  # ORPHANED lock self-heals, and long enough that a merely slow holder is never
+  # mistaken for a dead one — the false-stale direction is the harmful one, and
+  # waiting is free here because failing to lock just falls through to guard 2.
+  local now age
+  now="$(date +%s 2>/dev/null)" || return 1
+  case "$now" in ''|*[!0-9]*) return 1 ;; esac
+  age="$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || true)"
+  case "$age" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$(( now - age ))" -ge 60 ]
+}
+_ro_take_lock() {
+  # Create the lock, then stamp ownership. Creating the token inside the dir also
+  # refreshes the dir's mtime, so staleness is measured from acquisition.
+  mkdir "$lock" 2>/dev/null || return 1
+  # The token IS the ownership claim, so a failed write must FAIL the acquisition
+  # rather than being swallowed. Holding a lock we could not mark would be
+  # self-contradictory under this protocol: `_ro_release_lock` would not recognise it
+  # as ours and would refuse to remove it, orphaning the lock until the staleness
+  # window elapses. Undoing the attempt is clean because we just created the dir and
+  # nothing else can be in it yet; returning 1 falls through to guard 2 exactly like
+  # any other failure to lock.
+  if ! printf '%s' "$_ro_id" 2>/dev/null > "$lock_token"; then
+    rm -f "$lock_token" 2>/dev/null || true
+    rmdir "$lock" 2>/dev/null || true
+    return 1
+  fi
+  return 0
+}
+_ro_release_lock() {
+  # Release ONLY a lock we still own. If a stale-reclaim replaced the token while we
+  # were working, the lock is someone else's now and removing it is exactly the bug
+  # this token exists to prevent — so leave it alone and let its owner release it.
+  [ -d "$lock" ] || return 0
+  [ "$(cat "$lock_token" 2>/dev/null || true)" = "$_ro_id" ] || return 0
+  rm -f "$lock_token" 2>/dev/null || true
+  rmdir "$lock" 2>/dev/null || true
+}
+# EVERY iteration costs one attempt — including the stale-lock branch. An earlier
+# revision `continue`d after a failed `rmdir` WITHOUT incrementing the counter or
+# sleeping, so a stale lock that cannot be removed (a stray file inside it, a
+# read-only parent, another uid's dir, `chflags uchg`) spun forever at full CPU.
+# In a Stop hook with no timeout in hooks.json that hangs EVERY turn-end,
+# permanently — the exact opposite of the bounded, fail-open contract above. The
+# loop is now unconditionally bounded: at most 15 attempts, each of which either
+# acquires the lock, or sleeps and advances the counter.
+# Attempt count is chosen from the granularity `sleep` actually supports, so the
+# wall-clock bound holds either way: 15 x 0.1s where fractional sleep works, but only
+# 2 x 1s where it does not (POSIX only requires integer seconds). Deciding this once
+# up front — rather than per iteration — is what keeps the ~2s measured ceiling from
+# silently becoming ~15s of turn-end delay on a shell with an integer-only sleep.
+_ro_frac_sleep=0
+sleep 0.1 2>/dev/null && _ro_frac_sleep=1
+if [ "$_ro_frac_sleep" -eq 1 ]; then _ro_max=15; else _ro_max=2; fi
+_ro_try=0
+while [ "$_ro_try" -lt "$_ro_max" ]; do
+  _ro_try=$((_ro_try + 1))
+  if _ro_take_lock; then locked=1; break; fi
+  # A stale lock gets ONE removal attempt per iteration; if it fails we fall
+  # through to the sleep like any other contended attempt rather than retrying
+  # `rmdir` in a tight loop. `rm -rf` rather than `rmdir` because a reclaimed lock
+  # legitimately contains the previous owner's token file.
+  if [ -d "$lock" ] && _ro_lock_is_stale "$lock"; then
+    if rm -rf "$lock" 2>/dev/null && _ro_take_lock; then locked=1; break; fi
+  fi
+  if [ "$_ro_frac_sleep" -eq 1 ]; then sleep 0.1 2>/dev/null || true; else sleep 1 2>/dev/null || true; fi
+done
+
+# NOTE the redirection ORDER: `2>/dev/null` must come BEFORE `>>`. Bash applies
+# redirections left to right, so with `>> "$ledger" 2>/dev/null` a failure to OPEN
+# the ledger (read-only file, unwritable dir) is reported on the still-attached
+# stderr — and this is a Stop hook that must stay completely silent. Silencing
+# stderr first suppresses the open failure too.
+# NEWLINE-SAFE APPEND. If the ledger does not already end in a newline, our row would
+# be GLUED onto the last one, producing `{…}{…}` on a single line. That is not merely
+# ugly: it destroys the previously-valid row, and it slips past the reader's per-line
+# validation because `jq empty` accepts a STREAM of values, so the glued line counts
+# as parseable and neither row is reported as skipped. The shape is reachable — the
+# documented stray-ledger migration (`cat <worktree>/… >> .auto-task/outcomes.jsonl`)
+# produces it whenever the source file lacks a trailing newline, as does a torn write
+# truncated before its newline, or any hand-edit. `tail -c 1` is the cheap check; if it
+# cannot be read we simply skip the repair rather than guessing.
+_ro_lead=""
+if [ -s "$ledger" ] && command -v tail >/dev/null 2>&1; then
+  _ro_last="$(tail -c 1 "$ledger" 2>/dev/null || printf '\n')"
+  [ "$_ro_last" = "" ] || _ro_lead=$'\n'
+fi
+printf '%s%s\n' "$_ro_lead" "$row" 2>/dev/null >> "$ledger" || {
+  [ "$locked" -eq 1 ] && _ro_release_lock
+  exit 0   # append failed outright → sentinel unwritten → retried next turn-end
+}
+
+# Guard 2, still inside the lock so a same-instant writer cannot interleave here.
+#
+# THREE outcomes, not two, and conflating them causes real damage. grep exits 0 =
+# found, 1 = not found, >1 = it could not read the file at all. Treating "could not
+# read" as "not found" would leave the sentinel unwritten forever on a ledger that
+# is appendable but unreadable (`chmod 200`), so every subsequent turn-end appends
+# another copy — an unbounded duplicate storm, strictly worse than the pre-change
+# behavior. When verification is IMPOSSIBLE we fall back to trusting the successful
+# append (exactly what this hook did before guard 2 existed); we only withhold the
+# sentinel when we positively determined the row is ABSENT.
+#
+# grep is also the one new external tool this path needs, so it is `command -v`
+# guarded like jq/git/stat/date elsewhere: no grep → cannot verify → same fallback.
+landed=1
+if command -v grep >/dev/null 2>&1; then
+  grep -qxF -- "$row" "$ledger" 2>/dev/null
+  case $? in
+    0) landed=1 ;;   # verified present
+    1) landed=0 ;;   # verified ABSENT → torn/interleaved → stay retryable
+    *) landed=1 ;;   # unreadable → cannot verify → trust the append
+  esac
+fi
+[ "$locked" -eq 1 ] && _ro_release_lock
+
+# Guard 3: only a verified-landed row marks this run recorded.
+#
+# Same redirection-order rule as the append above, and for the same two reasons —
+# this instance sat two lines away and was missed when the rule was introduced. With
+# `> "$sentinel" 2>/dev/null` a failure to OPEN the sentinel (an unwritable
+# `.auto-task/<branch>/` — read-only mount, full disk, `chmod 500`) is reported on
+# the still-attached stderr, breaking the silence contract on EVERY turn-end. And
+# because the sentinel then never gets stamped while the run stays `done`, guard 3
+# re-appends a fresh row every turn-end — the same unbounded duplicate storm the
+# guard-2 comment above reasons about, just reached from the other side.
+[ "$landed" -eq 1 ] || exit 0
+printf '%s' "$base" 2>/dev/null > "$sentinel" || true
 
 exit 0

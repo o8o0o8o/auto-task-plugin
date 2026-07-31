@@ -143,10 +143,49 @@ project_dir="$(cd "$project_dir_base" 2>/dev/null && git rev-parse --show-toplev
 [ -n "$project_dir" ] || project_dir="$project_dir_base"
 
 AT="$project_dir/.auto-task"
-ledger="$AT/outcomes.jsonl"
 
-if [ ! -d "$AT" ]; then
-  echo "auto-task-stats: no .auto-task/ directory under $project_dir — nothing to report."
+# --- Clone-wide resolution (ledger + every worktree's .auto-task root) --------
+# auto-task isolates each run in its own linked worktree, so BOTH halves of this
+# reader have to look clone-wide or they see almost nothing:
+#   * the ledger is written to the MAIN working tree (hooks/lib/clone-scope.sh),
+#     so resolving it from `$project_dir` finds no file whenever this is invoked
+#     from a worktree;
+#   * live STATE.json files live in the worktrees, so scanning only `$AT` reports
+#     0 in-flight / 0 stalled no matter how many runs are actually on disk — the
+#     opposite of what this tool exists to answer, and contrary to the documented
+#     promise that live runs are merged in.
+# Fail open on every branch: if the helper is unavailable or cannot resolve a main
+# worktree (no git, bare repo, not a repo), fall back to the pre-existing
+# single-root behavior.
+ledger=""
+scan_roots=""
+if [ -f "$SCRIPT_DIR/lib/clone-scope.sh" ]; then
+  # shellcheck source=lib/clone-scope.sh
+  if . "$SCRIPT_DIR/lib/clone-scope.sh" 2>/dev/null && command -v cs_ledger_path >/dev/null 2>&1; then
+    ledger="$(cs_ledger_path "$project_dir" 2>/dev/null || true)"
+    scan_roots="$(cs_autotask_roots "$project_dir" 2>/dev/null || true)"
+  fi
+fi
+[ -n "$ledger" ] || ledger="$AT/outcomes.jsonl"
+[ -n "$scan_roots" ] || scan_roots="$AT"
+
+# Nothing to report only when there is NO ledger AND no .auto-task root that actually
+# EXISTS anywhere in the clone. Keying this on `$AT` alone was wrong once the other
+# two are clone-wide: invoked from a worktree with no .auto-task/ of its own, it would
+# bail while a populated ledger and other worktrees' runs sat right there.
+#
+# Test each root for existence rather than testing `$scan_roots` for emptiness: the
+# fallback at the top of this block sets it to `$AT` unconditionally, and `$AT` is
+# never an empty string, so an emptiness test could never fire — it would be dead
+# code that silently replaced the pre-existing "nothing to report" message.
+_any_root=0
+while IFS= read -r _root; do
+  [ -n "$_root" ] && [ -d "$_root" ] && { _any_root=1; break; }
+done <<EOF
+$scan_roots
+EOF
+if [ ! -f "$ledger" ] && [ "$_any_root" -eq 0 ]; then
+  echo "auto-task-stats: no .auto-task/ directory in this clone — nothing to report."
   exit 0
 fi
 
@@ -164,6 +203,23 @@ fi
 # nullable value — it would fall through to the history-derived number. `absent`
 # is the only state that reaches the legacy history formula.
 DERIVE='
+  # NUMERIC COERCION AT THE SOURCE. Every field below that a consumer does arithmetic
+  # on is read through num0/numN, because these all come from model-written STATE.json
+  # and any of them can legitimately hold a string or a boolean. Two properties of jq
+  # make an untyped read dangerous rather than merely wrong: `add` and `/` are FATAL on
+  # a mixed type, and a bare `> 0` guard does NOT filter strings out (jq sorts strings
+  # after numbers, so "40" > 0 is true) — so a positivity guard passes the bad value
+  # straight into the division. A fatal error in the aggregator blanks EVERY metric
+  # section of the report instead of one field, which is how a non-numeric
+  # first_pass_ac silently emptied a real 9-run report.
+  def num0: if type == "number" then . else 0 end;
+  def numN: if type == "number" then . else null end;
+  # Same discipline for the STRING fields, and for the same reason: a `.[0:N]`
+  # slice is just as fatal on a wrong type as `add` is, and it lives outside both
+  # numeric guard layers. A numeric `effort.tier` made the whole By-tier table
+  # render as headers with no rows, losing the well-formed rows too, with no skip
+  # counter touched — the failure was invisible on screen.
+  def str0: if type == "string" then . else "" end;
   (.history // []) as $h
   | ($h | map(.at // empty)) as $ats
   | ($ats | first) as $t0
@@ -174,7 +230,7 @@ DERIVE='
   | (if $clock_state == "ok" then $clock_dur
      elif $clock_state == "rejected" then null
      else $hdur end) as $dur
-  | (if $clock_state == "absent" then (.actuals.duration_min // $dur) else $dur end) as $adur
+  | (if $clock_state == "absent" then ((.actuals.duration_min | numN) // $dur) else $dur end) as $adur
   | {
       at: ($t1 // ""),
       branch: (.branch // ""),
@@ -182,28 +238,37 @@ DERIVE='
       pr_url: (.pr_url // null),
       plugin_version: (.plugin_version // null),
       terminal_state: "done",
-      tier: (.effort.tier // ""),
-      tier_initial: (((.effort.history // []) | first | .from) // (.effort.tier // "")),
+      tier: (.effort.tier | str0),
+      tier_initial: ((((.effort.history // []) | first | .from) | str0) as $f
+                     | if $f == "" then (.effort.tier | str0) else $f end),
       escalations: ((.effort.history // []) | length),
-      fix_iterations: (.iteration.fix // 0),
-      review_iterations: (.iteration.review // 0),
-      gate_b: (if (.gates.gate_b.passed // false) then "passed" else ((.gates.gate_b.skipped_reason // "") | .[0:120]) end),
+      fix_iterations: (.iteration.fix | num0),
+      review_iterations: (.iteration.review | num0),
+      gate_b: (if (.gates.gate_b.passed // false) then "passed" else ((.gates.gate_b.skipped_reason | str0) | .[0:120]) end),
       followups: ((.followups // []) | length),
       duration_min: $dur,
-      est_duration_min: (.estimate.duration_min // null),
-      est_tokens: (.estimate.tokens_output // null),
-      est_tokens_scale: (if ((.estimate.tokens_output // null) != null) then "output"
-                         elif ((.estimate.tokens_total // null) != null) then "total"
+      est_duration_min: (.estimate.duration_min | numN),
+      est_tokens: (.estimate.tokens_output | numN),
+      est_tokens_scale: (if ((.estimate.tokens_output | numN) != null) then "output"
+                         elif ((.estimate.tokens_total | numN) != null) then "total"
                          else null end),
       act_duration_min: $adur,
-      act_tokens: (.actuals.tokens_total // null),
-      act_tokens_output: (.actuals.tokens_breakdown.output // null),
-      defects_early: (.quality.defects.early // 0),
-      defects_late: (.quality.defects.late // 0),
+      act_tokens: (.actuals.tokens_total | numN),
+      act_tokens_output: (.actuals.tokens_breakdown.output | numN),
+      defects_early: (.quality.defects.early | num0),
+      defects_late: (.quality.defects.late | num0),
       flaky: (.quality.flaky // false),
       tests_added: (.quality.tests_added // false),
-      diff_loc: (((.quality.diff.loc_added // 0) + (.quality.diff.loc_removed // 0))),
-      first_pass_ac: (.quality.planning.first_pass_ac // null),
+      diff_loc: (((.quality.diff.loc_added | num0) + (.quality.diff.loc_removed | num0))),
+      # NUMBER-ONLY. `quality.planning.first_pass_ac` is model-written and is, in real
+      # state files, freely a string ("6/6 self-verify ACs green") or a boolean. The
+      # aggregator sums this field, and jq cannot add a number to a string — that is a
+      # FATAL error in the single agg pass, which blanks EVERY metric section of the
+      # report rather than printing one wrong number. Coercing here keeps the bad value
+      # out of the row entirely; the aggregator additionally re-filters, because rows
+      # already appended to an append-only ledger cannot be fixed retroactively.
+      first_pass_ac: (if ((.quality.planning.first_pass_ac | type) == "number")
+                      then .quality.planning.first_pass_ac else null end),
       checks_run: ((.checks // []) | length),
       checks_failed: ((.checks // []) | map(select(.result=="fail")) | length)
     }'
@@ -211,7 +276,15 @@ DERIVE='
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 rows="$tmp/rows.jsonl"        # deduped DONE rows (archive + live-done)
 : > "$rows"
-seen="$tmp/seen"; : > "$seen" # branch<TAB>base identities already counted
+seen="$tmp/seen"; : > "$seen" # branch<TAB>base identities already counted (DONE rows)
+# Live NON-terminal sightings are collected here and reduced after the scan, so the
+# freshest sighting of a run wins rather than whichever root `find` reached first. Kept
+# entirely separate from `$seen`: sharing one set with the done rows would let a
+# non-terminal sighting claim a key and SUPPRESS a `done` run found later under another
+# root, and would hide a genuinely resumed run whose earlier attempt is already
+# archived in the ledger.
+live_raw="$tmp/live_raw.tsv";   : > "$live_raw"
+live_best="$tmp/live_best.tsv"; : > "$live_best"
 
 now="$(date +%s)"
 cutoff=$(( now - STALE_DAYS * 86400 ))
@@ -220,18 +293,51 @@ in_flight=0
 stalled=0
 stalled_list="$tmp/stalled.txt"; : > "$stalled_list"
 
+# Every `grep` on a key below uses `--`. `norm_key` puts the BRANCH first, so a branch
+# value beginning with `-` makes grep parse the key as an option; with no file operand
+# left, grep then reads the ENCLOSING LOOP's stdin and swallows the rest of the ledger
+# or the rest of the find results — every remaining run vanishes with no counter
+# touched. hooks/record-outcome.sh already passes `--` for the same reason.
 norm_key(){ printf '%s\t%s' "$1" "$2"; }
+# Flatten any control character that would break the line-and-field-oriented live
+# sighting records below (real newlines/tabs come out of `jq -r` unescaping a
+# model-written summary; \037 is the field separator itself).
+_san(){ printf '%s' "${1:-}" | tr '\n\r\t\037' '    '; }
 
 # 1. Archive rows (each line one row). Normalize field defaults through jq.
 # `|| [ -n "$line" ]` so a final row lacking a trailing newline is not dropped.
+skipped_rows=0
+# Live-done STATE.json files whose derivation failed (see the done branch below).
+# Counted so a dropped completed run is reported rather than silently missing.
+skipped_live=0
+# The PATHS behind that count, so the report can name them instead of telling the
+# maintainer to inspect "the file(s) named by the skip count" — which names none.
+skipped_live_list="$tmp/skipped_live.txt"; : > "$skipped_live_list"
 if [ -f "$ledger" ]; then
   while IFS= read -r line || [ -n "$line" ]; do
     [ -n "$line" ] || continue
-    printf '%s' "$line" | jq empty 2>/dev/null || continue
+    # A line that is not EXACTLY ONE JSON value is COUNTED, not silently dropped.
+    #
+    # `jq empty` alone is NOT sufficient, and assuming it was hid a real data loss:
+    # jq parses a STREAM, so a glued line `{…}{…}` — produced whenever something
+    # appended to a ledger that did not end in a newline — passes `jq empty` happily.
+    # The consequences compound: the glued line is counted once by `wc -l` below but
+    # slurped as TWO elements by the `jq -s` aggregation, so the headline count and the
+    # per-tier/rate tables disagree; `jq -r '.branch'` emits two lines and pollutes the
+    # dedup keys; and a genuinely-recorded run silently vanishes while this notice
+    # stays at zero. `jq -s length` is the actual one-value-per-line check.
+    # `length == 1` is necessary but NOT sufficient: a scalar line (`123`, `null`,
+    # `[]` — reachable from a hand-edit or a foreign JSONL folded in via the
+    # documented `cat … >> …` migration) is exactly one JSON value, so it would be
+    # admitted, counted as a done run, and then kill the aggregation on the first
+    # `.plugin_version` lookup — blanking the whole report with no skipped-row notice,
+    # i.e. the same failure this check exists to report. Require an OBJECT.
+    _ok="$(printf '%s' "$line" | jq -s 'length == 1 and (.[0] | type == "object")' 2>/dev/null || echo false)"
+    [ "$_ok" = "true" ] || { skipped_rows=$((skipped_rows + 1)); continue; }
     br="$(printf '%s' "$line" | jq -r '.branch // ""' 2>/dev/null || echo "")"
     ba="$(printf '%s' "$line" | jq -r '.base // ""' 2>/dev/null || echo "")"
     key="$(norm_key "$br" "$ba")"
-    grep -qxF "$key" "$seen" 2>/dev/null && continue
+    grep -qxF -- "$key" "$seen" 2>/dev/null && continue
     printf '%s\n' "$key" >> "$seen"
     printf '%s\n' "$line" >> "$rows"
   done < "$ledger"
@@ -241,16 +347,72 @@ fi
 while IFS= read -r sf; do
   [ -n "$sf" ] || continue
   [ -f "$sf" ] || continue
-  jq empty "$sf" 2>/dev/null || continue
+  # An unparseable STATE.json is counted, not dropped in silence — the pipeline
+  # rewrites this file continuously, so a killed session can leave it truncated
+  # mid-write, and that file may well be a COMPLETED run. Counting it here is what
+  # makes skipped_live's promise ("a dropped completed run is reported") true for the
+  # unparseable case as well as the underivable one. Unparseable means we cannot know
+  # the phase, so it is reported rather than classified.
+  if ! jq empty "$sf" 2>/dev/null; then
+    skipped_live=$((skipped_live + 1)); printf '%s\n' "$sf" >> "$skipped_live_list"; continue
+  fi
   approved="$(jq -r '.approved // false' "$sf" 2>/dev/null || echo false)"
   phase="$(jq -r '.phase // ""' "$sf" 2>/dev/null || echo "")"
   br="$(jq -r '.branch // ""' "$sf" 2>/dev/null || echo "")"
   ba="$(jq -r '.base // ""' "$sf" 2>/dev/null || echo "")"
 
+  # IS THIS FILE A RUN'S STATE, OR A COPY OF ONE? A run's state lives at exactly
+  # <root>/<its own branch>/STATE.json, so the file's location must agree with the branch
+  # it declares. A snapshot parked under <branch>/artifacts/… declares the real branch but
+  # sits at a deeper path, so it is rejected; a genuine run on ANY branch — including one
+  # literally named `fixes/typo` or `feat/artifacts` — agrees and is kept.
+  #
+  # This replaces two earlier attempts that were both wrong in opposite directions. A
+  # `-maxdepth` cap dropped real runs on three-segment branches. A `! -path '*/artifacts/*'`
+  # filter was worse: `-path` matches the WHOLE absolute path, so it excluded every run in
+  # any clone that merely LIVES under a directory named artifacts/recon/fixes (measured: a
+  # clone at /…/fixes/repo reported zero runs and then affirmatively denied they existed) —
+  # reinstating, for a whole class of clone locations, the very blindness this change
+  # removes. Comparing the declared branch against the path is exact, position-independent
+  # and depth-independent. Fail-open: a state file with no `.branch` is kept, since
+  # dropping a real run is the worse error.
+  # Two DIFFERENT kinds of disagreement, and collapsing them would silently drop a run.
+  # A snapshot sits UNDER its own branch folder (path_branch starts with "<branch>/"), which
+  # is expected and uninteresting — skip it quietly. Anything else is a genuine mismatch: a
+  # renamed branch folder, a hand-moved file, a corrupt `.branch`. That may well be a real
+  # completed run, so it is COUNTED and named rather than vanishing — the same promise
+  # skipped_live makes for unreadable and underivable files.
+  if [ -n "$br" ]; then
+    _rel="${sf##*/.auto-task/}"; _pb="${_rel%/STATE.json}"
+    # Compare by FILE IDENTITY, not by string. A byte compare of a git ref name against a
+    # path component is wrong on a case-insensitive filesystem — macOS APFS by default, and
+    # Windows. Measured: `git checkout -b Feat/b` reports `Feat/b`, but `mkdir -p
+    # .auto-task/Feat/b` beside an existing `.auto-task/feat/` yields `feat/b` on disk, so
+    # `find` hands back `feat/b/STATE.json` while `.branch` says `Feat/b`. The string
+    # compare then failed and DROPPED a completed run — a regression against base, which
+    # counted it — while also misreporting it as unreadable. `-ef` compares device+inode, so
+    # the filesystem's own canonicalization (and any symlinked worktree path) is handled by
+    # the same test that answers the real question: is this file the one that the branch's
+    # own folder holds?
+    _match=0
+    if [ "$_pb" = "$br" ]; then
+      _match=1
+    else
+      _root_pfx="${sf%"/.auto-task/$_rel"}"
+      _expect="$_root_pfx/.auto-task/$br/STATE.json"
+      [ -e "$_expect" ] && [ "$sf" -ef "$_expect" ] && _match=1
+    fi
+    if [ "$_match" -eq 0 ]; then
+      case "$_pb" in
+        "$br"/*) continue ;;                       # a snapshot under the run's own folder
+        *) skipped_live=$((skipped_live + 1)); printf '%s\n' "$sf" >> "$skipped_live_list"; continue ;;
+      esac
+    fi
+  fi
+
   if [ "$phase" = "done" ]; then
     key="$(norm_key "$br" "$ba")"
-    grep -qxF "$key" "$seen" 2>/dev/null && continue   # already archived → ledger wins
-    printf '%s\n' "$key" >> "$seen"
+    grep -qxF -- "$key" "$seen" 2>/dev/null && continue   # already archived → ledger wins
     # Per-state clock verdict. Resolved here (not once for the whole run) because
     # each STATE.json has its own sibling clock file.
     clock_state="absent"; clock_dur="null"
@@ -259,24 +421,92 @@ while IFS= read -r sf; do
       clock_state="$(rc_verdict_state "$_rc_verdict")"
       clock_dur="$(rc_verdict_value "$_rc_verdict")"
     fi
-    jq -c --argjson clock_dur "$clock_dur" --arg clock_state "$clock_state" \
-      "$DERIVE" "$sf" 2>/dev/null >> "$rows" || true
+    # CLAIM THE KEY ONLY AFTER THE DERIVATION SUCCEEDS. Claiming first meant a
+    # STATE.json whose derivation errors (the one arithmetic in DERIVE is on
+    # `quality.diff.loc_*`, so a string there is enough) both lost that run AND
+    # suppressed a well-formed copy of the same run found later at another root —
+    # so the run vanished entirely. This is the same claim-before-verify mistake the
+    # non-terminal population was fixed for; the done population was still doing it
+    # to itself, and the cross-root form only became reachable once this scan went
+    # clone-wide. A failed derivation is also COUNTED now, so it cannot be silent.
+    _derived="$(jq -c --argjson clock_dur "$clock_dur" --arg clock_state "$clock_state" \
+      "$DERIVE" "$sf" 2>/dev/null || true)"
+    if [ -n "$_derived" ] && printf '%s' "$_derived" | jq empty 2>/dev/null; then
+      printf '%s\n' "$key" >> "$seen"
+      printf '%s\n' "$_derived" >> "$rows"
+    else
+      skipped_live=$((skipped_live + 1)); printf '%s\n' "$sf" >> "$skipped_live_list"
+    fi
     continue
   fi
 
   # Non-done: only count runs that actually started (approved).
   [ "$approved" = "true" ] || continue
+  # COLLECT every non-terminal sighting; classify AFTER the scan (see the reduce step
+  # below). Deciding here would make the outcome depend on which root `find` reached
+  # first: an earlier revision claimed the branch+base key on first sighting and then
+  # computed freshness from THAT copy, so a stale copy at one root could report a live
+  # run as `stalled` — with the wrong `phase` attributed — in the very "where do runs
+  # stall?" list this tool exists to produce. Freshness is a property of the RUN, not
+  # of whichever path was walked first, so the freshest sighting has to win.
   newest="$(jq -r '[.history[]?.at // empty] | map(fromdateiso8601? // 0) | max // 0' "$sf" 2>/dev/null || echo 0)"
   case "$newest" in ''|*[!0-9]*) newest=0 ;; esac
-  if [ "$newest" -ge "$cutoff" ] && [ "$newest" -gt 0 ]; then
-    in_flight=$((in_flight + 1))
-  else
-    stalled=$((stalled + 1))
-    last_phase="$(jq -r '(.history // []) | last | (.phase // .result // "unknown")' "$sf" 2>/dev/null || echo unknown)"
-    last_sum="$(jq -r '(.history // []) | last | (.summary // .result // "")' "$sf" 2>/dev/null || echo "")"
-    printf '  %s @ phase=%s — %s\n' "${br:-?}" "$last_phase" "$last_sum" >> "$stalled_list"
-  fi
-done <<< "$(find "$AT" -name STATE.json 2>/dev/null)"
+  last_phase="$(jq -r '(.history // []) | last | (.phase // .result // "unknown")' "$sf" 2>/dev/null || echo unknown)"
+  last_sum="$(jq -r '(.history // []) | last | (.summary // .result // "")' "$sf" 2>/dev/null || echo "")"
+  # One record per sighting, with branch and base as their OWN fields — deliberately
+  # not `norm_key`, whose output already contains a tab and would therefore shift
+  # every later field by one (observed: `newest` received the base SHA, so every live
+  # run scored 0 and was reported as stalled).
+  #
+  # THE SEPARATOR IS \x1f (US), NOT A TAB, and that is load-bearing. A tab is IFS
+  # *whitespace*, so `read` collapses runs of it and drops empty fields: a STATE.json
+  # with no `base` emits `branch<TAB><TAB>newest…`, which `read` collapses so `newest`
+  # receives the phase string, scores 0, and the live run is misreported as stalled
+  # (measured). `\x1f` is not whitespace, so empty fields survive intact, and both
+  # `sort -t` and `awk -F` accept it.
+  #
+  # The three free-text fields are also SANITISED, because `jq -r` unescapes `\n` and
+  # `\t` in a model-written history summary into real control characters — and a real
+  # newline splits one record into two, the continuation of which `awk` then counts as
+  # an extra run (measured: NF=1 bogus record, inflating the stalled tally). Before
+  # this collect step existed the summary was only ever printed, so a newline in it
+  # was merely cosmetic; feeding it to a line-oriented reduce is what made it wrong.
+  printf '%s\037%s\037%s\037%s\037%s\n' \
+    "$(_san "${br:-?}")" "$(_san "$ba")" "$newest" "$(_san "$last_phase")" "$(_san "$last_sum")" \
+    >> "$live_raw"
+# The find is deliberately UNFILTERED and uncapped: deciding what is a run happens in the
+# loop above, by checking each file's declared branch against its location. Filtering here
+# cannot work — a depth cap drops real runs on multi-segment branches, and a `! -path`
+# exclusion matches the whole absolute path and so drops every run in any clone that merely
+# lives under a directory of that name. See the branch-vs-path check above.
+done <<< "$(printf '%s\n' "$scan_roots" | while IFS= read -r _root; do
+  [ -n "$_root" ] && [ -d "$_root" ] && find "$_root" -name STATE.json 2>/dev/null
+done)"
+
+# --- Reduce the non-terminal sightings: one row per run, the FRESHEST one ---------
+# `sort -t<tab> -k1,1 -k2,2nr` groups by the branch+base key and orders each group by
+# `newest` descending, so the first line per key is the most recent sighting; `awk`
+# then keeps exactly that one. This is what makes the in-flight/stalled split
+# independent of `find` order, and it also supplies the dedup the tallies need (the
+# `seen_live` set it replaces did both jobs, but decided freshness too early).
+if [ -s "$live_raw" ]; then
+  _US="$(printf '\037')"
+  LC_ALL=C sort -t"$_US" -k1,1 -k2,2 -k3,3nr "$live_raw" 2>/dev/null \
+    | awk -F'\037' '!seen[$1 FS $2]++' > "$live_best" 2>/dev/null || cp "$live_raw" "$live_best"
+  # Guard against an empty reduce (a sort/awk failure) silently dropping every live
+  # run: fall back to the raw sightings, which over-counts at worst but never hides.
+  [ -s "$live_best" ] || cp "$live_raw" "$live_best" 2>/dev/null || true
+  while IFS="$_US" read -r _br _ba _newest _lphase _lsum; do
+    [ -n "${_br:-}" ] || continue
+    case "${_newest:-}" in ''|*[!0-9]*) _newest=0 ;; esac
+    if [ "$_newest" -ge "$cutoff" ] && [ "$_newest" -gt 0 ]; then
+      in_flight=$((in_flight + 1))
+    else
+      stalled=$((stalled + 1))
+      printf '  %s @ phase=%s — %s\n' "${_br:-?}" "${_lphase:-unknown}" "${_lsum:-}" >> "$stalled_list"
+    fi
+  done < "$live_best"
+fi
 
 done_count="$(wc -l < "$rows" | tr -d ' ')"
 total=$((done_count + stalled + in_flight))
@@ -285,13 +515,49 @@ total=$((done_count + stalled + in_flight))
 if [ "$total" -eq 0 ]; then
   echo "auto-task run stats"
   echo "==================="
+  # The skipped-row notice MUST be reachable here, not only in the normal report
+  # below. The worst realistic case for a torn write is a clone whose ONLY completed
+  # run had its row torn: total is then 0, and without this branch the reader would
+  # answer "the ledger is empty — complete a run to populate it" about a ledger that
+  # is not empty and about a run that did complete. That is precisely the silent data
+  # loss this notice exists to prevent, in its most misleading form.
+  if [ "$skipped_rows" -gt 0 ]; then
+    printf '%d unparseable ledger row(s) skipped (likely a torn concurrent append) — see %s\n' \
+      "$skipped_rows" "$ledger"
+    echo "The ledger is NOT empty: it holds row(s) that could not be parsed, so the run(s) they"
+    echo "represent are not counted below. Inspect the file to recover or remove them."
+  fi
+  # State what is known and no more. An UNPARSEABLE file is counted before its phase can
+  # be read (see the scan loop), so "a completed run IS on disk" would be an over-claim —
+  # the honest wording is that one of them MAY be one. And the files are NAMED: telling a
+  # maintainer to "inspect the file(s) named by the skip count" is unfollowable advice,
+  # since a count names nothing.
+  if [ "$skipped_live" -gt 0 ]; then
+    printf '%d live STATE.json file(s) skipped — unreadable, underivable, or not where their branch says\n' \
+      "$skipped_live"
+    echo "One of those may be a completed run, which would then not be counted above:"
+    [ -s "$skipped_live_list" ] && sed 's/^/    /' "$skipped_live_list"
+  fi
+  # Two INDEPENDENT things have to be said here, and collapsing them into one if/elif
+  # chain broke each in turn. (1) The OPT-IN STATE is worth reporting regardless of any
+  # skip — an earlier revision let a non-zero skip count shadow it, hiding the only
+  # actionable line in this path (`touch <canonical path>`) from a clone that had never
+  # opted in. (2) The "nothing is here" sentence must never contradict a skip notice
+  # printed above it: claiming "the ledger is empty and no live runs are on disk", or
+  # telling the maintainer to go complete a run, is false when something WAS skipped.
+  # So: report the opt-in state unconditionally, and emit the emptiness claim only when
+  # nothing at all was skipped.
   if [ ! -f "$ledger" ]; then
-    echo "No runs recorded yet, and telemetry is not opted in."
+    echo "The ledger does not exist, so completed runs are not being archived."
     echo "Opt in with:  touch \"$ledger\""
-    echo "Then complete an /auto-task run to populate it."
-  else
-    echo "No runs recorded yet — the ledger is empty and no live runs are on disk."
+  fi
+  if [ "$skipped_rows" -eq 0 ] && [ "$skipped_live" -eq 0 ]; then
+    if [ -f "$ledger" ]; then
+      echo "No runs recorded yet — the ledger is empty and no live runs are on disk."
+    fi
     echo "Complete an /auto-task run to populate it."
+  elif [ "$skipped_rows" -gt 0 ] && [ "$skipped_live" -eq 0 ]; then
+    echo "No countable runs — every ledger row was unparseable."
   fi
   exit 0
 fi
@@ -307,7 +573,18 @@ agg="$(jq -s \
   --argjson ratio_mde "$RATIO_MDE" \
   --argjson recal_min "$RECAL_MIN" \
   '
-  def median: (map(. // 0) | sort) as $s | if ($s|length)==0 then 0 else $s[(($s|length-1)/2)|floor] end;
+  # Same numeric discipline as DERIVE. These protect rows ALREADY in the append-only
+  # ledger, which cannot be corrected retroactively, and they matter because `add`
+  # and `/` are FATAL on a mixed type while a bare `> 0` does NOT exclude a string
+  # (jq sorts strings after numbers). A fatal error here blanks the whole report.
+  def n0: if type == "number" then . else 0 end;
+  def isnum: type == "number";
+  # A `> 0` predicate does NOT exclude a non-number: jq sorts strings/arrays/objects
+  # AFTER numbers, so `"none" > 0`, `[] > 0` and `{} > 0` are all true. Counting sites
+  # were therefore never safe either — a malformed legacy row was counted as a defect
+  # and reported as a real rate. `pos` is the honest "is a positive number" test.
+  def pos: (type == "number") and (. > 0);
+  def median: (map(n0) | sort) as $s | if ($s|length)==0 then 0 else $s[(($s|length-1)/2)|floor] end;
   # Wilson 95% score interval → {lo,hi} as percentages, or null when n<=0.
   def wilson(k; n):
     if (n <= 0) then null
@@ -382,17 +659,18 @@ agg="$(jq -s \
   # `tok_ok | not` to tok_legacy gave positivity precedence over the numbers rather than
   # the scale marker: such a row was POOLED (dragging a 1.1x median to 0.21x) and the
   # exclusion notice vanished, which is strictly less information than reporting it.
-  def tok_ok: ((.est_tokens // 0) > 0) and ((.act_tokens_output // 0) > 0)
+  def tok_ok: (.est_tokens | isnum) and (.act_tokens_output | isnum)
+              and ((.est_tokens) > 0) and ((.act_tokens_output) > 0)
               and (.est_tokens_scale? != "total");
   def tok_legacy: (tok_ok | not)
-                  and ( ((.est_tokens_scale? == "total") and ((.act_tokens_output // 0) > 0))
-                        or ((has("act_tokens_output") | not) and ((.est_tokens // 0) > 0)) );
+                  and ( ((.est_tokens_scale? == "total") and (.act_tokens_output | isnum) and ((.act_tokens_output) > 0))
+                        or ((has("act_tokens_output") | not) and (.est_tokens | isnum) and ((.est_tokens) > 0)) );
   def tok_ratio: (.act_tokens_output / .est_tokens);
   length as $N
   | (map(select((.plugin_version | type) == "string" and .plugin_version != "" and .plugin_version != "unknown"))
      | group_by(.plugin_version)
      | map({ version: .[0].plugin_version, n: length,
-             late:  vrate((.defects_late // 0) > 0),
+             late:  vrate(.defects_late | pos),
              tests: vrate(.tests_added == true),
              flaky: vrate(.flaky == true),
              ratio_tokens: (map(select(tok_ok) | tok_ratio) | median),
@@ -401,30 +679,43 @@ agg="$(jq -s \
   | (map(select(tok_ok) | tok_ratio) | median) as $rtok
   | (map(select(tok_ok)) | length) as $ntok
   | (map(select(tok_legacy)) | length) as $nlegacy
-  | (map(select(((.est_duration_min // 0) > 0) and ((.act_duration_min // 0) > 0)) | (.act_duration_min/.est_duration_min)) | median) as $rdur
-  | (map(select(((.est_duration_min // 0) > 0) and ((.act_duration_min // 0) > 0))) | length) as $ndur
+  | (map(select((.est_duration_min | isnum) and (.act_duration_min | isnum)
+              and ((.est_duration_min) > 0) and ((.act_duration_min) > 0))
+       | (.act_duration_min/.est_duration_min)) | median) as $rdur
+  | (map(select((.est_duration_min | isnum) and (.act_duration_min | isnum)
+              and ((.est_duration_min) > 0) and ((.act_duration_min) > 0))) | length) as $ndur
   | ($versions | map(select(.n >= $min_sample))) as $elig
   | {
     quality: {
-      first_pass: ((map(.first_pass_ac // empty)) as $fp
+      # NUMBERS ONLY — `select(type=="number")`, not merely `// empty`. This field is
+      # model-written and real state files carry strings ("6/6 self-verify ACs green")
+      # and booleans as often as numbers; `add` on a mixed array is a FATAL jq error,
+      # and per the --argjson note above an error here blanks the ENTIRE report rather
+      # than one metric. Measured on a real 9-run clone: every quality rate printed
+      # `n=0 (no data)`, the whole By-tier table printed empty, Gate-B coverage printed
+      # `0/0` and follow-up debt `0` — wrong numbers presented as facts, in the section
+      # the header of this very file calls THE headline. The DERIVE blocks now coerce at the
+      # source too; this filter is what protects rows ALREADY written to an append-only
+      # ledger, which cannot be corrected retroactively.
+      first_pass: ((map(.first_pass_ac | select(type == "number"))) as $fp
         | { n: ($fp|length),
             mean_pct: (if ($fp|length)==0 then null else (($fp|add)/($fp|length)*1000|round)/10 end) }),
-      late:  rate((.defects_late // 0) > 0),
+      late:  rate(.defects_late | pos),
       tests: rate(.tests_added == true),
       flaky: rate(.flaky == true),
-      early_mean: (if $N==0 then null else ((map(.defects_early // 0)|add)/$N*100|round)/100 end)
+      early_mean: (if $N==0 then null else ((map(.defects_early | n0)|add)/$N*100|round)/100 end)
     },
     tiers: (group_by(.tier) | map({
         tier: (.[0].tier // "?"),
         n: length,
         med_fix: (map(.fix_iterations // 0) | median),
         med_review: (map(.review_iterations // 0) | median),
-        pct_escalated: (if length==0 then 0 else ((map(select((.escalations // 0) > 0)) | length) * 100 / length | floor) end)
+        pct_escalated: (if length==0 then 0 else ((map(select(.escalations | pos)) | length) * 100 / length | floor) end)
       })),
     sh_total: (map(select(.tier=="standard" or .tier=="heavy")) | length),
     sh_ran: (map(select((.tier=="standard" or .tier=="heavy") and (.gate_b=="passed"))) | length),
-    pct_misscored: (if length==0 then 0 else ((map(select((.escalations // 0) > 0)) | length) * 100 / length | floor) end),
-    avg_followups: (if length==0 then 0 else ((map(.followups // 0) | add) / length) end),
+    pct_misscored: (if length==0 then 0 else ((map(select(.escalations | pos)) | length) * 100 / length | floor) end),
+    avg_followups: (if length==0 then 0 else ((map(.followups | n0) | add) / length) end),
     ratio_tokens: $rtok, n_tok: $ntok, n_tok_legacy: $nlegacy,
     ratio_dur: $rdur, n_dur: $ndur,
     versions: $versions,
@@ -472,6 +763,21 @@ fmt_rate(){ # $1 = jq path into $agg, e.g. .quality.late
 echo "auto-task run stats  (stale threshold: ${STALE_DAYS}d)"
 echo "===================================================="
 printf '%d runs on record — %d done, %d stalled, %d in-flight\n' "$total" "$done_count" "$stalled" "$in_flight"
+# Surface unparseable ledger lines rather than dropping them silently. Only a torn
+# concurrent append can produce one, meaning a real completed run's row — so a
+# silent skip would be invisible data loss in the one tool whose job is an honest
+# run history. Same principle as the pre-recalibration exclusion note below.
+if [ "$skipped_rows" -gt 0 ]; then
+  printf '%d unparseable ledger row(s) skipped (likely a torn concurrent append) — see %s\n' \
+    "$skipped_rows" "$ledger"
+fi
+if [ "$skipped_live" -gt 0 ]; then
+  printf '%d live STATE.json file(s) skipped — unreadable, underivable, or not where their branch says\n' \
+    "$skipped_live"
+  # Name them. "Inspect the file(s) named by the skip count" was unfollowable advice —
+  # a count names nothing, unlike the ledger notice which prints its path.
+  [ -s "$skipped_live_list" ] && sed 's/^/  /' "$skipped_live_list"
+fi
 echo ""
 
 # --- Quality (test-verified — THE headline) ---------------------------------
@@ -562,8 +868,13 @@ echo ""
 
 echo "By tier"
 printf '  %-10s %5s %11s %14s %11s\n' "tier" "#done" "med fix" "med review" "escalated"
-printf '%s' "$agg" | jq -r '.tiers[]? | "  \(.tier|.[0:10]) \(.n) \(.med_fix) \(.med_review) \(.pct_escalated)"' 2>/dev/null \
-  | while read -r t n mf mr pe; do printf '  %-10s %5s %11s %14s %10s%%\n' "$t" "$n" "$mf" "$mr" "$pe"; done
+# Columns are \037-delimited and read with IFS=\037, NOT whitespace-split. A tier value
+# containing a space — a `tostring`ed array like ["a b"], or simply a string tier with a
+# space — otherwise spills into the #done column and shifts every later one, turning a
+# blank table into a WRONG table presented as right. \037 is not whitespace, so the field
+# boundaries survive whatever the value contains.
+printf '%s' "$agg" | jq -r '.tiers[]? | "\(.tier | if type == "string" then .[0:10] else (tostring | .[0:10]) end)\(.n)\(.med_fix)\(.med_review)\(.pct_escalated)"' 2>/dev/null \
+  | while IFS="$(printf '\037')" read -r t n mf mr pe; do printf '  %-10s %5s %11s %14s %10s%%\n' "$t" "$n" "$mf" "$mr" "$pe"; done
 [ "$done_count" -eq 0 ] && echo "  (no completed runs yet)"
 echo ""
 

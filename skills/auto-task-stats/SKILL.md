@@ -8,17 +8,21 @@ license: MIT
 
 Read-only reporter over this repo's auto-task run outcomes. It answers: **what is the completion rate, and where do runs stall?** — by aggregating the append-only ledger `.auto-task/outcomes.jsonl` (completed runs, written by the `record-outcome.sh` Stop hook) together with every live `.auto-task/*/STATE.json` on disk (in-flight and stalled runs, which never reach the ledger).
 
+Both sources are read **clone-wide**: the ledger is resolved to the main working tree, and live `STATE.json` files are scanned across every worktree of the clone (`hooks/lib/clone-scope.sh`). Since auto-task isolates each run in its own worktree, that is the only way either source is non-empty — so this report is the same whether you invoke it from the main tree or from inside a worktree.
+
 This skill never writes anything and never changes pipeline behavior. It just runs the bundled `hooks/auto-task-stats.sh` aggregator and presents its output.
 
 ## Opt-in (one-time)
 
-Telemetry is **off by default**. Turn it on per-clone with:
+Telemetry is **off by default**. Turn it on per-clone by running this **at the repo root** (the main working tree):
 
 ```
 touch .auto-task/outcomes.jsonl
 ```
 
-From then on, every `/auto-task` run that reaches `phase: done` appends one local JSON row (no network, no data leaves the machine — the row is derived from fields already in `STATE.json`). Opt out by deleting the file. Even before opting in, this skill still reports on live/stalled runs it finds on disk.
+From then on, every `/auto-task` run that reaches `phase: done` appends one local JSON row (no network, no data leaves the machine — the row is derived from fields already in `STATE.json`), no matter which worktree it completed in. Opt out by deleting the file. Even before opting in, this skill still reports on live/stalled runs it finds on disk.
+
+The repo root matters: the ledger is clone-wide, so one created *inside* a worktree is not the file the hooks use. Fold a stray one in with `cat <worktree>/.auto-task/outcomes.jsonl >> .auto-task/outcomes.jsonl`, then delete it.
 
 ## Usage
 
