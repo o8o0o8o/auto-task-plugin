@@ -219,8 +219,16 @@ expect "preflight treats auto-task-docs as optional" \
 expect "absent docs skill degrades to skip, not a stop" \
   "$(has "$SKILL" 'docs-skill-absent')"                                      "yes"
 # R1: resetting gate_b without restoring it on a clean pass blocks the commit.
+# WORDING UPDATED with the Gate-B bounding change: "only on a clean adversarial
+# pass" was replaced because the main pipeline no longer reopens on a severity label
+# — a finding that fails the Step-2 AC-impact test is PARKED, so a pass carrying
+# parked `required` findings is still a passing pass. The rule this assertion
+# guards is unchanged: the docs re-gate must RESTORE gate_b, or the commit blocks.
 expect "1b restores gate_b on a clean adversarial pass" \
-  "$(has "$SKILL" 'setting it back to `true` **only on a clean adversarial pass**')" "yes"
+  "$(has "$SKILL" "setting it back to \`true\` **only when that pass clears Gate B's own resolution ladder**")" "yes"
+# ...and it must route a reopening finding back to fixing rather than passing the gate.
+expect "1b loops a reopening finding back to fixing" \
+  "$(has "$SKILL" 'A finding that DOES meet it loops back to fixing')"                 "yes"
 # R2: the skill is composed mid-pipeline, so it needs the sibling caller note or
 # its report can read as an end-of-turn and stall Phase 5.
 expect "docs skill carries the caller note"   "$(grep -c 'Caller note (do not strip)' "$DOCS")" "1"

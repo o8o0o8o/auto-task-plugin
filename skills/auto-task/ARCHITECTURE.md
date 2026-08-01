@@ -42,12 +42,17 @@ flowchart TD
 
     P4OK --> Tier{tier?}
     Tier -- LIGHT --> SkipB[gates.gate_b.skipped_reason='tier=light']
-    Tier -- STANDARD/HEAVY --> GateB[Gate B — Adversarial verifier<br/>spawn task-execution-verifier<br/>fresh context: AC + full diff + Phase-4 findings<br/>prompt flipped to 'find what's wrong'<br/>NO COMMIT]
+    Tier -- STANDARD/HEAVY --> GateBCap{passes for this scope<br/>&lt; lb_gate_b_cap?<br/>budget OK?}
+    GateBCap -- at cap --> GateBSurface([SURFACE — per-pass severity table<br/>grant: +1 pass / park_non_blocking / descope<br/>expected_next_action=user-approval])
+    GateBSurface -- "+1 pass" --> GateBCap
+    GateBSurface -- park / descope --> GateBOK
+    GateBCap -- under cap --> GateB[Gate B — Adversarial verifier<br/>spawn task-execution-verifier<br/>fresh context: AC + delta since verified_diff_sha + Phase-4 findings<br/>prompt flipped to 'find what's wrong'<br/>each finding carries ac: and reachable:<br/>NO COMMIT]
 
-    GateB --> GateBCls{severity?}
-    GateBCls -- blocker / required --> GateBFix[reset code_review.passed=false<br/>→ back to Phase 4]
+    GateB --> GateBCls{AC impact?<br/>breaks an AC / runtime-reachable<br/>regression / security-data-loss?}
+    GateBCls -- yes, or ac: missing --> GateBFix[reset code_review.passed=false<br/>iteration.review++<br/>→ back to Phase 4]
     GateBFix --> P4
-    GateBCls -- only follow-up / none --> GateBOK[gates.gate_b.passed=true]
+    GateBCls -- "no — park whatever the label" --> GateBOK[gates.gate_b.passed=true]
+    GateBCls -- "2nd self_inflicted pass,<br/>or CONVERGED (count stopped falling)" --> GateBSurface
 
     SkipB --> P5
     GateBOK --> P5[Phase 5 — Handover<br/>SINGLE COMMIT phase]
@@ -112,7 +117,7 @@ On a NEW run, before branch setup, Phase 1 also runs a best-effort **per-run ver
 | 3 Self-verify | `auto-task-verify` skill + literal AC commands | **no** | all checks pass + every `self-verify` AC pass | `auto-task-fix` skill → loop, capped by tier |
 | Gate A | `task-execution-verifier` Agent + literal AC commands | **no** | every AC satisfied | findings → back to Phase 2 |
 | 4 Code review | **`auto-task-code-review` skill** (no substitutes) | **no** | only follow-ups, no Blockers/Required | `auto-task-fix` → re-`auto-task-verify` → re-review |
-| Gate B | `task-execution-verifier` Agent (adversarial) | **no** | "No adversarial findings" or only follow-ups | resets `code_review.passed=false`, back to Phase 4 |
+| Gate B | `task-execution-verifier` Agent (adversarial) | **no** | no finding meets the Step-2 AC-impact test — so "No adversarial findings", only follow-ups, **or** findings labelled blocker/required that are parked because none breaks an AC / is runtime-reachable / is a security-data-loss path; a fired convergence test surfaces rather than exiting | a **reopening** finding resets `code_review.passed=false` and goes back to Phase 4; at the pass cap, on a second `self_inflicted` pass, or on a fired convergence test it **surfaces** instead (`user-approval`) |
 | 5 Handover | optional `auto-task-docs` skill (step 1b) + `auto-task-commit` skill + `gh pr create` | **YES — single commit** (docs edits join it) | PR opened (or user holds push) | gates fail → surface (do not bypass hook) |
 | 6 Bot-comment review (opt-in) | `pr-bot-comments.sh` + full verify → `auto-task-code-review` → gate → commit loop | **YES — gate-reviewed bot-fix commits** (only when `bot_review_autofix`) | bot comments triaged; safe fixes applied + pushed, rest parked | fork-PR / no-push → fail-open skip |
 | 7 Preview verification (gated) | preview URL resolution + URL-AC checks (`playwright`/`curl`) | no | verdict PASS/FAIL/INCONCLUSIVE recorded (or handoff/timeout) | no URL → skip gracefully; FAIL → done-with-negative-verdict |
@@ -129,10 +134,16 @@ Difficulty (D) and Risk (R) each scored 0–8 in Phase 1. Tier = `max(D, R)`.
 | Tier | Range | `/auto-task-verify` scope | Fix-loop cap | Gate B |
 |---|---|---|---|---|
 | LIGHT | 0–2 | types + unit | 2 | skipped (`gate_b.skipped_reason='tier=light'`) |
-| STANDARD | 3–5 | types + unit + lint | 4 | run |
-| HEAVY | 6–8 | types + unit + lint + build (+ e2e if touched) | 6 | run, with cross-check pass |
+| STANDARD | 3–5 | types + unit + lint | 4 | run, max 2 passes |
+| HEAVY | 6–8 | types + unit + lint + build (+ e2e if touched) | 6 | run, max 3 passes, cross-check |
 
 The **Fix-loop cap** column is a hook-enforced budget, not a suggestion — see SKILL.md → "Fix-loop budget". Both enforcing hooks read the numbers from `hooks/lib/loop-budget.sh`, which is the single executable definition; this table and SKILL.md's document that file rather than duplicating it, so a cap change happens in one place.
+
+The **Gate B pass cap** is a *second, independent* bound and must not be conflated with the fix-loop cap. They differ on what they count and when they bite: the fix-loop cap counts **rounds of iteration** (`max(iteration.fix, iteration.review)`) and is read by `enforce-gates.sh` at **commit time**; the pass cap counts **adversarial passes** and is checked by the orchestrator at **Gate-B entry**. Both come from `hooks/lib/loop-budget.sh` (`lb_cap_for_tier`, `lb_gate_b_cap`). The entry check exists because the commit-time block cannot bound this loop at all — the loop never commits, which is how a real run reached 28 review rounds against a HEAVY cap of 6 without the budget ever being consulted.
+
+Each of the four sites that re-run Gate B after the main loop (Phase-5 docs, Phase-5 merge-conflict finalize, Phase-6 bot-fix, Phase-9 release) draws on a **separate** allowance, `lb_gate_b_regate_cap`, **per site per run**. Separate because a re-gate sharing the main-loop count could never re-earn `gates.gate_b.passed` once the main loop spent it — and since a `false` flag blocks the handover commit, the run would deadlock with no route forward. Per-run-not-per-round because Phase 6 and the docs step can each execute more than once, and a renewing allowance would rebuild the unbounded loop inside the re-gate.
+
+Unlike the fix-loop cap, the pass cap is **not** hook-enforced: a Gate B pass is an `Agent` spawn, and `hooks/hooks.json` registers `PreToolUse` only for the `Bash` matcher, so no hook observes one (and identifying a spawn by its `label` is forbidden — the run label is cosmetic and never changes control flow). It is a model-honored contract whose mechanical backstop remains the commit-time gate. **The gate-table read list below is therefore unchanged by the pass cap.**
 
 Tier can only **escalate** — never auto-de-escalate. Every change is logged to `effort.history` with `{from, to, reason, at}`. Re-score hooks fire on drift (Phase 2 checkpoints) and on fix-cap exhaustion (Phase 3, Phase 4).
 
@@ -164,7 +175,11 @@ The block below is **abridged** for readability — the full JSON schema (includ
     "self_verify": { "passed": false, "at": null, "evidence": null },
     "gate_a":      { "passed": false, "at": null, "evidence": null },
     "code_review": { "passed": false, "tool": null, "clean_pass_after_last_fix": false, "reviewed_diff_sha": null, "at": null, "evidence": null },
-    "gate_b":      { "passed": false, "at": null, "evidence": null, "skipped_reason": null }
+    "gate_b":      { "passed": false, "at": null, "evidence": null, "skipped_reason": null,
+                     "verified_diff_sha": null, "allowance_acked": {},
+                     "passes": [{ "n": 1, "scope": "main", "blockers": 0, "required": 0, "followups": 0,
+                                  "self_inflicted": false, "fixed_lines": [], "diff_sha": null, "at": "ISO-8601" }] },
+    "loop_budget": { "acked_through": 0, "acked_at": null, "reason": null, "park_non_blocking": false }
   },
   "followups": [{ "source": "code-review", "note": "...", "at": "ISO-8601" }],
   "pr_url": null

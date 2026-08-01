@@ -121,3 +121,11 @@ Because `autonomous` mode removes the plan-approval gate, every decision the run
 ### Settings reset
 
 The settings model is version-stamped (`settings_schema_version`). When the plugin updates and the stamp is behind the current `SETTINGS_SCHEMA_VERSION`, the settings are reset from scratch rather than migrated: `settings.sh reset --backup` copies the PROJECT file to `settings.json.pre-<oldstamp>` (restore = copy it back) and clears the project file so First-run setup re-asks the five questions and re-stamps it. Reset touches ONLY the project file — the shared GLOBAL file (cross-project settings like a global telemetry opt-in) is never clobbered. It is new-run-only (a resume keeps its STATE snapshot, so the rules never change under an in-flight run), and telemetry is re-consented at project scope because the payload changes across schema versions. A plugin downgrade re-reads the old file harmlessly (unknown newer keys are preserved).
+
+## settings-location-and-cli — relocated verbatim from SKILL.md
+
+_The settings file's location and the `settings.sh` sub-command list, moved here from the spine's `## User settings` summary. They belong with the contract they describe, and the spine keeps the section, its MANDATORY READ directive, the optional/fully-defaulted framing and the fail-open rule — everything a run needs before it decides to read a setting at all._
+
+**Where they live:** `${AUTO_TASK_HOME:-$HOME/.claude}/auto-task/<project-key>/settings.json`, keyed by the git **common dir** so every linked worktree of a clone resolves to the same file. Nothing is written inside the working tree, so a setting never shows in `git status`.
+
+**Locate** `hooks/settings.sh` with the three-probe pattern (`CLAUDE_PLUGIN_ROOT` is empty in the Bash-tool env), then: `get <key>` · `all` (merged JSON) · `present <key>` (explicitly decided?) · `set <key> <value>` · `path` · `init` · `schema-status` · `reset --backup`.

@@ -891,7 +891,12 @@ SPINE_ONLY="$HOOKS/../skills/auto-task/SKILL.md"   # for spine-only assertions
 
 LBARCH="$HOOKS/../skills/auto-task/ARCHITECTURE.md"
 LBRDME="$HOOKS/../README.md"
-expect "Loop rule carries the converged clause"          "$(grep -c 'zero blockers and zero required findings means the loop has CONVERGED' "$LBSKILL")" "1"
+# Clause 5's test changed from "two consecutive rounds with zero blockers and zero
+# required" to a single NON-DECREASE, because the old form could not fire where the
+# churn is: Gate B exits on the first clean pass, so a second consecutive clean
+# round is never observed, and it is unreachable under a Gate B cap of 2. The old
+# base line is retired in tests/spec-inventory.sh with that reasoning.
+expect "Loop rule carries the converged clause"          "$(grep -c 'fails to DECREASE versus the previous round, the loop has CONVERGED' "$LBSKILL")" "1"
 expect "SKILL documents the fix-loop budget section"     "$(grep -c '^### Fix-loop budget' "$LBSKILL")" "1"
 expect "SKILL documents the ack ritual"                  "$(grep -c 'The ack ritual' "$LBSKILL")" "1"
 expect "SKILL schema carries gates.loop_budget"          "$(grep -c '"loop_budget": { "acked_through"' "$LBSKILL")" "1"
@@ -1262,7 +1267,7 @@ expect "spine: CHANGELOG spec-helper count is current" \
   "$(grep -oE '`tests/spec-helper\.test\.sh`\*\* — [0-9]+ assertions' "$HOOKS/../CHANGELOG.md" | grep -oE '[0-9]+')" \
   "$(bash "$HOOKS/../tests/spec-helper.test.sh" </dev/null 2>&1 | grep -oE '[0-9]+ passed' | head -1 | grep -oE '[0-9]+')"
 expect "spine: CHANGELOG spine-guard count is current" \
-  "$(grep -oE 'enforcement-spine\.test\.sh`\*\* \(([0-9]+) assertions' "$HOOKS/../CHANGELOG.md" | grep -oE '[0-9]+')" \
+  "$(grep -oE 'enforcement-spine\.test\.sh`\*\* \(([0-9]+) assertions' "$HOOKS/../CHANGELOG.md" | grep -oE '[0-9]+' | head -1)" \
   "$(grep -cE '^expect "spine: ' "$HOOKS/../tests/enforcement-spine.test.sh" | tr -d ' ')"
 
 # GATE-B ROUND-4 FINDING: README carried its own size claim and its own "no behavior
@@ -1306,6 +1311,325 @@ expect "spine: no cross-boundary restatement" \
 
 expect "spine: structural inventory clean"         "$(bash "$HOOKS/../tests/spec-inventory.sh" >/dev/null 2>&1 && echo yes || echo no)" "yes"
 expect "spine: directives land in owning sections" "$(bash "$HOOKS/../tests/spec-inventory.sh" --directives >/dev/null 2>&1 && echo yes || echo no)" "yes"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GATE B IS BOUNDED. Measured across seven completed runs, Gate B ran 4-11
+# adversarial passes each, required-finding counts never decayed (3,2,3,3,3,2,3,4,0
+# over nine passes in one HEAVY run), blockers first appeared at passes 3 and 5
+# rather than pass 1 -- each pass's fixes manufactured the next pass's findings --
+# and three of the seven runs ended by human fiat. Two properties made it
+# unbounded: a finding's SELF-ASSIGNED SEVERITY drove control flow regardless of
+# whether it touched an Acceptance Criterion, and nothing counted the passes.
+#
+# These assertions pin the rules that close both. The decision LOGIC is exercised
+# against oracles in tests/gate-b-loop.test.sh; what is pinned here is that the
+# rules are actually stated in the shipped spec, since the spec IS the behavior.
+# Each assertion keys on text unique to the rule it guards -- never on a word the
+# rest of the spec also uses -- per the yield-table finding above.
+GATESREF="$HOOKS/../skills/auto-task/references/phase-3-gates.md"
+SCHEMAREF="$HOOKS/../skills/auto-task/references/state-schema.md"
+
+# (1) AC-GATED RESOLUTION. The three reopen conditions must be stated as the ONLY
+# grounds for reopening, and the park-otherwise rule must say it overrides the label.
+expect "gate-b: reopen condition (a) breaks an AC" \
+  "$(spine_has "$GATESREF" '**(a) It breaks an approved Acceptance Criterion**')"                     "yes"
+expect "gate-b: reopen condition (b) runtime-reachable" \
+  "$(spine_has "$GATESREF" '**(b) It is a runtime-reachable regression or bypass in the diff**')"     "yes"
+expect "gate-b: reopen condition (c) security/data-loss" \
+  "$(spine_has "$GATESREF" '**(c) It is a security or data-loss path**')"                             "yes"
+expect "gate-b: reopen is if-and-only-if those three" \
+  "$(spine_has "$GATESREF" 'Reopen Phase 4 for a finding if and only if AT LEAST ONE holds')"         "yes"
+expect "gate-b: park-otherwise overrides the label" \
+  "$(spine_has "$GATESREF" 'Every other finding parks in `state.followups`, whatever its label')"     "yes"
+expect "gate-b: severity does not decide control flow" \
+  "$(spine_has "$GATESREF" 'A finding'"'"'s severity label does not decide control flow.')"           "yes"
+expect "gate-b: fail closed on a missing ac: field" \
+  "$(spine_has "$GATESREF" '**Fail closed on a missing fact.**')"                                    "yes"
+# The verifier must REPORT the two facts the decision consumes, or the rule above
+# has no input and the fail-closed default fires on every finding.
+AGENTF="$HOOKS/../agents/task-execution-verifier.md"
+expect "gate-b: verifier output carries ac:"        "$(spine_has "$AGENTF" '- ac: <the number of the Acceptance Criterion')" "yes"
+expect "gate-b: verifier output carries reachable:" "$(spine_has "$AGENTF" '- reachable: runtime | spec-only | docs-only')"  "yes"
+expect "gate-b: verifier told they are facts not judgment" \
+  "$(spine_has "$AGENTF" 'These are inputs the orchestrator acts on; your severity label is not.')"  "yes"
+
+# (2) SELF-INFLICTED ATTRIBUTION. Content-hashed, and the SECOND such pass (not two
+# consecutive) surfaces -- two-consecutive is unfirable under a cap of 2, which is
+# the dead-clause defect the convergence test below exists to remove.
+expect "gate-b: self_inflicted is content-hashed, not coordinates" \
+  "$(spine_has "$GATESREF" '**Hash the content; never store line numbers.**')"                       "yes"
+expect "gate-b: second (not consecutive) self_inflicted pass surfaces" \
+  "$(spine_has "$GATESREF" '**The second pass with `self_inflicted: true` — not necessarily consecutive — surfaces to the user.**')" "yes"
+
+# (3) PASS CAP + DELTA SCOPE. The caps must come from the shared helper, and the
+# spec must NOT restate the numbers, or the single-definition property is lost.
+expect "gate-b: main cap read from lb_gate_b_cap"     "$(spine_has "$GATESREF" 'lb_gate_b_cap <tier>')"        "yes"
+expect "gate-b: re-gate cap read from its own helper" "$(spine_has "$GATESREF" 'lb_gate_b_regate_cap')"        "yes"
+expect "gate-b: never hardcode the cap numbers"       "$(spine_has "$GATESREF" '**Never hardcode the numbers here**')" "yes"
+expect "gate-b: delta-scoped after pass 1" \
+  "$(spine_has "$GATESREF" '**Every later pass reads only what changed since the previous pass of that scope**')" "yes"
+expect "gate-b: verified_diff_sha uses the reviewed_diff_sha formula" \
+  "$(spine_has "$GATESREF" 'the **byte-identical** pinned-flag formula `reviewed_diff_sha` uses')"   "yes"
+# The pinned-flag string must be ONE spelling across every site that computes a
+# diff hash (SKILL.md's reviewed_diff_sha, this new one, and the hook that checks
+# it). Count > distinct proves the new site exists; distinct == 1 proves identity.
+PINFLAGS='--no-color --no-ext-diff --no-textconv --no-renames --diff-algorithm=myers --src-prefix=a/ --dst-prefix=b/'
+expect "gate-b: pinned diff flags occur at 3 sites" \
+  "$(grep -ohF -- "$PINFLAGS" "$SPINE_ONLY" "$GATESREF" "$HOOKS/enforce-gates.sh" | wc -l | tr -d ' ')" "3"
+expect "gate-b: pinned diff flags are byte-identical everywhere" \
+  "$(grep -ohF -- "$PINFLAGS" "$SPINE_ONLY" "$GATESREF" "$HOOKS/enforce-gates.sh" | sort -u | wc -l | tr -d ' ')" "1"
+
+# (4) ENTRY BUDGET CHECK. The whole point is that it fires where the commit-time
+# block cannot: this loop never commits.
+expect "gate-b: budget checked at entry via the helper" \
+  "$(spine_has "$GATESREF" '**Check the fix-loop budget HERE, not only at commit time.**')"          "yes"
+expect "gate-b: entry check names lb_effective_budget" "$(spine_has "$GATESREF" 'lb_effective_budget <cap> <acked_through>')" "yes"
+
+# (5) OVER-CAP SURFACE + THE THREE GRANTS. None may be self-granted, and a resumed
+# run must act on the recorded grant rather than asking again.
+expect "gate-b: at the cap it surfaces, not auto-continues" \
+  "$(spine_has "$GATESREF" '**surface — do not auto-continue.**')"                                   "yes"
+# GATE-A ROUND-2 FINDING: convergence and the cap had been conflated into one
+# surface trigger, contradicting loop-rule clause 5 ("park the remaining findings
+# and advance") and implying a yield the yield-point table does not list. They are
+# now distinct: convergence is the AUTONOMOUS exit, the cap and the self-inflicted
+# signal are the human check-ins. Pin both halves.
+# CODE-REVIEW FINDING (Blocker): convergence was an unconditional "park and advance",
+# but its count is scoped to REOPENING findings — AC breaches, runtime-reachable
+# regressions, security paths. So a non-decreasing count shipped exactly those,
+# unseen, on a laxer test than the cap path applies to the same evidence. The two
+# cases are now disjoint: zero reopening left → autonomous exit; any still open →
+# surface. Pin both, and pin that nothing meeting (a)/(b)/(c) escapes either way.
+expect "gate-b: three triggers reach the surface" \
+  "$(spine_has "$GATESREF" '**Three triggers reach this surface:**')"                                 "yes"
+expect "gate-b: a fired convergence test is one of them" \
+  "$(spine_has "$GATESREF" 'or **a fired convergence test** (Step 3)')"                               "yes"
+# REVIEW ROUND 3: Step 4 kept the two-case qualifier after round 2 deleted the branch
+# it referred to, and NOTHING asserted that paragraph — which is why it drifted. Close
+# the class the way this diff already closes it twice elsewhere: pin each superseded
+# phrasing to zero, so a reintroduction reddens instead of reading as a live option.
+expect "gate-b: the retired two-case qualifier is gone" \
+  "$(spec_count 'convergence test fired with one or more reopening findings still open')"             "0"
+expect "gate-b: the retired disjoint-case claim is gone" \
+  "$(spec_count 'applies to the disjoint case where')"                                                "0"
+# REVIEW ROUND 4: the trigger LIST was renumbered to three but the sentence that says
+# what to DO still read "either of those two triggers" -- and it is the actionable
+# line, so a reader could exclude the convergence trigger from the surface rule and
+# undo round 2's fix. Negative guards cover retired phrasings; a stale COUNT needs the
+# action sentence pinned positively, which is what this does.
+expect "gate-b: the surface instruction covers all three triggers" \
+  "$(spine_has "$GATESREF" 'On any of those triggers, **surface — do not auto-continue.**')"          "yes"
+expect "gate-b: no stale two-trigger count survives" \
+  "$(spec_count 'either of those two triggers')"                                                      "0"
+# REVIEW ROUND 2: the first fix split convergence into two cases, but the
+# zero-reopening case is UNREACHABLE -- the resolution step already passes the gate
+# when nothing reopens, so a fired convergence test always has a live finding. The
+# branch was deleted rather than guarded: surfacing is now the test's only outcome,
+# and clause 5's park-and-advance is located where it actually happens.
+expect "gate-b: surfacing is convergence's only outcome" \
+  "$(spine_has "$GATESREF" '**Surfacing (Step 4) is the only outcome this test has**')"               "yes"
+expect "gate-b: convergence is reached only with a finding open" \
+  "$(spine_has "$GATESREF" 'a zero-reopening pass has already passed the gate at Step 2')"            "yes"
+expect "gate-b: clause 5 park-and-advance is located, not weakened" \
+  "$(spine_has "$GATESREF" 'at Gate B that outcome is Step 2'"'"'s zero-reopening exit')"             "yes"
+# GATE-B ROUND-1 FINDING (Blocker): clause 5's SPINE headline still read "park the
+# remaining findings and advance" unqualified. The Gate-B carve-out below scopes only
+# Gate B, so at Phase 3/4 the headline licensed parking live blockers/required --
+# contradicting Phase 4's own exit condition ("no Blockers/Required"). Convergence now
+# resolves to a SURFACE in every loop; park-and-advance is a user grant.
+expect "spine: clause 5 converges to a surface, in every loop" \
+  "$(spine_has "$SPINE_ONLY" 'the loop has CONVERGED: stop fixing and SURFACE')"                      "yes"
+expect "spine: park-and-advance is a grant, never self-granted" \
+  "$(spine_has "$SPINE_ONLY" 'in NO loop does an unfixed blocker or required finding pass a gate on this test alone')" "yes"
+expect "spine: the retired unconditional park headline is gone" \
+  "$(spec_count 'CONVERGED: park the remaining findings and advance')"                                "0"
+# GATE-B ROUND-1 FINDING (Blocker): grant (ii) said only "pass the gate", so it passed
+# over the very (a)/(b)/(c) finding that raised the surface -- the carve-out below was
+# scoped to "a subsequent pass", which never runs on that path.
+expect "gate-b: grant (ii) carves out the findings already on the table" \
+  "$(spine_has "$GATESREF" 'pass the gate **only once nothing on the table meets (a)/(b)/(c)**')" "yes"
+expect "gate-b: park_non_blocking binds the current table too" \
+  "$(spine_has "$GATESREF" 'both the findings on the table when it was granted and those of every subsequent pass')" "yes"
+expect "gate-b: no subsequent-pass-only carve-out survives" \
+  "$(spec_count 'When set, a subsequent pass parks every finding')"                                   "0"
+# GATE-B ROUND-1 FINDING (Required): every Step-2 branch terminated the gate, so Step 3
+# -- which appends passes[] -- was unreachable on the reopen path, disarming the cap,
+# self_inflicted and convergence on the one path they bound.
+expect "gate-b: the pass is recorded on every exit, reopen included" \
+  "$(spine_has "$GATESREF" '**Record the pass FIRST (Step 3), on every exit — reopen included.**')"   "yes"
+# GATE-B ROUND-1 FINDING (Required): the delta command diffed against a BLOB hash,
+# which is not a commit-ish, so pass 2 could not execute it.
+expect "gate-b: verified_diff_sha is an equality token, not a revision" \
+  "$(spine_has "$GATESREF" '**`verified_diff_sha` is an equality token, not a revision**')"           "yes"
+expect "gate-b: later passes never get the full diff again" \
+  "$(spine_has "$GATESREF" 'every later pass gets the Step-1 delta instead, never this full diff')"    "yes"
+# GATE-B PASS-2 FINDING (Blocker): the boundary was snapshotted at the END of a pass,
+# i.e. from the POST-fix tree, so the next pass's delta came back empty and the
+# self-inflicted defects the ladder exists to catch were the one thing it never saw.
+expect "gate-b: the boundary is snapshotted at pass start" \
+  "$(spine_has "$GATESREF" '**Snapshot the boundary when the pass STARTS')"                           "yes"
+expect "gate-b: no end-of-pass boundary refresh survives" \
+  "$(spec_count 'Refresh `verified_diff_sha` at the end of every pass')"                              "0"
+# GATE-B PASS-3 FINDING (Blocker): the fix landed in phase-3-gates.md only. state-schema.md
+# -- the per-FIELD contract an orchestrator reads for this very field -- still said
+# "Refresh it every pass; never carry a stale value forward", a direct counter-rule, and the
+# negative guard above could not see it because it greps the other file's wording. Pin the
+# schema side positively AND ban its retired phrasing (TRACE's Gate-A round-3 lesson: when a
+# rule changes, grep EVERY site that restates it).
+expect "gate-b: the schema states the boundary is set at spawn" \
+  "$(spine_has "$SCHEMAREF" '**Set it when a pass SPAWNS, from the same diff handed to that pass')"   "yes"
+expect "gate-b: no per-pass refresh phrasing survives anywhere" \
+  "$(spec_count 'Refresh it every pass; never carry a stale value forward')"                          "0"
+# GATE-B PASS-3 FINDING (Required): the convergence test declared `reopened` as its basis
+# but the recorded row held only LABEL counts, so the test had to fall back to the basis the
+# ladder calls untrustworthy. The row now carries `reopened`.
+expect "gate-b: the row records the reopening count" \
+  "$(spine_has "$GATESREF" '**`reopened` (the count of findings that met (a)/(b)/(c)')"               "yes"
+expect "gate-b: the schema row carries reopened too" \
+  "$(spine_has "$SCHEMAREF" '`reopened` is the count of findings that met the Step-2 reopen test')"    "yes"
+expect "gate-b: no reopened-less row shape survives" \
+  "$(spec_count '{ n, scope, blockers, required, followups, self_inflicted, fixed_lines, diff_sha, at }')" "0"
+expect "gate-b: the test reads reopened, not the label counts" \
+  "$(spine_has "$GATESREF" "reading both from the rows' \`reopened\` field")"                        "yes"
+# GATE-B PASS-2 FINDING (Required): "record FIRST" demanded fixed_lines/self_inflicted,
+# neither knowable until after the fix round -- so the rule was unfollowable and
+# passes[] stayed empty either way.
+expect "gate-b: the record splits the fields knowable now from the later ones" \
+  "$(spine_has "$GATESREF" '**Append the row with the fields knowable now**')"                        "yes"
+# GATE-B PASS-2 FINDING (Required): Step 0 added the granted allowance to the SPENT
+# count, so grant (i) left the scope still at cap and re-surfaced the same check-in --
+# the opposite sign from the oracle (cap + ack - used), which is why nothing reddened.
+expect "gate-b: a granted allowance raises the cap, not the spent count" \
+  "$(spine_has "$GATESREF" '**A granted allowance raises the CAP; it never adds to the spent count**')" "yes"
+expect "gate-b: no allowance-added-to-spent phrasing survives" \
+  "$(spec_count 'plus `gates.gate_b.allowance_acked[<scope>]` if the user granted extra')"            "0"
+# GATE-B PASS-2 FINDING (Required): the pass-1 fix over-corrected -- an unconditional
+# SURFACE made a CLEAN Phase-4 round converge-and-yield, contradicting the spine's own
+# "a clean pass advances to Gate B ... Continue".
+expect "spine: a clean round takes its clean exit, never the surface" \
+  "$(spine_has "$SPINE_ONLY" 'has nothing to park and takes its loop'"'"'s clean exit, never surfacing')" "yes"
+expect "spine: the retired always-converges claim is gone" \
+  "$(spec_count 'One round fires it; a clean round of course also converges')"                        "0"
+expect "gate-b: the delta is executable against a saved diff file" \
+  "$(spine_has "$GATESREF" 'gate-b-<scope>-<n>.diff')"                                                "yes"
+expect "gate-b: the unrunnable tree-diff command is gone" \
+  "$(spec_count "recorded verified_diff_sha's tree")"                                                 "0"
+expect "gate-b: the deleted unreachable branch is gone" \
+  "$(spec_count '**Zero reopening findings open**')"                                                  "0"
+expect "gate-b: nothing meeting (a)/(b)/(c) escapes the gate unseen" \
+  "$(spine_has "$GATESREF" 'nothing meeting (a)/(b)/(c) ever leaves this gate without either a fix or a recorded human grant')" "yes"
+# CODE-REVIEW FINDING (Required): park_non_blocking parked an AC-breaking `required`,
+# and Phase 5's completion check reads only requirement STATUS, so it shipped silent.
+# REVIEW ROUND 2: the carve-out covered (a) only, so (b) runtime regressions and (c)
+# security paths were still routed by SEVERITY LABEL -- the basis this ladder opens by
+# rejecting. It now carves out the same (a)/(b)/(c) set the convergence test uses.
+expect "gate-b: park_non_blocking carves out the full reopen test" \
+  "$(spine_has "$GATESREF" 'nor a finding meeting the Step-2 reopen test — (a) an AC breach, (b) a runtime-reachable regression or bypass, or (c) a security/data-loss path')" "yes"
+expect "gate-b: the carve-out is mandatory and symmetric" \
+  "$(spine_has "$GATESREF" '**The (a)/(b)/(c) carve-out is not optional, and it is deliberately the same set the convergence test uses.**')" "yes"
+expect "gate-b: no (a)-only carve-out survives" \
+  "$(spec_count '**The (a) carve-out is not optional.**')"                                            "0"
+# CODE-REVIEW FINDING (Required): content-only hashing collides on duplicate lines.
+expect "gate-b: attribution skips structural/blank added lines" \
+  "$(spine_has "$GATESREF" 'skip lines that are blank, whitespace-only, or pure structure')"          "yes"
+expect "gate-b: attribution requires a unique match" \
+  "$(spine_has "$GATESREF" 'a match counts only if that content occurs exactly once in the file now')" "yes"
+expect "gate-b: surface shows the per-pass severity table" \
+  "$(spine_has "$GATESREF" '**per-pass severity table**')"                                          "yes"
+expect "gate-b: grant (i) one more pass"   "$(spine_has "$GATESREF" '**One more pass**')"            "yes"
+expect "gate-b: grant (ii) park and advance" "$(spine_has "$GATESREF" '**Park and advance**')"       "yes"
+expect "gate-b: grant (iii) descope the residual" "$(spine_has "$GATESREF" '**Descope the residual**')" "yes"
+expect "gate-b: resume acts on the recorded grant" \
+  "$(spine_has "$GATESREF" 'do not re-surface the same check-in')"                                   "yes"
+expect "gate-b: park_non_blocking precedence over fail-closed" \
+  "$(spine_has "$GATESREF" 'it is evaluated BEFORE Step 2'"'"'s fail-closed rule')"                  "yes"
+expect "gate-b: park_non_blocking is user-set only" \
+  "$(spine_has "$GATESREF" '**a checkable artifact, never set speculatively.**')"                    "yes"
+# Legacy tolerance: a run started before these fields existed must not be blocked.
+expect "gate-b: absent passes[] counts as zero" \
+  "$(spine_has "$GATESREF" '**An absent `passes[]` counts as 0**')"                                  "yes"
+
+# (6) THE SPINE'S OWN RESTATEMENT. The spine is what is loaded every turn, so the
+# bound must be visible there too -- not only in the reference.
+expect "spine: gate-b is bounded, with the measured evidence" \
+  "$(spine_has "$SPINE_ONLY" '**This gate is BOUNDED — it does not converge on its own.**')"         "yes"
+# GATE-A ROUND-2 FINDING: the bullet's OPENING was pinned but its body was not, so
+# replacing "cap them from <helper>" with hardcoded numbers violated a stated rule
+# and tripped only the incidental byte-size assertions. Pin the mechanism itself.
+expect "spine: gate-b caps come from the helper, never hardcoded" \
+  "$(spine_has "$SPINE_ONLY" 'cap them from `lb_gate_b_cap` / `lb_gate_b_regate_cap` (**never hardcode**)')" "yes"
+expect "spine: gate-b entry checks the budget (not only at commit)" \
+  "$(spine_has "$SPINE_ONLY" 'check the fix-loop budget at **entry**')"                              "yes"
+expect "spine: gate-b delta-scopes later passes" \
+  "$(spine_has "$SPINE_ONLY" 'delta-scope each later pass via `gates.gate_b.verified_diff_sha`')"     "yes"
+expect "spine: gate-b AC-gated reopen restated inline" \
+  "$(spine_has "$SPINE_ONLY" 'A finding reopens Phase 4 only if it (a) breaks an approved AC')"      "yes"
+expect "spine: gate-b at-cap surface restated inline" \
+  "$(spine_has "$SPINE_ONLY" '**At the cap, SURFACE — never auto-continue and never self-grant.**')" "yes"
+# GATE-A FINDING: this keyed only on the row's LEFT cell, so inverting the row's
+# VALUE to `"auto-continue"` — which reverses the behaviour the surface exists to
+# provide, and which prevent-mid-protocol-stall.sh reads BY VALUE at :107-111 —
+# added zero assertion failures. Pin the whole row, value included, and pin the
+# prose that actually sets the field. Same shape as the yield-table finding above:
+# a location guard must key on text unique to the contract, never on half a row.
+expect "spine: yield-table row for the over-cap surface" \
+  "$(spine_has "$SPINE_ONLY" '| Gate B at its cap, a second `self_inflicted` pass, or a fired convergence test | `"user-approval"` |')" "yes"
+expect "gate-b: the over-cap surface sets user-approval (not auto-continue)" \
+  "$(spine_has "$GATESREF" 'Set `expected_next_action: "user-approval"` and show the **per-pass severity table**')" "yes"
+# And the inverse must be absent: no Gate-B surface may be wired to auto-continue.
+expect "gate-b: over-cap row is not wired to auto-continue" \
+  "$(grep -c '| Gate B at its cap.*auto-continue' "$SPINE_ONLY" | tr -d ' ')"                        "0"
+expect "spine: tier table carries the per-tier pass cap" \
+  "$(spine_has "$SPINE_ONLY" 'run, max 2 passes')"                                                  "yes"
+expect "spine: HEAVY tier pass cap"                "$(spine_has "$SPINE_ONLY" 'run, max 3 passes, cross-check')" "yes"
+# Clause 5 must be the single-non-decrease test. The OLD two-consecutive wording
+# must be GONE from the whole spec, or both rules ship and the weaker one wins.
+expect "spine: clause 5 is the non-decrease test" \
+  "$(spine_has "$SPINE_ONLY" 'fails to DECREASE versus the previous round, the loop has CONVERGED')" "yes"
+expect "spine: old two-consecutive-clean test is gone" \
+  "$(spec_count 'two consecutive review rounds producing zero blockers')"                            "0"
+# The state schema must carry the new fields, or the rules above have nowhere to record.
+expect "spine: gate_b schema has passes[]"          "$(spine_has "$SPINE_ONLY" '"passes": []')"      "yes"
+# allowance_acked is an OBJECT keyed by scope, never a scalar: a bare integer would
+# be added to whichever scope was evaluated, so one grant at the main-loop surface
+# would raise all four re-gate allowances too (Gate A round 2).
+expect "spine: gate_b schema has verified_diff_sha" "$(spine_has "$SPINE_ONLY" '"verified_diff_sha": null, "allowance_acked": {}')" "yes"
+expect "spine: allowance_acked is not a bare scalar" "$(grep -c '"allowance_acked": [0-9]' "$SPINE_ONLY" | tr -d ' ')" "0"
+expect "spine: loop_budget schema has park_non_blocking" \
+  "$(spine_has "$SPINE_ONLY" '"park_non_blocking": false')"                                          "yes"
+
+# (7) THE FOUR RE-GATE ALLOWANCES. Each site must carry its own, or an at-cap main
+# loop can never re-earn gates.gate_b.passed and the handover commit deadlocks.
+expect "gate-b: re-gate allowance stated at all four sites" \
+  "$(spec_count 'own Gate B allowance for this run')"                                                "4"
+expect "gate-b: docs re-gate scope named"     "$(spine_has "$HOOKS/../skills/auto-task/references/phase-5-handover.md" 'scope: "regate:docs"')"      "yes"
+expect "gate-b: merge re-gate scope named"    "$(spine_has "$HOOKS/../skills/auto-task/references/phase-5-handover.md" 'scope: "regate:merge"')"     "yes"
+expect "gate-b: bot-fix re-gate scope named"  "$(spine_has "$HOOKS/../skills/auto-task/references/phase-6-8-post-pr.md" 'scope: "regate:bot-fix"')"  "yes"
+expect "gate-b: release re-gate scope named"  "$(spine_has "$HOOKS/../skills/auto-task/references/phase-9-release.md" 'scope: "regate:release"')"    "yes"
+# The helpers themselves must exist and be sourceable, since every rule above
+# defers its numbers to them.
+expect "gate-b: lb_gate_b_cap is defined"        "$(bash -c '. "'"$HOOKS"'/lib/loop-budget.sh"; type lb_gate_b_cap >/dev/null 2>&1 && echo yes || echo no')"        "yes"
+expect "gate-b: lb_gate_b_regate_cap is defined" "$(bash -c '. "'"$HOOKS"'/lib/loop-budget.sh"; type lb_gate_b_regate_cap >/dev/null 2>&1 && echo yes || echo no')" "yes"
+expect "gate-b: the dedicated suite passes" \
+  "$(bash "$HOOKS/../tests/gate-b-loop.test.sh" >/dev/null 2>&1 && echo yes || echo no)"             "yes"
+# GATE-A ROUND-5 FINDING: ARCHITECTURE.md's "Phases at a glance" row still stated the
+# pre-change Gate B exit condition and routing, contradicting the flowchart 67 lines
+# above it in the SAME file — and the spine now points into that file for Gate B
+# rationale, so a model following the pointer met both readings. ARCHITECTURE.md is
+# outside spec-inventory's file set, so nothing else guards it. Pin both cells.
+ARCHREF="$HOOKS/../skills/auto-task/ARCHITECTURE.md"
+expect "arch: glance-table Gate B exit is the AC-impact test" \
+  "$(spine_has "$ARCHREF" 'no finding meets the Step-2 AC-impact test')"                             "yes"
+expect "arch: glance-table Gate B names the surface route" \
+  "$(spine_has "$ARCHREF" 'or on a fired convergence test it **surfaces** instead')"                  "yes"
+expect "arch: glance-table no longer states the retired exit condition" \
+  "$(grep -c '| \*\*no\*\* | "No adversarial findings" or only follow-ups |' "$ARCHREF" | tr -d ' ')" "0"
+# Convergence advances ONLY with zero reopening findings left; with any still open it
+# routes to the surface node. Pin both edges so the disjointness cannot silently blur.
+expect "arch: flowchart routes convergence to the surface" \
+  "$(spine_has "$ARCHREF" 'or CONVERGED (count stopped falling)')"                                    "yes"
+expect "arch: flowchart has no convergence->pass edge" \
+  "$(grep -c 'CONVERGED.*park + advance' "$ARCHREF" | tr -d ' ')"                                     "0"
 
 # restore a sane state file for anything appended after this block
 printf '%s' '{"approved":true,"phase":"review","expected_next_action":"auto-continue"}' > "$ST"

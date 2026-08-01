@@ -221,6 +221,87 @@ RETIRED_PREFIXES = {
   # be taken", which does not cover a measurement that WAS taken and rejected, and
   # it predates `duration_min` becoming nullable.
   '**Run-metrics objects (`estimate`, `actuals`, `quality`, `checks`).**': 1,
+
+  # --- the Gate B adversarial loop is bounded --------------------------------
+  # Gate B did not converge. Measured across seven completed runs it ran 4-11
+  # adversarial passes each, required-finding counts never decayed (one HEAVY run
+  # went 3,2,3,3,3,2,3,4,0 over nine passes), blockers first appeared at passes 3
+  # and 5 rather than pass 1 -- i.e. each pass's fixes manufactured the next
+  # pass's findings -- and three of the seven runs ended by human fiat rather
+  # than by a clean pass. Two properties made it unbounded: a finding's
+  # SELF-ASSIGNED SEVERITY drove control flow regardless of whether it touched an
+  # Acceptance Criterion, and nothing counted the passes. Every line retired
+  # below is the OLD unbounded wording, replaced in the same commit by a rule
+  # that states the contract strictly more strongly than the line it retires.
+  #
+  # Loop-rule clause 5: the old test was "two consecutive review rounds producing
+  # zero blockers and zero required findings". That is unreachable exactly where
+  # the churn is -- Gate B exits on the FIRST clean pass, so a second consecutive
+  # clean round is never observed, and any non-clean round resets the streak. It
+  # fired ONCE across all seven runs, in a docs re-gate. It is also arithmetically
+  # unreachable under a Gate B pass cap of 2 (STANDARD). The replacement fires on
+  # a single non-DECREASING round, which is observable in-loop on both tiers.
+  '5. **Returns have not diminished** — **two consecutive review rounds producing zero blockers': 1,
+  # Effort-tiers table: the STANDARD and HEAVY rows' `Gate B` cell said only "run"
+  # / "run, with cross-check pass" and named no pass bound. Both now carry the
+  # per-tier pass cap (2 / 3), documenting `lb_gate_b_cap` in `loop-budget.sh`
+  # rather than duplicating it. LIGHT is unchanged -- it skips Gate B entirely.
+  '| STANDARD | 3-5   | types + unit + lint                              | 4            | run  ': 1,
+  '| HEAVY    | 6-8   | types + unit + lint + build (+ e2e if touched)   | 6            | run, w': 1,
+  # State schema: `gates.gate_b` gained the pass-accounting fields (`passes[]`,
+  # `verified_diff_sha`, `allowance_acked`) and `gates.loop_budget` gained
+  # `park_non_blocking`. Both are additive and absent-tolerant, so the retired
+  # lines' contract is preserved in full and only extended.
+  '    "gate_b":      { "passed": false, "at": null, "evidence": null, "skipped_reason": null },': 1,
+  '    "loop_budget": { "acked_through": 0, "acked_at": null, "reason": null }': 1,
+  # Gate B resolution ladder: it resolved BY SEVERITY, so any blocker/required
+  # reopened Phase 4 unconditionally and loop-rule clause 2 (in-scope = maps to an
+  # approved AC) was never applied at this gate. It now resolves by AC IMPACT --
+  # reopen only on (a) an AC breach, (b) a runtime-reachable regression/bypass, or
+  # (c) a security/data-loss path; park everything else whatever its label -- with
+  # a fail-CLOSED default when the finding's `ac:` field is missing, so the
+  # replacement can only ever do MORE work than the retired rule, never less.
+  'Resolve by severity:': 1,
+  '- Any **blocker** or **required** finding → feed back to Phase 4 with the finding as a new fix task;': 1,
+  # The three RE-GATE sites each restated the old ladder inside their re-gate step:
+  # "only on a clean adversarial pass (a Blocker/Required there loops back to
+  # fixing, exactly as in the main pipeline)". Once the main pipeline stopped
+  # reopening on a label, two of those parenthetical parity claims became FALSE and
+  # the third contradicted the new rule outright -- a docs-only `required` at a
+  # re-gate now PARKS per Step 2 while these lines still said it loops back to
+  # fixing. Found by Gate A round 3. Each replacement states the ladder by reference
+  # to the Step-2 AC-impact test, and is strictly more specific than the line it
+  # retires.
+  #
+  # ROUTING DIFFERS BY SITE, and the phase-9 entry must not be read as claiming
+  # otherwise (Gate A round 4 caught the first attempt doing exactly that): at the
+  # docs and bot-fix re-gates a finding that MEETS the test loops back to fixing,
+  # while phase 9 SURFACES instead -- that phase's own adjacent rule is "SURFACE --
+  # do not loop and do not auto-revert". So for phase 9 the parity restored is the
+  # ladder (what counts as a finding worth acting on), not the routing.
+  '   6. **Re-pass the gates (MANDATORY) — now that every docs path is visible to `git diff`.**': 1,
+  '**3. Apply the actionable fixes (ONE bounded round).** For each actionable finding:': 1,
+  '6. **Re-pass the gates (MANDATORY).** The bump + changelog are new authored bytes added after the review went clean,': 1,
+  # Phase 9's SURFACE rule resolved the re-run Gate B BY LABEL ("A Blocker/Required
+  # ... means the release diff itself is not shippable"), so a `required` the new
+  # ladder parks would clear the gate at step 6 and simultaneously fail the release
+  # here -- one pass, two outcomes, in adjacent lines. Gate A round 4. The
+  # replacement routes on the Step-2 AC-impact test and says explicitly that a
+  # failing-the-test finding does not fail the release.
+  '   - **If either re-gate does not come back clean, SURFACE — do not loop and do not auto-revert.**': 1,
+  # Gate B's spawn-input bullet handed EVERY pass "the full diff vs. base", which
+  # contradicted Step 1's delta-scoping the moment that step became executable --
+  # pass N would have re-read all N-1 rounds of fixes, the unbounded search surface
+  # the cap exists to close. Found by the Gate B adversarial pass. The replacement
+  # keeps the whole bullet verbatim for pass 1 and states the delta for later ones,
+  # so it is strictly more specific than the line it retires.
+  '- The full diff vs. base (`git diff <base>` — the uncommitted working-tree diff;': 1,
+  # The anti-stall contract's one-line summary of both verifier gates still said
+  # "Apply fixes (Blocker/Required) or park (Follow-up)" -- the pre-change mapping,
+  # sitting in the ALWAYS-LOADED spine alongside the new AC-gated ladder with no
+  # precedence between them. Gate A round 4 (ranked observation). The replacement
+  # defers to each gate's own ladder rather than restating either.
+  '- A verifier agent (`task-execution-verifier` at Gate A or Gate B) returning findings is **INPUT**.': 1,
 }
 
 bc = collections.Counter(l for l in base if l.strip())

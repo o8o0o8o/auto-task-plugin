@@ -23,7 +23,7 @@ After the user types `approved` / `looks good` / `proceed` / `yes` / `go ahead` 
 There are NO other legitimate stopping points between plan approval and Phase 5 — and within Phase 5 only the two documented *procedural* prompts (the docs-update ask in `ask` mode when a change is proposed, then push/PR), plus the conditional step-7b merge gate and any fix-loop budget ack. Past Phase 5, the post-PR phases add their own documented surfaces, including the Phase-9 release ask. In particular:
 
 - A sub-skill (`auto-task-plan`, `auto-task-implement`, `auto-task-verify`, `auto-task-code-review`, `auto-task-commit`) returning a structured report is **INPUT**, not an end-of-turn. Parse it, act on it, continue.
-- A verifier agent (`task-execution-verifier` at Gate A or Gate B) returning findings is **INPUT**. Apply fixes (Blocker/Required) or park (Follow-up), then continue.
+- A verifier agent (`task-execution-verifier` at Gate A or Gate B) returning findings is **INPUT**. Resolve them by that gate's own ladder (Gate B reopens only on the AC-impact test and parks the rest, whatever the label), then continue.
 - A green check from `/auto-task-verify` advances to Gate A. Continue.
 - A clean `auto-task-code-review` pass (no Blockers/Required) advances to Gate B (or Phase 5 for LIGHT tier). Continue.
 - A "No adversarial findings." from Gate B advances to Phase 5. Continue.
@@ -43,7 +43,7 @@ Phase 5 has exactly two permitted **procedural** prompts, in this order (in addi
 
 - **Human gates depend on the autonomy mode (see "Autonomy modes & the merge gate").** In the default `supervised` mode the model below is exactly as written: the Phase-1 plan is the one gate, plus the Phase-5 push prompt (and, when `docs_update_mode` is `ask` and the docs step proposes a change, the Phase-5 docs-update ask). In `autonomous` mode those procedural gates go silent and the **merge gate** is the sole mandatory stop, with the interrupt-now gates (ambiguity / destructive-op / test-integrity / cost budget) as the safety net. The rest of this bullet describes `supervised` mode. **One human gate (supervised).** The plan produced in Phase 1 is the contract. After the user approves it, do not stop for confirmation — proceed through Execute → Verify → Review → Handover (→ bot-comment review, when opted in → Preview verification, when enabled/auto-learned → External change application, when external actions were declared) automatically. The mid-run exceptions remain the Phase 5 push/PR prompt, the Phase-5 docs-update ask (only when `docs_update_mode` is `ask` and the docs step proposes a change), the single Phase-8 apply prompt for external changes, and the Phase-9 release ask (only when `release_mode` is `ask` and there is something to release); a post-PR surface (a Phase-6 bot-review poll/surface, a Phase-7 preview handoff/timeout, a Phase-8 `awaiting-external`/failure surface, or a Phase-9 `partial-failure`/`failed` surface, where work is still owed) is a documented yield, not a new gate.
 - **Surface only when the loop rule says to.** See "Loop rule" below. Never invent new stops outside that rule.
-- **Run label (cosmetic — never changes control flow).** Every run carries a concise human-readable `state.title` (derived at branch setup, see Phase 1). Surface it two ways so a session is identifiable at a glance: **(a)** prefix EVERY spawned Agent's `label`/`description` with the title, so the running-agent status line reads `<title> · <activity>` (e.g. `Ticket-comment forwarding · Gate B adversarial verify`) — this applies uniformly to the Phase-1 critique agent, the approach-selection `general-purpose` agents, and the Gate A / Gate B `task-execution-verifier` agents, with NO spawn site exempt; **(b)** whenever a phase *already legitimately* emits a user-facing message AND `state.title` already exists (it is derived in branch-setup step 4, so the banner is available from that point on), PREFIX that message with a one-line banner `▶ auto-task: <title> — Phase N (<phase-name>)`. The qualifying surfaces are: the Phase-1 telemetry-consent / clarifying-questions / plan-approval prompts (clarifying-questions here covers the Phase-1 clarify routing question and the forwarded-comment pause), the Phase-5 docs-update ask (`ask` mode, non-empty staleness report), the Phase-5 push/PR prompt, a Phase-6 bot-review surface, a Phase-7 preview surface, the Phase-9 release ask (`ask` mode, something to release) or a Phase-9 `partial-failure`/`failed` surface, a Loop-rule surface, or a destructive-action confirmation. **Carve-out:** the one sanctioned user surface that fires *before* branch setup — the pre-preflight version-check ask (new runs only) — runs before any title, branch, or slug exists, so it carries NO banner. (These qualifying surfaces are the post-title `user-approval`/`user-push-prompt` rows of the yield-point table, plus the pre-approval telemetry-consent ask, minus that pre-title version-check row.) This adds NO new message: it only labels the messages that already occur. It does **not** license a per-phase "message to the user" — the unattended phases (2, 3, 4, Gate A/B) stay silent and make tool calls per the NON-YIELDING CONTRACT above, so they emit no banner. This is presentation only: it introduces no gate, no yield, and no new `AskUserQuestion`, and it never alters `expected_next_action`.
+- **Run label (cosmetic — never changes control flow).** Every run carries a concise human-readable `state.title` (derived at branch setup, see Phase 1). Two uses: **(a)** prefix EVERY spawned Agent's `label`/`description` with it, no spawn site exempt, so the status line reads `<title> · <activity>`; **(b)** prefix a user-facing message a phase *already legitimately* emits with `▶ auto-task: <title> — Phase N (<phase-name>)`. It adds NO new message and licenses no per-phase message to the user — the unattended phases (2, 3, 4, Gate A/B) stay silent per the NON-YIELDING CONTRACT. Presentation only: no gate, no yield, and `expected_next_action` never changes. **Qualifying banner surfaces are enumerated in `references/phase-1-preamble.md` ("run-label-convention").**
 - **Single commit at handover.** Phases 2 through Gate B make NO commits — all changes accumulate as one growing uncommitted diff against the branch base, and only Phase 5 commits, after every required gate has passed (see the "Single-commit rule" below, mechanically enforced by the pre-commit hook). The only additional commits permitted are the Phase-5 main-sync merge (integration, not authored) and two opt-in authored commits — Phase-6 bot-fix commits (when `bot_review_autofix` is on) and the Phase-9 release commit (when `release_mode` is on) — each of which re-passes the full gate loop before it can land. Durability and resumability come from `.auto-task/<branch>/STATE.json` on disk, not from intermediate commits.
 - **`.auto-task/` is the persistent local history root — gitignored, NEVER committed.** Layout: `.auto-task/<branch-name>/` per run, where `<branch-name>` mirrors the git branch path verbatim (so branch `fix/auth-bug` → `.auto-task/fix/auth-bug/`). Inside each per-run folder:
   - `STATE.json` — the run-state machine ([[state-file-schema]]).
@@ -67,7 +67,8 @@ Continue iterating while ALL of these hold:
 2. **In-scope** — remaining issues map to the approved Acceptance Criteria. Out-of-scope finding → STOP and surface.
 3. **Unblocked** — no external blocker (missing credentials, broken infra, design decision the plan didn't cover, third-party outage). Blocker → STOP and surface.
 4. **No test flakiness** — every test failure is reproducible. Any flake (test fails then passes on retry without code change, or fails non-deterministically) → STOP and surface.
-5. **Returns have not diminished** — **two consecutive review rounds producing zero blockers and zero required findings means the loop has CONVERGED: park the remaining findings and advance.** Do not take a follow-up "while we're here". Clause 1 measures whether progress *happened*, and it structurally cannot catch a loop that keeps finding **genuine but trivial** defects, because such a loop always shows progress. A real run demonstrated the gap: 28 review rounds, every one finding something real, clause 1 never able to fire, and by the tail a "required" finding meant a hostile artifact deliberately planted inside a plugin install directory. Once a round comes back clean, the bar for another fix is the **Acceptance Criteria** — not the mere existence of a finding. Every fix costs a full re-review cycle, so an optional one is never free.
+5. **Returns have not diminished** — **when a round's blocker+required count fails to DECREASE versus the previous round, the loop has CONVERGED: stop fixing and SURFACE for the user's call.** It fires only while findings remain: **a clean round (zero blockers, zero required) has nothing to park and takes its loop's clean exit, never surfacing.** Park-and-advance is a user's grant, never self-granted: in NO loop does an unfixed blocker or required finding pass a gate on this test alone. At Gate B, count only findings that **reopened**; a zero-reopening pass already advances at the resolution step, so a *fired* convergence test always **surfaces**. One round fires it. Clause 1 cannot catch a loop that keeps finding **genuine but trivial** defects, because such a loop always shows progress — a real run reached 28 review rounds, every one finding something real. Once a round comes back clean the bar for another fix is the **Acceptance Criteria**, not the mere existence of a finding: every fix costs a full re-review cycle, so an optional one is never free. Do not take a follow-up "while we're here".
+   - A single non-decreasing round, not two consecutive clean ones: the old test could not fire where the churn is (Gate B exits on the FIRST clean pass, so a second consecutive clean round is never observed) and is unreachable under a Gate B cap of 2. Full reasoning: `references/phase-3-gates.md`.
 
 Exit the loop successfully when:
 - All `/auto-task-verify` checks pass.
@@ -83,8 +84,10 @@ Define-phase scoring (see Phase 1 rubric) produces Difficulty (D) and Risk (R), 
 | Tier     | Range | `/auto-task-verify` scope                                  | Fix-loop cap | Gate B                          |
 |----------|-------|--------------------------------------------------|--------------|---------------------------------|
 | LIGHT    | 0-2   | types + unit                                     | 2            | skipped (Gate A only)           |
-| STANDARD | 3-5   | types + unit + lint                              | 4            | run                             |
-| HEAVY    | 6-8   | types + unit + lint + build (+ e2e if touched)   | 6            | run, with cross-check pass      |
+| STANDARD | 3-5   | types + unit + lint                              | 4            | run, max 2 passes               |
+| HEAVY    | 6-8   | types + unit + lint + build (+ e2e if touched)   | 6            | run, max 3 passes, cross-check  |
+
+The **Gate B pass cap** is a second, independent bound — iteration rounds at commit time vs. adversarial passes at Gate-B entry — and each re-gate site gets its own per-run allowance so an at-cap main loop cannot deadlock the handover commit. All three numbers come from `hooks/lib/loop-budget.sh`; rationale in `ARCHITECTURE.md`.
 
 - Tier does NOT change which model is used — model selection stays with the user. The pipeline only adjusts verification scope, loop budget, and gate intensity.
 - Effort can only **escalate**. Auto-de-escalation is forbidden — the user can downshift manually by editing PLAN.md's `Effort:` line and re-running.
@@ -97,7 +100,7 @@ The "Fix-loop cap" column is a **budget**, not a suggestion. Two hooks enforce i
 - **`enforce-gates.sh`** refuses a commit once the **loop count** exceeds the effective budget. Placed after the code-review / Gate-B checks, so a run that is still legitimately working hears about its real gate first.
 - **`prevent-mid-protocol-stall.sh`** emits a warning and releases **one** turn-end per over-budget loop count. Note precisely what this does and does not buy, because it is easy to overstate: a model that follows the ack ritual below sets `expected_next_action: "user-approval"` first, and the Stop hook already allows that yield — so the release is **not** a precondition for surfacing. It is a **backstop plus a best-effort notice** for the case that actually goes wrong: a run that keeps churning without updating the field, where the anti-stall contract would otherwise force it onward with nothing telling it the budget is blown. A second turn-end at the same loop count blocks normally. Be precise about the notice's reach: on an ALLOW the hook has no guaranteed model-facing channel (only a *block* is fed back), so it emits the warning as a `systemMessage` **and** on stderr — surfaced best-effort. The guaranteed half of the pair is the commit block, which is model-facing by construction.
 
-**Loop count** = `max(iteration.fix, iteration.review)` — and it must be both counters, because the two track different halves of the same churn. `iteration.fix` is bumped only on the Phase-3 self-verify failure path; every Phase-4 review round and every Gate-B feedback round bumps `iteration.review` instead. A budget keyed on `fix` alone would wave through a run at `fix: 0, review: 28` — 28 rounds of iteration, the exact volume this budget exists to bound. Both hooks measure the identical `max`, so on any well-formed state the commit block and the turn-end release agree. On a state neither can verify — a counter that is non-numeric, negative, fractional, or too wide for a 64-bit compare — they diverge *by design*, because their fail policies are opposite: the gate blocks the commit (fail-closed) while the release stays silent (fail-open) and the run surfaces the ordinary way, by setting `expected_next_action: "user-approval"`. It is a `max`, not a sum: a run is bounded by how far its longest loop has run, and one ack still clears it.
+**Loop count** = `max(iteration.fix, iteration.review)` — both counters, because they track different halves of the same churn: `fix` is bumped only on the Phase-3 self-verify failure path, while every Phase-4 review round and Gate-B feedback round bumps `review`, so a `fix`-only gate would wave through a `fix:0 / review:28` run. **Full rationale and the divergence-by-design note: `references/phase-3-gates.md` ("fix-loop-budget-mechanics").**
 
 **Effective budget** = `max(cap, gates.loop_budget.acked_through)`. The `max` matters because effort can only escalate: an ack recorded at a lower tier must never leave the run under-budgeted after an escalation.
 
@@ -108,6 +111,7 @@ The "Fix-loop cap" column is a **budget**, not a suggestion. Two hooks enforce i
 3. Set `expected_next_action: "auto-continue"` and continue.
 
 `gates.loop_budget.acked_through` carries the identical trust model as every other gate flag: **a checkable artifact, never set speculatively.** Writing it without asking is the same contract violation as flipping `gates.code_review.passed` without running the review — and it defeats the only mechanism that makes the cap real.
+Two Gate-B flags are granted by this same ritual and carry the identical trust model: **`gates.loop_budget.park_non_blocking`** and **`gates.gate_b.allowance_acked`** — checkable artifacts, **never self-granted** (`references/phase-3-gates.md` Step 4).
 
 ## Inputs
 
@@ -183,9 +187,10 @@ Fail-open: if the engine cannot be located or errors, fall back to the original 
     "self_verify": { "passed": false, "at": null, "evidence": null },
     "gate_a":      { "passed": false, "at": null, "evidence": null },
     "code_review": { "passed": false, "tool": null, "clean_pass_after_last_fix": false, "reviewed_diff_sha": null, "at": null, "evidence": null },
-    "gate_b":      { "passed": false, "at": null, "evidence": null, "skipped_reason": null },
+    "gate_b":      { "passed": false, "at": null, "evidence": null, "skipped_reason": null,
+                     "verified_diff_sha": null, "allowance_acked": {}, "passes": [] },
     "merge":       { "required": false, "acked": false, "acked_at": null, "reason": null, "disclaimer": null },
-    "loop_budget": { "acked_through": 0, "acked_at": null, "reason": null }
+    "loop_budget": { "acked_through": 0, "acked_at": null, "reason": null, "park_non_blocking": false }
   },
   "assumptions": [
     { "kind": "auto-approved-ambiguity|thin-cite-decision|drift-auto-continue|risk-accepted", "note": "<what was assumed to stay unattended>", "at": "ISO-8601" }
@@ -299,6 +304,7 @@ The hook is registered via the plugin's `hooks/hooks.json` (marketplace install)
 | Phase 4 code-review skill returns | `"auto-continue"` (the report is INPUT) |
 | Phase 4 fix applied | `"auto-continue"` |
 | Gate B pass | `"auto-continue"` |
+| Gate B at its cap, a second `self_inflicted` pass, or a fired convergence test | `"user-approval"` |
 | Phase 5 steps 1, 1b, 2–4 (gates verify, docs update, diagram, artifacts, CONTEXT.md) — except the step-1b `ask` prompt below | `"auto-continue"` |
 | Phase 5 step 5–7 (stage, commit, verify, push prep) | `"auto-continue"` |
 | Phase 5 docs-update ask (step 1b — `docs_update_mode == "ask"` AND a staleness report is non-empty; skipped entirely on `skip`/`always`/empty-report, and degraded without yielding under `autonomous`/headless) | `"user-approval"` |
@@ -346,9 +352,7 @@ The second is the **fix-loop budget**: the hook blocks the commit while the loop
 
 Per-project, per-user configuration. **Optional and fully defaulted** — a project with no settings file behaves exactly as before. Read (never written) by the orchestrator via `hooks/settings.sh`.
 
-**Where they live:** `${AUTO_TASK_HOME:-$HOME/.claude}/auto-task/<project-key>/settings.json`, keyed by the git **common dir** so every linked worktree of a clone resolves to the same file. Nothing is written inside the working tree, so a setting never shows in `git status`.
-
-**Locate** `hooks/settings.sh` with the three-probe pattern (`CLAUDE_PLUGIN_ROOT` is empty in the Bash-tool env), then: `get <key>` · `all` (merged JSON) · `present <key>` (explicitly decided?) · `set <key> <value>` · `path` · `init` · `schema-status` · `reset --backup`.
+**Where they live and how to read them:** a per-project `settings.json` keyed by the git **common dir**, so every linked worktree of a clone resolves to the same file; read it through `hooks/settings.sh` (three-probe pattern — `CLAUDE_PLUGIN_ROOT` is empty here). Path + sub-commands: `references/settings.md`.
 
 **MANDATORY READ:** read `references/settings.md` before acting here. This summary is an index, NOT the contract. It carries the full recognized-key table, the two-scope merge rule, the remote-telemetry payload contract, settings reset — **and the autonomy sub-contracts** (First-run setup, merge gate, interrupt-now gates, assumptions ledger), since those are all policy resolution.
 
@@ -379,16 +383,11 @@ The gate that fires is a function of `autonomy` × `landing_model`:
 
 Every user-facing **comment** this pipeline drafts — the Phase-1 paste-ready **ticket comment**, the Phase-5 **PR title + body**, and the Phase-7 **preview verdict** PR comment — is prose someone else reads on a ticket or a PR. When the user has a house writing voice, those comments should sound like it. This section is the single source of truth for that; the three comment surfaces reference it rather than re-specifying it.
 
-**Resolve a voice guide (`VOICE.md`), first *non-empty* file wins:** (1) `<repo-root>/.claude/VOICE.md`, then (2) `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/VOICE.md`. Fall-through, not first-*present* — an empty project file never masks a populated global one. Found: treat it as the tone guide for the comment's **free prose**. Found none: use each surface's built-in default style.
+**MANDATORY READ:** read `references/phase-1-preamble.md` before acting here. This summary is an index, NOT the contract. It carries the `VOICE.md` resolution order, the per-surface application, and the full hard-constraint list.
 
-**MANDATORY READ:** read `references/phase-1-preamble.md` before acting here. This summary is an index, NOT the contract.
+**Hard constraints always outrank voice**, which shapes *how prose reads*, never *what may appear*: **no AI attribution** (no `Co-Authored-By: Claude`, no "🤖 Generated with…") on any commit message, PR title, PR body or PR comment; the **ticket-comment contract** (no names, no greetings, functional questions only); the PR body's **machine-structured content** stays verbatim; and the **per-surface length limits** hold.
 
-**Hard constraints always outrank voice** — VOICE.md shapes *how prose reads*, never *what may appear*:
-- The **no-AI-attribution** rule (no `Co-Authored-By: Claude`, no "🤖 Generated with…") on every commit message, PR title, PR body, and PR comment.
-- The **ticket-comment contract** (no names, no greetings, strictly-business functional questions) and the **PR body's machine-structured content** (headings, tables, checklists, diagrams stay verbatim).
-- The **per-surface length limits** (ticket comment stays short; PR title under 70 chars).
-
-**Fail-open, silent, presentation-only:** resolving VOICE.md never blocks or errors a run, adds no gate, no yield, and no `AskUserQuestion`, and never alters `expected_next_action`.
+**Fail-open, silent, presentation-only:** resolving `VOICE.md` never blocks or errors a run, adds no gate, no yield and no `AskUserQuestion`, and never alters `expected_next_action`. It changes only the wording of comments the pipeline already emits.
 
 ## Pipeline
 
@@ -636,8 +635,10 @@ A second `task-execution-verifier` pass with an **adversarial** stance — flip 
 
 **Non-negotiables restated inline:**
 - **Diff the working tree, not HEAD.** Pass `git diff <base>` — per the single-commit rule nothing is committed yet, so `<base>..HEAD` would be empty and the verifier would review no code.
-- **Any blocker or required finding → back to Phase 4** with the finding as a fix task; increment `iteration.review`; do NOT set `gates.gate_b.passed`; and **reset `gates.code_review.passed` to `false`**, because an "addressed in name only" finding means the review did not really hold up.
-- **Only follow-ups → park** in `state.followups` and set the gate. `No adversarial findings.` → set the gate.
+- **This gate is BOUNDED — it does not converge on its own.** Seven measured runs went 4-11 passes with required counts that never decayed, because each pass's fixes fed the next. So: count passes in `gates.gate_b.passes[]` per `scope`, cap them from `lb_gate_b_cap` / `lb_gate_b_regate_cap` (**never hardcode**), check the fix-loop budget at **entry** (this loop never commits, so the commit block cannot bound it), and delta-scope each later pass via `gates.gate_b.verified_diff_sha`.
+- **A finding reopens Phase 4 only if it (a) breaks an approved AC, (b) is a runtime-reachable regression/bypass, or (c) is a security/data-loss path** — otherwise **park it whatever its label**, `blocker`/`required` included; in the measured runs a self-assigned `required` on README wording reopened the loop. **Fail closed:** a missing or unparseable `ac:` counts as AC-breaking. On a reopen: bump `iteration.review`, leave `gate_b.passed` unset, reset `code_review.passed`.
+- **Only follow-ups → park** in `state.followups` and set the gate. `No adversarial findings.` → set the gate. No finding meeting (a)/(b)/(c) → set the gate too.
+- **At the cap, SURFACE — never auto-continue and never self-grant.** Show the per-pass severity table; the user grants exactly one of one more pass (`gate_b.allowance_acked`), park-and-advance (`loop_budget.park_non_blocking`), or a recorded descope (`gate_b.skipped_reason`). A resumed run acts on the recorded grant. Same trigger on a second `self_inflicted` pass and on a fired convergence test. **Nothing meeting (a)/(b)/(c) leaves this gate without a fix or a grant naming it** — `park_non_blocking` carves out (a)/(b)/(c), mandatorily.
 - **The bar is "you tried and failed", not "you didn't try."**
 - Trip-wire before ending the turn: did you write the gate-b resolution to state AND make the next tool call (a Phase-4 fix edit if blockers, the Phase-5 staging command if clean)? If not, you are about to stall.
 

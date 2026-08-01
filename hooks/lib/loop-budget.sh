@@ -23,6 +23,8 @@
 #   lb_effective_budget <cap> <acked> -> the budget a run may spend before blocking
 #   lb_strip_zeros <digits>           -> the value without leading zeros (octal-safe)
 #   lb_next_budget <cap> <acked> [count] -> what an ack should record
+#   lb_gate_b_cap <tier>              -> max MAIN-loop Gate B adversarial passes
+#   lb_gate_b_regate_cap              -> max Gate B passes per re-gate site, per run
 
 # lb_cap_for_tier <tier> -> cap on stdout
 #   Mirrors the Effort-tiers table: LIGHT 2 / STANDARD 4 / HEAVY 6.
@@ -150,4 +152,54 @@ lb_next_budget() {
     [ "$steps" -lt 1 ] && steps=1
   fi
   printf '%s' "$(( budget + steps * cap ))"
+}
+
+# lb_gate_b_cap <tier> -> max MAIN-loop Gate B adversarial passes, on stdout
+#   A SECOND, INDEPENDENT bound, and it must not be confused with the fix-loop cap
+#   above. The fix-loop cap counts ROUNDS OF ITERATION (max of iteration.fix and
+#   iteration.review) and only bites at commit time; this one counts ADVERSARIAL
+#   PASSES and bites at Gate-B entry. Measured runs are why both exist: across seven
+#   completed runs Gate B ran 4-11 passes with required-finding counts that never
+#   decayed (3,2,3,3,3,2,3,4,0 over nine passes in one HEAVY run), and blockers
+#   arrived at passes 3 and 5 rather than pass 1 — i.e. the fixes were manufacturing
+#   the next pass's findings. The fix-loop cap could not bound that, because it is
+#   only read by `git commit` and the loop never commits.
+#
+#   LIGHT yields 0 because LIGHT SKIPS GATE B ENTIRELY (the Effort-tiers table sets
+#   gate_b.skipped_reason='tier=light'). 0 here means "no pass is permitted", which
+#   is the honest encoding of "this tier does not run this gate" — a caller must not
+#   read it as "unlimited". An unrecognized or empty tier yields the STANDARD cap,
+#   matching lb_cap_for_tier's default and the gate hook's `.effort.tier //
+#   "standard"`; the same caveat applies, namely that "unrecognized tier" and
+#   "absent effort object" are indistinguishable here, so a caller that must not
+#   enforce on a legacy run has to probe for absence itself.
+lb_gate_b_cap() {
+  case "${1:-}" in
+    light)    printf '0' ;;
+    heavy)    printf '3' ;;
+    standard) printf '2' ;;
+    *)        printf '2' ;;
+  esac
+}
+
+# lb_gate_b_regate_cap -> max Gate B passes for ONE re-gate site, for the whole run
+#   Four sites re-run Gate B after the main loop ends (the Phase-5 docs step, the
+#   Phase-5 merge-conflict finalize, the Phase-6 bot-fix commit, the Phase-9 release
+#   commit). Each resets gates.gate_b.passed to false, and phase-5-handover.md says
+#   of the docs one: "Leaving it `false` would block the handover commit."
+#
+#   SO THIS ALLOWANCE IS DELIBERATELY SEPARATE FROM lb_gate_b_cap, AND TAKES NO TIER
+#   OR COUNTER ARGUMENT. Were a re-gate to draw on the main-loop cap, a run that
+#   spent its passes in the main loop could never re-earn the gate, and the handover
+#   commit would deadlock — with docs_update_mode=always that would be every run.
+#   Taking no argument is the enforcement: there is no input through which the main
+#   counter could leak in.
+#
+#   2 = one pass plus one fix-and-re-pass. It is PER SITE PER RUN, not per round:
+#   a site that executes repeatedly (Phase 6 can, the docs step can) must not renew
+#   its allowance, or the bounded re-gate becomes the same unbounded loop in a
+#   smaller room. Exceeding it surfaces to the user; it never silently passes the
+#   gate and never leaves the run wedged.
+lb_gate_b_regate_cap() {
+  printf '2'
 }

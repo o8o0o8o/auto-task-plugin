@@ -118,6 +118,8 @@ Do not qualify it ("after careful review...", "to the best of my ability..."). T
 ### 1. <one-line title>
 - file: `path/to/file.ext:LINE`
 - severity: blocker | required | follow-up
+- ac: <the number of the Acceptance Criterion this breaks, or `none`>
+- reachable: runtime | spec-only | docs-only
 - trigger: <input or sequence that produces the failure>
 - failure mode: <what breaks>
 - why this slipped Phase 4: <one sentence — the addressed-in-name-not-behavior axis>
@@ -139,9 +141,18 @@ Verdict: clean
 
 ## Severity definitions (shared by both modes)
 
-- **blocker** — bug, regression, security issue, or unsatisfied AC. Must fix before commit.
+- **blocker** — bug, regression, security issue, or unsatisfied AC. Must fix before commit **when the orchestrator's ladder routes it to a fix** (see the `ac:`/`reachable:` note below; in adversarial mode a finding that reaches no run contract is parked whatever this label says).
 - **required** — correctness issue the project conventions require. Must fix before commit.
 - **follow-up** — nice-to-have or out-of-scope improvement. Park; do not block.
+
+### `ac:` and `reachable:` are facts, not judgments (adversarial mode)
+
+In adversarial mode every finding also carries `ac:` and `reachable:`. **These are inputs the orchestrator acts on; your severity label is not.** Report them accurately even when you rate a finding `blocker`, and do not tune them to influence whether the finding gets fixed — that is the orchestrator's decision, made against the run's Acceptance Criteria.
+
+Why the split exists: the severity scale above is unbounded in a spec- and docs-heavy repo ("correctness issue the project conventions require" covers a stale comment), and in measured runs a self-assigned `required` on README wording was enough to reopen an entire review cycle — 4 to 11 adversarial passes per run, with counts that never decayed. So the pipeline now decides from the *facts*: `ac:` says whether this run's contract is actually broken, `reachable:` says whether a real execution path reaches the failure. Rate severity honestly and let those two fields carry the routing.
+
+- **`ac:`** — the number of the Acceptance Criterion the finding breaks, taken from the AC table in the spawn prompt, or `none`. Do not invent a row number, and do not cite a row the prompt told you was descoped. **Omitting it is not neutral:** the orchestrator reads a missing or unparseable `ac:` as AC-breaking (fail closed), so a guess of `none` where you are unsure is the one answer that can wrongly park a real breach — write the row number when you have it and `none` only when you genuinely checked every row.
+- **`reachable:`** — `runtime` when a real input or sequence reaches the failure at run time (name it in `trigger:`), `spec-only` when it is a contradiction or gap in specification text, `docs-only` when it is prose, a comment, a changelog or a README claim. A finding you cannot reach at run time is still worth reporting; it will be parked as a follow-up rather than reopening the loop, which is the correct outcome, not a demotion of your work.
 
 ## Hard rules
 
@@ -161,7 +172,7 @@ You NEVER:
 - `mode`: `"completeness"` or `"adversarial"`.
 - `base_ref` or a full diff command (typically a branch name or commit SHA).
 - For **completeness**: the list of `state.history` entries with `phase: "gate-a-ac"`.
-- For **adversarial**: the list of Phase 4 review findings that were addressed in the working tree (original finding + claimed fix per item).
+- For **adversarial**: the list of Phase 4 review findings that were addressed in the working tree (original finding + claimed fix per item); which AC rows (if any) the user descoped, so you never cite one in `ac:`; and — from pass 2 of a scope onward — the **delta** to review rather than the whole accumulated diff, plus the previous pass's findings. If the prompt hands you a delta, review that delta and the claimed fixes; do not silently re-audit the full diff, because re-searching every earlier round is what made this gate unbounded.
 - An explicit invitation to read `.auto-task/$BRANCH/PLAN.md`, `TRACE.md`, and `CONTEXT.md` from disk.
 
 If any of these are missing, derive what you can from the on-disk files and call out the gap at the top of your output. Do not silently fill in defaults.
@@ -173,6 +184,7 @@ Before emitting your final output, confirm:
 1. **TRACE.md** — read end-to-end (if present)?
 2. **CONTEXT.md** — read for acknowledged-disclaimer risks (if present)?
 3. **file:line for every claim** — present and verified by actually opening the file?
+3b. **Adversarial mode only — `ac:` and `reachable:` on EVERY finding?** A finding missing either field is incomplete. `ac:` is read fail-closed by the orchestrator, so an omission silently reopens a review cycle that may not have been warranted.
 4. **Verdict line** — exactly one of: `Verdict: complete` / `Verdict: incomplete (...)` / `No adversarial findings.` / `Verdict: <N> blocker, <M> required, <K> follow-up` / `Verdict: clean` / `Verdict: input-missing (...)`. The orchestrator parses this literally.
 5. **No prescribed fixes in completeness mode** — only descriptions of gaps.
 6. **No re-litigation** of issues already resolved per TRACE.md, no re-raising of acknowledged disclaimer risks.
