@@ -175,6 +175,16 @@ for f in refs:
 # `tokens_breakdown` line differs (cache_read/cache_creation vs cache), so it was never
 # a collision. The count exists for that single shared line.
 RETIRED_PREFIXES = {
+  # --- intent-add before every diff-sha re-pin (RELIABILITY-AUDIT item 1) ----
+  # The merge-conflict finalize is a `reviewed_diff_sha` re-pin site like the
+  # Phase-6 bot-fix one, but it carried no intent-add instruction: a resolution
+  # that CREATES a file (split-out module, regenerated artifact) left that path
+  # untracked, so it entered `git diff <base>` only at the finalize commit —
+  # moving the hash after it was pinned and hard-blocking the very
+  # `git commit --no-edit` the line mandates. The replacement inserts that
+  # instruction mid-sentence and keeps every other clause verbatim, so it states
+  # the contract strictly more strongly than the line it retires.
+  '       - **Mandatory re-check BEFORE finalizing the merge commit:**': 1,
   # --- estimate.sh output-token recalibration -------------------------------
   # `estimate.sh` stopped emitting a cache-inclusive `tokens_total` and a
   # `tokens_breakdown` it could not honestly predict (measured input ~1k;
