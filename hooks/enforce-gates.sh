@@ -120,7 +120,22 @@ if [ "$cmd_is_raw" -eq 1 ]; then
 else
   land_re="(^|[;&|\`]|\\\$\\()[[:space:]]*(${land_mid}|${gh_mid})"
 fi
-if printf '%s' "$cmd" | LC_ALL=C grep -qE "$land_re"; then
+# HERESTRING, not `printf … | grep -qE`. This detector and the commit one below decide
+# whether the hook engages AT ALL, so a false negative here silently skips EVERY gate in
+# this file — review flags, staleness, Gate B, diff hygiene and the loop budget alike.
+# `grep -q` exits at its first match, closing the pipe; `printf` is a shell BUILTIN, so
+# SIGPIPE kills the subshell running it and `set -o pipefail` (line 17) promotes 141 to the
+# pipeline's status, making the `if` read "no match". A herestring is not a pipeline, so
+# the status is grep's alone.
+#
+# It needs a MULTI-LINE command to fire — BSD grep reads a single long line whole and never
+# SIGPIPEs, which is why a 200 KB one-liner is fine and 4001 lines is not (measured
+# rc=141 vs rc=0). End-to-end before this fix: `git commit -m x` chained with ~100 KB of
+# further lines exited 0 against a state with `gates.code_review.passed=false` — a total,
+# silent bypass of a fail-closed safety hook. Reachable via an ordinary compound call: a
+# commit chained with a large heredoc, `git commit -F - <<EOF` with a big body, or a commit
+# followed by a generated script.
+if LC_ALL=C grep -qE "$land_re" <<< "$cmd"; then
   if command -v rrs_resolve_state >/dev/null 2>&1; then
     rrs_resolve_state "$input"
     cand=""
@@ -159,7 +174,10 @@ EOF
   # exits 0 there; a chained commit is still gated.
 fi
 
-if ! printf '%s' "$cmd" | LC_ALL=C grep -qE "$commit_re"; then
+# HERESTRING for the same reason as the land detector above — see that comment. This is the
+# more consequential of the two: a false negative here takes the `exit 0` below and skips
+# every gate in the file.
+if ! LC_ALL=C grep -qE "$commit_re" <<< "$cmd"; then
   exit 0
 fi
 
@@ -344,6 +362,355 @@ fi
 if [ "$tier" != "light" ] && [ "$gate_b_passed" != "true" ] && [ -z "$gate_b_skipped" ]; then
   printf 'Blocked by auto-task-plugin: tier=%s requires Gate B before commit.\nRequired:\n  gates.gate_b.passed = true   OR   gates.gate_b.skipped_reason set\n' "$tier" >&2
   exit 2
+fi
+
+# ---- Diff hygiene ----------------------------------------------------------
+# Every block ABOVE this one decides from a field the model wrote into STATE.json.
+# The hook was fail-closed about review BOOKKEEPING and blind to diff CONTENT, so a
+# diff carrying a real `AKIA…` key committed with every gate green. `hooks/checks.sh`
+# already detects secrets, leftover conflict markers and weakened tests
+# deterministically — and it is the only component that also sees untracked files —
+# but it is model-invoked in Phase 3, and nothing consulted it (or
+# gates.self_verify.passed) at commit time. This block is that consultation.
+#
+# PLACEMENT is deliberate: after the gate contract above, before the fix-loop budget
+# below. A run whose review has not passed hears THAT first (it is still legitimately
+# working), and content hygiene outranks a volume check.
+#
+# FAIL-OPEN LIVES IN THE SCANNER, FAIL-CLOSED LIVES IN THE GATE. checks.sh emits
+# all-`skip` when it cannot inspect the diff, which is right for its Phase-3 caller
+# (a metrics manifest must not fabricate rows) and WRONG here — a scanner that could
+# not look is not a clean bill of health. So all-skip blocks, as do a missing
+# checks.sh and output that is not a row array. checks.sh's own contract is
+# unchanged; only this caller reinterprets its silence.
+#
+# SCOPE is the WORKTREE **UNION THE INDEX** — the scanner is run twice, and a `fail`
+# from either blocks. Neither alone is sufficient:
+#   - The worktree scan (`git diff <base>` + untracked) is the primary one, consistent
+#     with gates.code_review.reviewed_diff_sha and the staleness check above, and with
+#     the single-commit rule under which the whole worktree diff IS the run's work.
+#     Narrowing to the index would let a secret hide in an unstaged file through every
+#     gate and land in a later commit of the same run.
+#   - The INDEX scan (`--cached`) exists because `git commit` commits the index, not the
+#     worktree. Content staged and then edited out of the worktree is structurally
+#     invisible to the worktree diff — verified: stage a file carrying an `AKIA…` key,
+#     then remove the key from the file, and the worktree scan reports zero findings
+#     while the commit still carries it. Reachable by an ordinary `git add -A` → "oh,
+#     that's a secret" → delete it from the file → commit sequence, where the fix is not
+#     in the commit but the guard sees the fix.
+# So the union is the honest scope: everything that will land, plus everything the run is
+# still holding. The blast is bounded by this hook's applicability: it fires only while
+# an approved, non-`done` run exists for the current branch, so it never touches a
+# commit outside a run.
+#
+# `warn` NEVER blocks, so checks.sh's test/fixture-path demotion still lets a
+# fixture credential through, exactly as before.
+#
+# Backward-compatible: skipped entirely when `base` is absent (legacy runs), like the
+# staleness check — it can only ever add a block, never spuriously allow.
+if [ -n "$base" ]; then
+  checks_sh="$ENFORCE_SCRIPT_DIR/checks.sh"
+  # The current diff hash, for pinning an ack. Same PINNED flags as the staleness
+  # check — one formula, so an ack recorded against one cannot read as another.
+  # Computed LAZILY, on the first ack lookup: acks are consulted only when something
+  # already failed, so the clean path (every commit of a healthy run) must not pay for
+  # a second full `git diff | hash-object` on the Bash hot path.
+  # THE PIN must move whenever anything the SCANNER can see changes — otherwise an ack
+  # granted for a genuine false positive silently clears later, unrelated, REAL findings
+  # of the same check name. It is therefore deliberately NOT `git diff <base>`, the
+  # formula the staleness check uses. Measured failure of that formula: ack a documented
+  # docs placeholder, then create a NEW UNTRACKED file carrying a real `AKIA…` key — the
+  # hash does not move (`4e8e62ad…` before and after), the stale ack still matches, and
+  # the commit is ALLOWED while the scanner is reporting two matches. A staged-then-
+  # deleted-from-worktree file is invisible to it for the same reason.
+  #
+  # Four parts, covering exactly the scanner's field of view, and every one is needed:
+  #   1. `git rev-parse HEAD`                    — moves on any commit
+  #   2. `git diff <flags> HEAD`                 — tracked WORKTREE content
+  #   3. `git diff --cached <flags> HEAD`        — INDEX content, including a path staged
+  #      and then deleted from the worktree, which part 2 cannot see at all
+  #   4. `<path>\t<blob-hash>` per untracked file — the untracked path SET *and* content
+  #
+  # `git status --porcelain` is NOT a substitute for 2-4: it emits status codes and paths
+  # but never content, so rewriting the bytes of a file already listed as ` M …`/`?? …`
+  # would leave a porcelain-only pin identical.
+  #
+  # Part 4's `[ -f ]` guard mirrors the one the scanner's untracked leg has, and it exists to
+  # prevent a HANG rather than a wrong value: `git ls-files --others` lists an untracked
+  # SYMLINK, and `git hash-object` on a symlink pointing at a FIFO blocks forever — so
+  # `|| echo unreadable` can never fire, the hook never reaches `exit 2`, and the harness
+  # kills it. Measured: with a real `fail` row present and an untracked `src/link ->` a FIFO,
+  # the full gate was killed at rc=142 instead of blocking. Fail direction is OPEN, which is
+  # the one direction this block must never take. Note the reachability shape — the pin is
+  # lazy, so it is only computed once a finding exists, i.e. only when a block is required.
+  # A non-regular path degrades to the `unreadable` sentinel rather than being skipped, so
+  # adding or removing one still moves the pin.
+  #
+  # Part 4 prefixes each path with `./` before handing it to `git hash-object`, for the same
+  # reason the scanner's untracked leg does: `ls-files` emits paths bare, so an
+  # option-shaped name is parsed as a switch (measured — git rejects an unknown switch for a
+  # file named -e) and the entry degraded to the literal `unreadable`, meaning that file's
+  # content never moved the pin and an ack stayed valid across rewrites of it.
+  #
+  # Part 4 hashes each path INDIVIDUALLY rather than piping the list through
+  # `git hash-object --stdin-paths`: that ABORTS at the first unreadable path (rc=128), so
+  # one mode-000 untracked file would drop the content of every path after it, and it
+  # cannot consume the quoted form `git ls-files` emits for a path containing a newline.
+  # A `-z` listing is never quoted, and an unreadable path degrades to the literal
+  # `unreadable` for that entry alone.
+  #
+  # Being base-independent is also what makes the override REACHABLE when `state.base`
+  # does not resolve — the headline reason to need one. An earlier version pinned to
+  # `git diff <base>` with a fallback, which needed a resolvability probe because
+  # `git diff <unresolvable-ref>` prints nothing yet the pipe still hashes EMPTY input,
+  # yielding the empty-blob hash (e69de29bb2…) rather than an empty string. One formula
+  # removes that trap along with the branch. Residual, accepted: with git itself
+  # unavailable no hash exists and no override is possible — but then `git commit` is not
+  # running either.
+  hyg_sha=""
+  hyg_sha_done=0
+  hyg_resolve_sha(){
+    [ "$hyg_sha_done" -eq 1 ] && return 0
+    hyg_sha_done=1
+    hyg_sha="$(cd "$project_dir" 2>/dev/null && {
+      git rev-parse HEAD 2>/dev/null
+      git diff $DIFF_FLAGS HEAD 2>/dev/null
+      git diff --cached $DIFF_FLAGS HEAD 2>/dev/null
+      git ls-files --others --exclude-standard -z 2>/dev/null | while IFS= read -r -d '' hyg_p; do
+        if [ -f "./$hyg_p" ]; then
+          printf '%s\t%s\n' "$hyg_p" "$(git hash-object "./$hyg_p" 2>/dev/null || echo unreadable)"
+        else
+          printf '%s\tunreadable\n' "$hyg_p"
+        fi
+      done
+    } | git hash-object --stdin 2>/dev/null || true)"
+  }
+  # An ack is a diff-sha-pinned, durable, reviewable record naming ONE check. A grant
+  # for one tree cannot cover a later one (the reviewed_diff_sha lesson applied to
+  # acks). Anything unreadable — a malformed acked[], a non-array, a missing hash —
+  # counts as NOT acked, so this leg can only ever preserve a block.
+  hyg_acked(){
+    hyg_resolve_sha
+    [ -n "$hyg_sha" ] || return 1
+    local n
+    # The `if type == "array"` is REQUIRED, not belt-and-braces: a bare `[]?` iterates an
+    # OBJECT's values just as happily as an array's elements, so `acked` supplied as
+    # `{"k": {check, diff_sha}}` would be honored — contradicting this function's own
+    # "a non-array counts as NOT acked" contract. Enumerate array elements only, and
+    # require each element to be an object, so no other container shape can grant.
+    n="$(jq -r --arg c "$1" --arg s "$hyg_sha" \
+      '[ (.gates.hygiene.acked // []) | if type == "array" then .[] else empty end
+         | select((type == "object") and ((.check? // "") == $c) and ((.diff_sha? // "") == $s)) ] | length' \
+      "$state" 2>/dev/null || echo 0)"
+    case "$n" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$n" -gt 0 ]
+  }
+  # The ack snippet a user PASTES. Absolute $state path, per the loop-budget ack fix:
+  # a relative .auto-task/<branch>/ path pasted from a different checkout that shares
+  # the branch name records the ack against the wrong run's state.
+  #
+  # The `if type == "array"` mirrors hyg_acked's own semantics, and it is what makes the
+  # recovery actually work rather than merely look right. A bare `(.acked // [])` errors
+  # under jq when `acked` is a non-array — which is EXACTLY the shape hyg_acked treats as
+  # "not acked", i.e. a state that is both blocked and in need of this snippet. With the
+  # error, `&& mv` never runs and the paste silently no-ops, dead-ending the documented
+  # recovery in the one case that most needs it (the same failure mode the loop-budget
+  # ack guards against below). Replacing a corrupt non-array with a fresh array is the
+  # right repair: it cannot destroy a valid grant, because a non-array never held one.
+  hyg_ack_cmd(){
+    hyg_resolve_sha
+    # The $state path is DOUBLE-QUOTED in the emitted command. Unquoted, the snippet
+    # broke for any project under a path containing a space — routine on macOS
+    # ("~/My Project/…") — because jq then received two file arguments and mv three.
+    # Measured: pasting it exited 2 and the block stayed up, dead-ending the documented
+    # recovery. (The loop-budget ack below still has the unquoted form; same one-line
+    # shape, parked as a separate follow-up rather than edited here.)
+    printf '  t="$(mktemp)" && jq \x27.gates.hygiene.acked = ((.gates.hygiene.acked | if type == "array" then . else [] end) + [{check: "%s", diff_sha: "%s", reason: "<why this is a false positive>", at: "\x27"$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"\x27"}])\x27 "%s" > "$t" && mv "$t" "%s"\n' \
+      "$1" "$hyg_sha" "$state" "$state"
+  }
+
+  if [ ! -f "$checks_sh" ] || [ ! -r "$checks_sh" ]; then
+    if ! hyg_acked "scanner-unavailable"; then
+      printf 'Blocked by auto-task-plugin: the diff-hygiene scanner is missing, so the commit content cannot be checked for secrets, conflict markers or weakened tests.\n  expected at: %s\nThis hook fails closed — a scanner that could not look is not a clean bill of health.\nRestore hooks/checks.sh (it ships with the plugin) and retry. If it genuinely cannot be restored, record a diff-pinned override:\n' "$checks_sh" >&2
+      hyg_ack_cmd "scanner-unavailable" >&2
+      exit 2
+    fi
+  else
+    hyg_out="$(cd "$project_dir" 2>/dev/null && bash "$checks_sh" --base "$base" 2>/dev/null || true)"
+    # Shape validation: a JSON array of row objects. Anything else (empty output, a
+    # crash, a jq-less truncation) is unusable and blocks.
+    #
+    # The WORKTREE scan is validated FIRST, and the index scan is not even run until this
+    # and the all-skip check below have passed. Order matters for two reasons found in
+    # review: with a globally broken scanner, validating the index first fired a message
+    # asserting "the worktree scan ran" when it had not — sending the reader to debug
+    # `--cached` while the plain invocation was equally broken; and running the index scan
+    # up front wasted a full second scanner pass (one `git diff` per changed file) on
+    # every run that was going to block here anyway.
+    hyg_rows="$(printf '%s' "$hyg_out" | jq -r 'if (type == "array") and (length > 0) and (all(.[]; (type == "object") and has("name") and has("result"))) then length else "bad" end' 2>/dev/null || echo bad)"
+    case "$hyg_rows" in ''|*[!0-9]*) hyg_rows="bad" ;; esac
+    if [ "$hyg_rows" = "bad" ]; then
+      if ! hyg_acked "scanner-unavailable"; then
+        printf 'Blocked by auto-task-plugin: the diff-hygiene scanner did not return a usable result, so the commit content cannot be checked.\n  scanner: %s --base %s\nThis hook fails closed. Run that command by hand to see what it reports (it should print a JSON array of check rows), fix the cause, and retry. If the scanner cannot be made to run here, record a diff-pinned override:\n' "$checks_sh" "$base" >&2
+        hyg_ack_cmd "scanner-unavailable" >&2
+        exit 2
+      fi
+    else
+      hyg_skips="$(printf '%s' "$hyg_out" | jq -r '[ .[] | select(.result == "skip") ] | length' 2>/dev/null || echo 0)"
+      case "$hyg_skips" in ''|*[!0-9]*) hyg_skips=0 ;; esac
+      if [ "$hyg_skips" -eq "$hyg_rows" ]; then
+        # EVERY row skipped: checks.sh could not inspect the diff at all. Four causes
+        # (checks.sh preconditions): git unavailable, not a git work tree, base not a
+        # commit, no --base. `base not a commit` is genuinely reachable in a real run
+        # (a base ref rebased or pruned away), so the block must be DIAGNOSABLE:
+        # carry the scanner's own detail text through verbatim, or the user hunts for
+        # a nonexistent secret instead of repairing state.base.
+        if ! hyg_acked "scanner-unavailable"; then
+          hyg_why="$(printf '%s' "$hyg_out" | jq -r '[ .[] | select(.result == "skip") | .detail? // "" ] | map(select(. != "")) | unique | join("; ")' 2>/dev/null || true)"
+          [ -n "$hyg_why" ] || hyg_why="(the scanner reported no reason)"
+          printf 'Blocked by auto-task-plugin: the diff-hygiene scanner could not inspect this diff, so the commit content is unchecked.\n  scanner said: %s\n  state.base:   %s\nThis hook fails closed — "could not look" is not "nothing to find".\nFix the cause the scanner named above. For "base not a commit" that means state.base no longer resolves in this repo (a rebased or pruned ref): fetch the missing commit, or repair .base in the state file to the real fork point. Only if the base commit is genuinely unrecoverable, record a diff-pinned override:\n' "$hyg_why" "$base" >&2
+          hyg_ack_cmd "scanner-unavailable" >&2
+          exit 2
+        fi
+      else
+        # The INDEX scan — the second half of the union scope described above, run only
+        # now that the worktree scan has proved usable and non-empty. Its rows are merged
+        # into the worktree rows below, so a `fail` from either blocks.
+        #
+        # It IS shape-validated, with the same predicate as the worktree scan, and that
+        # validation is load-bearing rather than symmetry for its own sake. An earlier
+        # version skipped it on the reasoning that "an unusable index scan must not be
+        # able to relax the worktree verdict" — but the merge is a single `jq -s` over
+        # BOTH documents, so unparseable index output failed the whole slurp and the
+        # `|| echo '[]'` fallback discarded the worktree's already-validated `fail` rows
+        # with it. Measured: a stub returning a real `secret-scan` fail for the worktree
+        # and non-JSON for `--cached` produced exit 0 — the commit carrying the credential
+        # was ALLOWED, the exact inversion this whole block exists to prevent. Two changes
+        # close it: the index output is validated here, and the merge below can no longer
+        # be the step that drops the worktree rows.
+        # SKIP the index scan when the index is provably identical to the worktree for
+        # tracked paths — `git diff` with no arguments compares exactly those two, so exit 0
+        # means the worktree scan already examined byte-identical content and a second pass
+        # can only repeat it. This is a correctness-preserving halving of the cost, not a
+        # shortcut: the index scan exists solely to catch content that differs from the
+        # worktree, and there is none. Only exit 0 is trusted; any other status (differences,
+        # or an error) runs the scan, so the fail-safe direction is "scan more".
+        #
+        # Why it matters: the scanner spends one `git diff` per changed file, so running it
+        # twice is linear in diff size — measured 6s total at 200 changed files and 18s at
+        # 600, and `hooks/hooks.json` sets no explicit timeout for this hook. A PreToolUse
+        # hook that is killed never reaches `exit 2`, so at some diff size a fail-closed gate
+        # would fail OPEN by timing out. Phase 5 stages the planned files immediately before
+        # committing, which is precisely the worktree==index case, so the common path now
+        # pays for one scan instead of two. The residual risk on a genuinely divergent
+        # very-large diff is recorded as a follow-up rather than papered over.
+        # The skip BYPASSES validation rather than validating a synthetic `[]`. Relaxing the
+        # predicate to accept a zero-length array so the placeholder would pass is a
+        # fail-OPEN: a genuinely broken scanner that printed `[]` would then validate as
+        # usable instead of blocking. Keep `length > 0` meaning "real rows", and gate the
+        # validation on whether a scan actually ran.
+        hyg_idx_skipped=0
+        if (cd "$project_dir" 2>/dev/null && git diff --quiet 2>/dev/null); then
+          hyg_out_idx='[]'; hyg_idx_skipped=1
+        else
+          hyg_out_idx="$(cd "$project_dir" 2>/dev/null && bash "$checks_sh" --base "$base" --cached 2>/dev/null || true)"
+        fi
+        if [ "$hyg_idx_skipped" -eq 1 ]; then
+          hyg_rows_idx=0
+        else
+          hyg_rows_idx="$(printf '%s' "$hyg_out_idx" | jq -r 'if (type == "array") and (length > 0) and (all(.[]; (type == "object") and has("name") and has("result"))) then length else "bad" end' 2>/dev/null || echo bad)"
+          case "$hyg_rows_idx" in ''|*[!0-9]*) hyg_rows_idx="bad" ;; esac
+        fi
+        if [ "$hyg_rows_idx" = "bad" ]; then
+          # Fail CLOSED, exactly as for an unusable worktree scan: half of what the commit
+          # carries went unexamined, and "could not look" is not "nothing to find".
+          if ! hyg_acked "scanner-unavailable"; then
+            printf 'Blocked by auto-task-plugin: the diff-hygiene scanner could not inspect the STAGED index, so half of what this commit carries is unchecked.\n  scanner: %s --base %s --cached\nThe worktree scan succeeded, so this is specific to the --cached invocation. `git commit` commits the INDEX, so the index scan is not optional. This hook fails closed.\nRun that command by hand to see what it reports (it should print a JSON array of check rows), fix the cause, and retry. If it cannot be made to run here, record a diff-pinned override:\n' "$checks_sh" "$base" >&2
+            hyg_ack_cmd "scanner-unavailable" >&2
+            exit 2
+          fi
+          hyg_out_idx='[]'   # acked: proceed on the worktree verdict alone
+        fi
+        # The real finding path. Collect `fail` rows not covered by a current ack.
+        # Only `fail` blocks: `warn`/`info`/`pass`/`skip` never do, so the test-path
+        # demotion of a secret to `warn` still commits.
+        #
+        # Rows from BOTH scans are merged, with index-only rows tagged so the message says
+        # which side found them — a finding the worktree does not show is confusing
+        # without that.
+        # `if type == "array"` on BOTH sides, not a bare `[]?`: that operator iterates an
+        # OBJECT's values as happily as an array's elements, which is the same bug class
+        # already fixed in hyg_acked. Enumerate array elements only.
+        # The index tag is applied ONLY to rows the worktree scan did not already report
+        # identically. Applied unconditionally it produced a message that asserted something
+        # false: a finding present in BOTH scopes printed the plain worktree detail AND a
+        # second copy claiming it was "not the worktree".
+        hyg_merged="$( { printf '%s\n' "$hyg_out"; printf '%s\n' "$hyg_out_idx"; } \
+          | jq -cs '(.[0] // []) as $w | (.[1] // []) as $i
+                    | ($w | if type == "array" then [ .[] | select(type == "object") ] else [] end) as $wr
+                    | ($wr | map({n: (.name? // ""), d: (.detail? // "")})) as $seen
+                    | [ $wr[],
+                        ($i | if type == "array" then .[] else empty end | select(type == "object")
+                            | if ([{n: (.name? // ""), d: (.detail? // "")}] - $seen) == []
+                              then empty
+                              else .detail = ((.detail? // "") + "  [found in the STAGED index, not the worktree]")
+                              end) ]' \
+          2>/dev/null || true)"
+        # The merge must never be the step that loses a validated finding. If it produced
+        # anything unusable, fall back to the worktree rows — which were shape-validated
+        # above — rather than to an empty array. `|| echo '[]'` here was a measured
+        # fail-OPEN: it discarded a real `secret-scan` fail and allowed the commit.
+        case "$(printf '%s' "$hyg_merged" | jq -r 'type' 2>/dev/null || echo bad)" in
+          array) ;;
+          *) hyg_merged="$hyg_out" ;;
+        esac
+        # The fail-name enumeration. `|| echo '(unnamed-check)'` rather than `|| true`: this
+        # is the last jq before the blocking decision, so its failure direction must be
+        # CLOSED like every other guard in the block. With `|| true` a jq failure yielded no
+        # names and the commit was allowed — unreachable today (this input already passed
+        # the shape validation above), but it was the one open-direction fallback left, and
+        # "unreachable" is how the earlier fail-opens in this block were described too.
+        hyg_blocked=""
+        while IFS= read -r hyg_name; do
+          [ -n "$hyg_name" ] || continue
+          hyg_acked "$hyg_name" && continue
+          hyg_blocked="$hyg_blocked $hyg_name"
+        done <<EOF
+$(printf '%s' "$hyg_merged" | jq -r '[ .[] | select(.result == "fail") | (if ((.name? // "") == "") then "(unnamed-check)" else .name end) ] | unique | .[]' 2>/dev/null || echo '(unnamed-check)')
+EOF
+        # A `fail` row is never skipped for want of a name: an empty/null name maps to
+        # `(unnamed-check)` above, which blocks via the default remedy arm. The shape
+        # validation only requires `has("name")`, not a non-empty string, so without this
+        # a nameless fail row would `continue` past the one loop that decides blocking.
+        if [ -n "$hyg_blocked" ]; then
+          printf 'Blocked by auto-task-plugin: the diff you are about to commit fails a hygiene check.\n' >&2
+          for hyg_name in $hyg_blocked; do
+            hyg_detail="$(printf '%s' "$hyg_merged" | jq -r --arg n "$hyg_name" '[ .[] | select((.name == $n) and (.result == "fail")) | .detail? // "" ] | map(select(. != "")) | unique | join("\n      ")' 2>/dev/null || true)"
+            # `(unnamed-check)` matches no real row, so its detail lookup is empty by
+            # construction — say something useful instead of printing a bare bracket
+            # followed by "resolve the condition the detail above names".
+            [ -n "$hyg_detail" ] || hyg_detail="(the scanner reported a failing row with no name or detail — inspect its raw output)"
+            printf '\n  [%s] %s\n' "$hyg_name" "$hyg_detail" >&2
+            case "$hyg_name" in
+              secret-scan)
+                printf '  If it IS a credential: remove it from the diff AND ROTATE IT. Committing a secret and deleting it in a later commit leaves it in history and in every clone — rotation is the only real fix.\n  If it is NOT a credential, this is a known false-positive shape and the ack below is the right answer: the pattern needs only the word api_key/secret/password/token, then a colon or equals, then 16+ unbroken characters inside quotes. A documented placeholder in a README (an API_KEY export line whose value is a dummy string of that length), an example in prose, or a long non-secret constant all match it. Docs and config paths get NO test/fixture demotion, so a README edit lands here. Shorten the dummy value, drop its quotes, make it obviously fake, or ack it.\n' >&2 ;;
+              conflict-markers)
+                printf '  If it IS an unfinished merge: finish the resolution — the listed file still carries conflict markers, and committing them yields code that does not parse.\n  If the file legitimately CONTAINS marker text at the start of a line — documentation showing what a conflict looks like, a test fixture outside a test path, a parser for merge output — that is a false positive and the ack below is the right answer.\n' >&2 ;;
+              test-integrity)
+                printf '  If a test really was weakened: restore it. A skip/focus marker was ADDED, or assertions were REMOVED with none added back — weakening a test to reach green is the failure this check exists to catch, so fix the code the test was failing on, not the test.\n  BUT CHECK THIS FIRST — three ordinary, harmless diffs produce the identical row, because the scan is per-file and rename-blind (it reads `git diff --no-renames`, which splits a rename into a delete plus an add):\n    * you RENAMED or MOVED a test file — the delete side looks exactly like a gutted test, even though the assertions are intact at the new path;\n    * you DELETED an obsolete test file outright;\n    * you moved assertions OUT of this file into another one.\n  None of those weakened anything, and none is fixed by "restoring" the file — the ack below is the correct and intended answer for them. Read the named path and decide which case you are in before touching the tests.\n' >&2 ;;
+              *)
+                printf '  Remedy: resolve the condition the detail above names.\n' >&2 ;;
+            esac
+          done
+          printf '\nUnlike every other block in this hook, NO state edit clears a real finding — the remedy is to fix the diff.\nIf and only if a row is a genuine false positive, record a durable, diff-pinned, reviewable override (it counts only for THIS exact diff, so any later edit re-blocks and needs a fresh one):\n' >&2
+          for hyg_name in $hyg_blocked; do
+            hyg_ack_cmd "$hyg_name" >&2
+          done
+          exit 2
+        fi
+      fi
+    fi
+  fi
 fi
 
 # ---- Fix-loop budget -------------------------------------------------------
