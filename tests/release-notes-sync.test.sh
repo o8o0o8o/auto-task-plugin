@@ -95,11 +95,15 @@ if [ -f "$COMMITTED" ]; then
     "$(jq 'has("0.21.0")' "$COMMITTED")" "false"
   expect_eq "0.17.1 (docs sync, no behaviour change) is omitted" \
     "$(jq 'has("0.17.1")' "$COMMITTED")" "false"
-  expect_eq "0.24.0 (user-visible) is included" \
-    "$(jq 'has("0.24.0")' "$COMMITTED")" "true"
-  expect_eq "0.22.0 (user-visible) is included" \
-    "$(jq 'has("0.22.0")' "$COMMITTED")" "true"
 fi
+# The inclusion side of this used to name two versions (`0.24.0`, `0.22.0`) and
+# assert they were present. That is only true while they sit inside the window:
+# RELEASE_NOTES_KEEP is a ROLLING window of the newest 10 releases, so the first
+# release that rolls a named witness out reds the suite on a completely correct
+# release. It duly happened at v0.30.1 — the window was exactly full at 10, and
+# `0.22.0` fell off the tail. Re-pinning a newer version would only move the
+# tripwire one release forward, so the property is asserted directly below, after
+# `block_has_skip` exists to express it.
 
 # The markers must actually be present in the changelog, or the omissions above
 # would be passing for the wrong reason (e.g. a parser bug dropping them).
@@ -121,6 +125,24 @@ expect_eq "0.21.0 carries a skip DIRECTIVE in its own block" "$(block_has_skip 0
 expect_eq "0.17.1 carries a skip DIRECTIVE in its own block" "$(block_has_skip 0.17.1)" "yes"
 expect_eq "0.24.0 carries no skip directive"                 "$(block_has_skip 0.24.0)" "no"
 expect_eq "0.22.0 carries no skip directive"                 "$(block_has_skip 0.22.0)" "no"
+
+# The inclusion invariant, stated so it cannot age out (see the note above).
+# Every release the committed notes DO carry must be one the changelog did not
+# mark `skip` — that is the curation contract, and unlike a named witness it holds
+# for every future release without edit. It is also strictly stronger: the old
+# form checked two versions, this checks all ten.
+if [ -f "$COMMITTED" ]; then
+  leaked=""
+  for v in $(jq -r 'keys_unsorted[]' "$COMMITTED" 2>/dev/null); do
+    [ "$(block_has_skip "$v")" = "no" ] || leaked="$leaked $v"
+  done
+  expect_eq "every release inside the window is user-visible (none skip-marked)" \
+    "${leaked:-none}" "none"
+  # And the window is actually populated — an empty notes file would satisfy the
+  # loop above vacuously, which is the one way this could pass for no reason.
+  expect_eq "the window is non-empty" \
+    "$(jq 'keys | length > 0' "$COMMITTED")" "true"
+fi
 # And prove the whole-line shape is what distinguishes a directive from a mention.
 expect_eq "a prose mention of the marker is not a directive" \
   "$(printf 'Mark it with `<!-- release-notes: skip -->` in the entry.\n' \
