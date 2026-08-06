@@ -2,6 +2,22 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.30.1]
+
+<!-- release-notes: The mandatory high-risk merge gate is now enforced by the hook itself. Previously it was armed only by a Phase-5 prompt step, so a run that skipped that step could push with no human stop at all. -->
+
+### Fixed
+
+- **The merge gate called itself mechanical while only its *acknowledgement* was — a high-risk run whose Phase-5 step 7b did not execute reached the land action with no gate at all.** `gates.merge.required` is written exclusively by that prompt step, and `enforce-gates.sh` read nothing but the flag. So the documented "high risk (`effort.risk >= risk_gate_threshold`) forces the gate on regardless of mode" held only when the model remembered to arm it — and the situation the gate exists for, an unattended run heading for a push, is precisely the one where a skipped step leaves nothing behind to notice.
+
+  **Observed, not hypothesised.** Of the two runs in the local clone-wide corpus scoring `effort.risk >= risk_gate_threshold`, one recorded `gates.merge.required: true` and stopped; the other reached `phase: "done"` at `effort.risk: 6` against a threshold of 6, `supervised`/`pr`, with `required: false`, and was never stopped. Identical score, opposite outcomes — the trigger fired about half the time, because it was prose rather than code.
+
+  **The hook now recomputes the trigger itself.** At the land action `enforce-gates.sh` reads `effort.risk` and the resolved `risk_gate_threshold` and blocks when the gate was never armed, making the mechanical claim true of the enforcement layer instead of the prompt. The skill keeps its job — arming the flag, surfacing the red disclaimer and the assumptions ledger — and this sits beneath it as a backstop, not a replacement. The block message names the step that did not run, so the run completes 7b rather than guessing why it stopped.
+
+  **It can only ever block more, and only where risk says so.** The threshold is resolved through `settings.sh`, so a project that raises it is not blocked at the old default; an unreadable setting falls back to the documented `6` rather than skipping the check, since a guard that switches itself off on a parse error is the fail-open this hook exists to prevent. A missing or non-numeric `effort.risk` blocks nothing, leaving runs scored before that field existed exactly as they were.
+
+  **Guards.** `tests/enforcement-spine.test.sh` gains 11 assertions covering the regression and its boundaries — at, above and below the threshold; already-acked; already-armed; `phase: "done"`; absent and non-numeric `effort.risk`; and a project-scoped threshold both raised and lowered. The reworded `references/settings.md` line is recorded in `tests/spec-inventory.sh` as a named retirement with its reason, rather than silenced by moving the conservation baseline.
+
 ## [0.30.0]
 
 ### Fixed
