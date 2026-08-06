@@ -1,5 +1,4 @@
 {
-  "0.20.0": "Two verification/telemetry improvements grounded in a research pass on autonomous-agent reliability: the Gate A/B verifier now commits to a correct-answer expectation before it reads the diff (de-anchoring), and run telemetry now tracks merge acceptance — whether a completed run's PR actually…",
   "0.22.0": "Adds an autonomy model with exception-triggered gates. The pipeline can now run fully unattended (opt-in), stopping only when it hits real trouble — with the merge as the sole always-mandatory human gate. Autonomy, telemetry, landing style, and unattended-external authority are chosen once in…",
   "0.23.0": "Reshapes run-outcome telemetry to be actionable, not vanity — and demotes the metric that was quietly misleading. Grounded in a review of how coding-agent teams actually measure quality.",
   "0.24.0": "Tightens both main-sync points so a run always starts from — and hands over against — the latest default branch, keeping merge conflicts small and surfaced early. Also adds a pipeline flowchart to the README.",
@@ -8,5 +7,6 @@
   "0.26.1": "The orchestrator spec is now a spine plus reference files — the always-loaded half shrank 70%.",
   "0.27.0": "hooks/estimate.sh is calibrated against measured actuals, and the estimate↔actual token comparison was a unit error.",
   "0.28.0": "Run duration was narrated, not measured — it is now stamped by a hook from date -u.",
-  "0.29.0": "Gate B ran away — 4 to 11 adversarial passes per run, and three of seven runs ended by human fiat rather than by a clean pass."
+  "0.29.0": "Gate B ran away — 4 to 11 adversarial passes per run, and three of seven runs ended by human fiat rather than by a clean pass.",
+  "0.30.0": "Bounding Gate B moved the churn one phase upstream — Phase 4 then ran 9 and 5 review rounds against a STANDARD cap of 4."
 }

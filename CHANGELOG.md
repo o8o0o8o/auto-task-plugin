@@ -2,6 +2,24 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.30.0]
+
+### Fixed
+
+- **Bounding Gate B moved the churn one phase upstream — Phase 4 then ran 9 and 5 review rounds against a STANDARD cap of 4.** The loop is now graded. In the two runs in the clone-wide outcomes ledger the nine-round run's `gate_b.passes[]` holds exactly two rows, both `reopened: 0`, so every one of those rounds was a Phase-4 `auto-task-code-review` round. Per-round finding counts read `6, 7, 2, 3, 1, 3` — which reads as non-convergence — while the *reachable* findings were decaying, because README figures and missing test assertions were labelled at the same severity as security holes and the **label decided control flow**.
+
+  **Findings route by reachability, not by label.** A finding costs a round only when it (a) breaks an approved Acceptance Criterion, (b) is a runtime-reachable regression or bypass, or (c) is a security/data-loss path — the same Step-2 test Gate B applies, taken **by reference** rather than restated, so the two cannot drift. The orchestrator grades it, because `auto-task-code-review` emits no `ac:` field, and **fails closed on its own uncertainty**.
+
+  **A non-reopening `blocker`/`required` is deferred, not parked and not round-triggering.** It goes to the new `gates.code_review.deferred[]` and costs no round; when a round returns zero reopening findings the whole set is fixed in **ONE batch, spent once per run**, followed by a single re-review. After that batch, a later non-reopening finding parks — on LIGHT, which skips Gate B, nothing re-grades it, and that residual gap is documented in `references/phase-3-gates.md` rather than engineered around. A LIGHT-only hold was implemented during the run and then removed: it had to be restated at every site stating the advance, and produced more defects in its own hardening than the hole could cost.
+
+  **Every round is recorded.** The new `gates.code_review.rounds[]` appends `{n, blockers, required, reopened, deferred, followups, batch, diff_sha, at}` on every exit. That is what makes Loop-rule clause 5 evaluable across a resume, and what finally gives the budget-ack ritual the per-round evidence it already required. The convergence test reads `reopened` — never the label counts — and fires on one non-decreasing round. Both fields are additive: an absent or empty `rounds[]` counts as zero rows, so nothing needs migrating and no resumed run breaks on the missing field. **The run's *behaviour* does change**, and deliberately so — a resumed pre-0.30.0 run picks up the graded contract, which means it grades findings, defers non-reopening ones, gets one batch it has not yet spent, and can surface on convergence. Both zero-row defaults err toward doing the work: they grant a batch and withhold a surface, never skip a fix.
+
+  **One enforcement-path edit.** `rounds | length` joins the no-progress fingerprint in `prevent-mid-protocol-stall.sh`, type-guarded because a truthy non-array would abort the whole `jq` expression and blank the signature — and a blanked signature compares equal to the previous one on **every** turn, so a genuinely-progressing run climbs the frozen-turn counter to its limit and the hook **releases** a turn-end it should still have been blocking. That is the failure direction: a false release that weakens the non-yielding contract, not a false block. A round that defers everything applies no fix and bumps no counter, so without the field every other component stays constant and the round reads as a frozen turn-end. `enforce-gates.sh` is comment-only; no gate decision logic moved.
+
+  **Spec accounting.** The always-loaded spine is a **122,675 B spine**, leaving **205 B of headroom** against the 122,880 B cap. The graded contract was paid for by removing restatements rather than by trimming contracts: the Phase-4 exit predicate now has **exactly one canonical statement**, which the two always-loaded mentions defer to by an exact phrase rather than restating — the step-2 routing line still spells the condition out in its own words. That is what stopped a rule which had drifted across seven sites from drifting again.
+
+  **Guards.** `tests/gate-b-loop.test.sh` grew to **238 assertions** (128 for Gate B, 110 for the Phase-4 sibling), **`tests/enforcement-spine.test.sh`** (135 assertions of spine-only guards) pins the new inline non-negotiables, and `tests/spec-inventory.sh` reports `retired=46`, each retirement named with its reason.
+
 ## [0.29.0]
 
 ### Fixed
