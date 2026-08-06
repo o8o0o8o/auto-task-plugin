@@ -150,6 +150,16 @@ $f"
         printf 'Blocked by auto-task-plugin: a run state exists but `jq` is not installed, so the merge gate cannot be verified before this push/merge.\nInstall jq (a plugin prerequisite) and retry.\n' >&2
         exit 2
       fi
+      # risk_gate_threshold, read the same way guard-dangerous-ops.sh reads its
+      # setting. An unreadable setting falls back to the documented default (6)
+      # rather than skipping the check — a gate that disables itself because a
+      # config file could not be parsed is the fail-open this hook exists to
+      # prevent.
+      risk_threshold=6
+      if [ -f "$ENFORCE_SCRIPT_DIR/settings.sh" ]; then
+        rt="$(bash "$ENFORCE_SCRIPT_DIR/settings.sh" get risk_gate_threshold 2>/dev/null || echo "")"
+        printf '%s' "$rt" | LC_ALL=C grep -qE '^[0-9]+$' && risk_threshold="$rt"
+      fi
       while IFS= read -r sf; do
         [ -n "$sf" ] || continue
         [ -f "$sf" ] || continue
@@ -158,6 +168,28 @@ $f"
         [ "$(jq -r '.phase // ""' "$sf" 2>/dev/null || echo "")" = "done" ] && continue
         req="$(jq -r '.gates.merge.required // false' "$sf" 2>/dev/null || echo false)"
         ack="$(jq -r '.gates.merge.acked // false' "$sf" 2>/dev/null || echo false)"
+        # High-risk backstop — the mechanical half of "high risk forces the gate
+        # on regardless of mode".
+        #
+        # Nothing mechanical sets `gates.merge.required`. It is written by the
+        # Phase-5 prompt at step 7b, so when that step is skipped the flag stays
+        # false and the land sails through — on precisely the runs the gate exists
+        # for. Observed: two runs in the local corpus scored `effort.risk >= 6`
+        # against a threshold of 6; one recorded the gate, the other reached
+        # `phase: done` with `required: false` and was never stopped.
+        #
+        # So the trigger is recomputed here from the same two values the prompt
+        # reads. The prompt keeps its job (set the flag, surface the disclaimer and
+        # the assumptions ledger); this is the backstop for when it doesn't run.
+        # A missing or non-numeric `effort.risk` blocks nothing — an unscored run
+        # behaves exactly as it did before.
+        risk="$(jq -r '.effort.risk // ""' "$sf" 2>/dev/null || echo "")"
+        if [ "$req" != "true" ] && [ "$ack" != "true" ] \
+           && printf '%s' "$risk" | LC_ALL=C grep -qE '^[0-9]+$' \
+           && [ "$risk" -ge "$risk_threshold" ]; then
+          printf 'Blocked by auto-task-plugin: this run is high-risk, so the merge gate is mandatory — but it was never armed.\n  state: %s\n  effort.risk = %s  >=  risk_gate_threshold = %s\n  gates.merge.required = %s   (expected true)\nPhase 5 step 7b should have set gates.merge.required = true for this run and did not, so the land was about to proceed with no human stop. Do step 7b now: surface the red risk disclaimer + the assumptions ledger, get the user'"'"'s explicit go-ahead, then set gates.merge.required = true and gates.merge.acked = true before landing.\n' "$sf" "$risk" "$risk_threshold" "$req" >&2
+          exit 2
+        fi
         if [ "$req" = "true" ] && [ "$ack" != "true" ]; then
           printf 'Blocked by auto-task-plugin: the merge gate is not acknowledged for this run.\n  state: %s\n  gates.merge.required = true, gates.merge.acked != true\nThis is the run'"'"'s single mandatory human gate. Surface the red risk disclaimer + assumptions ledger, get the user'"'"'s explicit go-ahead, then set gates.merge.acked = true before landing.\n' "$sf" >&2
           exit 2

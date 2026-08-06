@@ -411,6 +411,17 @@ RETIRED_PREFIXES = {
   # precedence between them. Gate A round 4 (ranked observation). The replacement
   # defers to each gate's own ladder rather than restating either.
   '- A verifier agent (`task-execution-verifier` at Gate A or Gate B) returning findings is **INPUT**.': 1,
+  # The merge gate called itself "mechanical" while only its ACK was mechanical.
+  # `gates.merge.required` was set exclusively by the Phase-5 step-7b prompt, so a
+  # run where that step did not execute reached the land action with the gate never
+  # armed and `enforce-gates.sh` — which read only the flag — waved it through. Seen
+  # on a real run: `effort.risk: 6` against a threshold of 6, `supervised`/`pr`,
+  # `gates.merge.required: false` at `phase: done`, never stopped; a sibling run at
+  # the same score did arm it, so the trigger was firing about half the time. The
+  # hook now recomputes `effort.risk >= risk_gate_threshold` itself. The replacement
+  # keeps every clause of the retired line and adds the backstop, so it states the
+  # contract strictly more strongly than the line it retires.
+  'The merge gate is the single mandatory human stop — the point where work becomes shared/irreversible': 1,
 }
 
 bc = collections.Counter(l for l in base if l.strip())

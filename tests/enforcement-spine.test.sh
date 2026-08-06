@@ -461,6 +461,54 @@ expect "MG push: not required -> allow(0)"         "$(grun "$PUSH")"  "0"
 printf '%s' '{"approved":true,"phase":"handover","gates":{}}' > "$ST"
 expect "MG push: legacy no-merge-obj -> allow(0)"  "$(grun "$PUSH")"  "0"
 
+# ---- High-risk backstop -----------------------------------------------------
+# `gates.merge.required` is written by the Phase-5 prompt (step 7b), never by
+# anything mechanical, so a skipped step 7b left the land completely unguarded on
+# exactly the runs the gate exists for. Observed in the wild: of the two local runs
+# scoring effort.risk >= 6 against a threshold of 6, one armed the gate and the
+# other reached phase:done with required:false, unstopped. The hook now recomputes
+# the trigger instead of trusting the flag.
+#
+# The first assertion is the regression; the rest pin the boundaries, because a
+# backstop that blocks more than it should is its own outage.
+hr(){ printf '%s' "{\"approved\":true,\"phase\":\"$2\",\"effort\":{\"tier\":\"heavy\",\"risk\":$1},\"gates\":{\"merge\":{\"required\":$3,\"acked\":$4}}}" > "$ST"; }
+
+hr 6 handover false false
+expect "MG hi-risk: risk>=thr, gate never armed -> block(2)" "$(grun "$PUSH")" "2"
+hr 8 handover false false
+expect "MG hi-risk: risk above thr -> block(2)"              "$(grun "$PUSH")" "2"
+hr 5 handover false false
+expect "MG hi-risk: risk below thr -> allow(0)"              "$(grun "$PUSH")" "0"
+hr 6 handover false true
+expect "MG hi-risk: already acked -> allow(0)"               "$(grun "$PUSH")" "0"
+hr 6 handover true false
+expect "MG hi-risk: armed+unacked -> block(2) as before"     "$(grun "$PUSH")" "2"
+hr 6 done false false
+expect "MG hi-risk: run already done -> allow(0)"            "$(grun "$PUSH")" "0"
+
+# Back-compat: a run scored before effort.risk existed, or scored with junk, must
+# behave exactly as it did before this backstop. An unscored run is not a safe run,
+# but it is also not evidence of risk, and blocking on absence would wedge every
+# legacy state file.
+printf '%s' '{"approved":true,"phase":"handover","effort":{"tier":"heavy"},"gates":{"merge":{"required":false,"acked":false}}}' > "$ST"
+expect "MG hi-risk: no effort.risk -> allow(0)"              "$(grun "$PUSH")" "0"
+printf '%s' '{"approved":true,"phase":"handover","effort":{"risk":"high"},"gates":{"merge":{"required":false,"acked":false}}}' > "$ST"
+expect "MG hi-risk: non-numeric risk -> allow(0)"            "$(grun "$PUSH")" "0"
+
+# The threshold is a setting, not a constant. A project that raises it must not be
+# blocked at the old default — otherwise the backstop silently overrides config.
+SFILE="$T/risk-settings.json"
+grun_thr(){ printf '%s' "$PUSH" | CLAUDE_PROJECT_DIR="$T" AUTO_TASK_SETTINGS_FILE="$SFILE" bash "$GATE" >/dev/null 2>&1; echo $?; }
+printf '%s' '{"settings_schema_version":3,"risk_gate_threshold":8}' > "$SFILE"
+hr 6 handover false false
+expect "MG hi-risk: project raised thr to 8, risk 6 -> allow(0)" "$(grun_thr)" "0"
+hr 8 handover false false
+expect "MG hi-risk: project thr 8, risk 8 -> block(2)"           "$(grun_thr)" "2"
+printf '%s' '{"settings_schema_version":3,"risk_gate_threshold":4}' > "$SFILE"
+hr 5 handover false false
+expect "MG hi-risk: project lowered thr to 4, risk 5 -> block(2)" "$(grun_thr)" "2"
+rm -f "$SFILE"
+
 # direct-to-main: checkout the base branch; run still lives on feat/widget
 BASEBR="$(git rev-parse --abbrev-ref HEAD)"    # currently feat/widget
 DEF="master"; git rev-parse --verify -q main >/dev/null 2>&1 && DEF="main"
