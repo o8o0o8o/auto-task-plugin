@@ -722,7 +722,10 @@ fi
 #
 # BOTH LOOP COUNTERS COUNT, via max(iteration.fix, iteration.review). The skill keeps
 # two: `iteration.fix` is bumped only on the Phase-3 self-verify failure path, while
-# every Phase-4 review round and every Gate-B feedback round bumps `iteration.review`.
+# every Phase-4 review round that REOPENS and every Gate-B feedback round bumps
+# `iteration.review`. (Since the Phase-4 graded round contract, a round whose findings
+# were all deferred records a `gates.code_review.rounds[]` row and bumps nothing — so
+# the counter now measures rounds that cost a fix, which is the volume being bounded.)
 # A gate reading `fix` alone would therefore wave through the churn shape this feature
 # exists to bound — fix=0 / review=28 is 28 rounds of iteration and would land
 # unblocked. The budget bounds review VOLUME, so it is measured against whichever

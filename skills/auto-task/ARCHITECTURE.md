@@ -33,12 +33,18 @@ flowchart TD
     GateAOK -- no --> GateAFix[Append findings as new tasks<br/>→ back to Phase 2]
     GateAFix --> P2
     GateAOK -- yes --> P4
-    GateA -.- ACGate[MCPs allowed for AC<br/>bound-check execution<br/>read-only][Phase 4 — Code review loop<br/>skill: auto-task-code-review on working-tree diff<br/>parse Blockers / Required / Follow-ups<br/>NO COMMIT]
+    GateA -.- ACGate[MCPs allowed for AC<br/>bound-check execution<br/>read-only][Phase 4 — Code review loop<br/>skill: auto-task-code-review on working-tree diff<br/>grade findings by reachability, not by label<br/>NO COMMIT]
 
-    P4 --> P4Cls{findings?}
-    P4Cls -- only follow-ups --> P4OK[park follow-ups in state<br/>set gates.code_review.passed=true<br/>tool='skill:auto-task-code-review'<br/>clean_pass_after_last_fix=true]
-    P4Cls -- blocker / required --> P4Fix[skill: auto-task-fix<br/>re-run skill: auto-task-verify<br/>iteration.review++<br/>clean_pass_after_last_fix=false]
+    P4 --> P4Rec[append gates.code_review.rounds[] row<br/>grade each finding: a AC breach / b runtime-reachable / c security<br/>fail closed on your own uncertainty]
+    P4Rec --> P4Cls{graded findings?}
+    P4Cls -- non-reopening blocker/required --> P4Def[defer to gates.code_review.deferred[]<br/>costs NO round — no new review pass]
+    P4Def --> P4Cls
+    P4Cls -- reopening: a / b / c --> P4Fix[skill: auto-task-fix<br/>re-run skill: auto-task-verify<br/>iteration.review++<br/>clean_pass_after_last_fix=false]
     P4Fix --> P4
+    P4Cls -- reopening count did not decrease --> P4Conv[convergence test fired<br/>surface: user-approval<br/>do NOT set code_review.passed]
+    P4Cls -- zero reopening, deferred non-empty AND batch NOT spent --> P4Batch[fix the WHOLE deferred set in ONE batch<br/>record the row with batch=true — spent once per run<br/>then exactly one re-review]
+    P4Batch --> P4
+    P4Cls -- zero reopening, deferred empty OR batch spent --> P4OK[park follow-ups in state<br/>post-batch non-reopening blocker/required parks at every tier<br/>set gates.code_review.passed=true<br/>tool='skill:auto-task-code-review'<br/>clean_pass_after_last_fix=true]
 
     P4OK --> Tier{tier?}
     Tier -- LIGHT --> SkipB[gates.gate_b.skipped_reason='tier=light']
@@ -116,7 +122,7 @@ On a NEW run, before branch setup, Phase 1 also runs a best-effort **per-run ver
 | 2 Execute | `auto-task-implement` skill | **no** | all PLAN.md tasks ticked | drift check escalates tier or stops |
 | 3 Self-verify | `auto-task-verify` skill + literal AC commands | **no** | all checks pass + every `self-verify` AC pass | `auto-task-fix` skill → loop, capped by tier |
 | Gate A | `task-execution-verifier` Agent + literal AC commands | **no** | every AC satisfied | findings → back to Phase 2 |
-| 4 Code review | **`auto-task-code-review` skill** (no substitutes) | **no** | only follow-ups, no Blockers/Required | `auto-task-fix` → re-`auto-task-verify` → re-review |
+| 4 Code review | **`auto-task-code-review` skill** (no substitutes) | **no** | zero **reopening** findings (the Step-A grade, not the label) and `deferred[]` empty or spent — a `blocker`/`required` that breaks no AC, is not runtime-reachable and is not a security/data-loss path is **deferred**, not round-triggering. A post-batch non-reopening `blocker`/`required` **parks at every tier**; on LIGHT, which skips Gate B, nothing re-grades it — an accepted, documented limitation | a **reopening** finding → `auto-task-fix` → re-`auto-task-verify` → re-review, `iteration.review++`; a zero-reopening round with deferrals → fix the whole set in ONE batch (spent once per run) + one re-review; a fired convergence test (`reopened` did not decrease) **surfaces** (`user-approval`) |
 | Gate B | `task-execution-verifier` Agent (adversarial) | **no** | no finding meets the Step-2 AC-impact test — so "No adversarial findings", only follow-ups, **or** findings labelled blocker/required that are parked because none breaks an AC / is runtime-reachable / is a security-data-loss path; a fired convergence test surfaces rather than exiting | a **reopening** finding resets `code_review.passed=false` and goes back to Phase 4; at the pass cap, on a second `self_inflicted` pass, or on a fired convergence test it **surfaces** instead (`user-approval`) |
 | 5 Handover | optional `auto-task-docs` skill (step 1b) + `auto-task-commit` skill + `gh pr create` | **YES — single commit** (docs edits join it) | PR opened (or user holds push) | gates fail → surface (do not bypass hook) |
 | 6 Bot-comment review (opt-in) | `pr-bot-comments.sh` + full verify → `auto-task-code-review` → gate → commit loop | **YES — gate-reviewed bot-fix commits** (only when `bot_review_autofix`) | bot comments triaged; safe fixes applied + pushed, rest parked | fork-PR / no-push → fail-open skip |

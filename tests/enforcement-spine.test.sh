@@ -896,6 +896,10 @@ LBRDME="$HOOKS/../README.md"
 # churn is: Gate B exits on the first clean pass, so a second consecutive clean
 # round is never observed, and it is unreachable under a Gate B cap of 2. The old
 # base line is retired in tests/spec-inventory.sh with that reasoning.
+# GATE-B PASS-2: the round-7 comparand qualifier was REVERTED. Pass 2 measured that it did
+# not deliver -- the surviving comparand is always the run's minimum, so a later reopening
+# round fires either way -- so the over-claim in Step B was corrected instead and the rule
+# removed. Back on the plain form, which is once again the only one shipped.
 expect "Loop rule carries the converged clause"          "$(grep -c 'fails to DECREASE versus the previous round, the loop has CONVERGED' "$LBSKILL")" "1"
 expect "SKILL documents the fix-loop budget section"     "$(grep -c '^### Fix-loop budget' "$LBSKILL")" "1"
 expect "SKILL documents the ack ritual"                  "$(grep -c 'The ack ritual' "$LBSKILL")" "1"
@@ -1051,8 +1055,15 @@ expect "spine: INCONCLUSIVE floor"                 "$(spine_has "$SPINE_ONLY" '*
 expect "spine: requirements decomposition"         "$(spine_has "$SPINE_ONLY" '**Requirements decomposition')"          "yes"
 expect "spine: D/R rubric"                         "$(spine_has "$SPINE_ONLY" '**Difficulty / Risk rubric')"            "yes"
 
-# Phase 4 (code review + fix loop) is the anti-stall keystone and stays WHOLLY
-# inline — unlike Phase 3 / Gate A / Gate B, whose bodies moved to a reference.
+# Phase 4's ANTI-STALL body stays WHOLLY inline — it is the anti-stall keystone, and
+# that half is unchanged. NARROWED when Phase 4 became a graded, bounded loop: its
+# round-grading LADDER now lives in references/phase-3-gates.md
+# ("phase-4-round-mechanics"), beside the Gate B ladder whose reopen test it applies by
+# reference. That siding is the point — two copies of a reachability test would drift,
+# which is the failure the shared test exists to prevent — and the spine had 47 bytes of
+# headroom against a hard ceiling, so an inline ladder was not affordable regardless.
+# Phase 4 therefore now follows the SAME shape as Phase 3 / Gate A / Gate B: ladder in
+# the reference, non-negotiables restated inline, and those bullets guarded below.
 # The per-phase "Non-negotiables restated inline" bullets ARE the mitigation the
 # Phase-1 silent-degradation acknowledgment rests on. Round 2 showed they were unguarded.
 expect "spine: P3 non-negotiable — execute every self-verify AC" \
@@ -1070,6 +1081,60 @@ expect "spine: GateB non-negotiable — diff the working tree" \
 expect "spine: Phase 4 heading"                    "$(spine_has "$SPINE_ONLY" '### Phase 4 — Code review + fix loop')"  "yes"
 expect "spine: Phase 4 mandates the review skill"  "$(spine_has "$SPINE_ONLY" 'skill:auto-task-code-review')"           "yes"
 expect "spine: Phase 4 trip-wire retained inline"  "$(spine_has "$SPINE_ONLY" 'Trip-wire test before ending the turn here.')" "yes"
+# Phase 4's graded round contract: the ladder is in the reference, so these four inline
+# bullets are the whole mitigation against the reference never being read. Assert their
+# BODIES in SKILL.md specifically — the heading-only shape a Gate B round already caught
+# elsewhere would let them be relocated with the suite green.
+expect "spine: Phase 4 cites phase-3-gates" \
+  "$(spine_has "$SPINE_ONLY" 'references/phase-3-gates.md` ("phase-4-round-mechanics")')"                            "yes"
+expect "spine: P4 non-negotiable — reachability test" \
+  "$(spine_has "$SPINE_ONLY" '**A finding costs a round only if it (a) breaks an approved AC')"                       "yes"
+# GATE A FINDING (weakly-satisfied AC 13, residual B). The fail-closed rule originally
+# keyed on a literal `ac:` field, copied from Gate B — where the VERIFIER PROMPT mandates
+# that field. `auto-task-code-review` emits `file:line` + a severity label and no `ac:`
+# at all, so read literally every Phase-4 finding failed closed, reopened the loop, and
+# the deferral path was unreachable: the contract was inert. It now says the orchestrator
+# grades from PLAN.md's AC table and the diff, and fails closed on ITS OWN uncertainty.
+# Both halves are pinned, because dropping either restores the inert reading.
+expect "spine: P4 non-negotiable — the orchestrator grades" \
+  "$(spine_has "$SPINE_ONLY" '**YOU grade it** — `auto-task-code-review` emits no `ac:`/`reachable:` field')"           "yes"
+expect "spine: P4 non-negotiable — fail closed on uncertainty" \
+  "$(spine_has "$SPINE_ONLY" '**fail closed on your own uncertainty:** a finding you cannot place counts as AC-breaking')" "yes"
+expect "spine: P4 non-negotiable — deferred batch" \
+  "$(spine_has "$SPINE_ONLY" 'is DEFERRED to `gates.code_review.deferred[]` — not parked, and costs no round')"       "yes"
+expect "spine: P4 non-negotiable — batch spent once" \
+  "$(spine_has "$SPINE_ONLY" '**The batch is spent once per run**')"                                                  "yes"
+# GATE A FINDING (residual A), and its RESOLUTION HISTORY, because the shape of the answer
+# changed twice. On STANDARD/HEAVY a post-batch non-reopening finding parks safely, since
+# Gate B re-applies the identical test. LIGHT SKIPS GATE B, so that park is final. A
+# LIGHT-only HOLD was implemented to close it, and then REMOVED at Gate B pass 3: it had to
+# be restated at every site stating the advance, and across three gates it produced more
+# defects in its own hardening than the hole could cost — LIGHT is max(D,R)<=2, and a
+# non-reopening finding breaks no AC, is not runtime-reachable and is not a security path.
+# The gap is now an ACCEPTED, DOCUMENTED limitation, and what this pins is that the rule is
+# uniform (park at every tier) and that the limitation is stated rather than silently
+# dropped. NOTE the surviving wording: "Once spent — at any later round, not just the batch
+# round". The batch-round-scoped phrasing it replaced was a live defect (Gate A round 3),
+# and the assertion that pinned it green is why the cross-file group in
+# tests/gate-b-loop.test.sh now exists.
+expect "spine: P4 non-negotiable — post-batch parks at EVERY tier" \
+  "$(spine_has "$SPINE_ONLY" '**parks at every tier**. On STANDARD/HEAVY Gate B re-grades it; **on LIGHT nothing does**')" "yes"
+expect "spine: ...and the removed LIGHT hold has not crept back" \
+  "$(grep -ciE 'surfaces on LIGHT|hold the gate' "$SPINE_ONLY" | tr -d ' ')" "0"
+expect "spine: P4 non-negotiable — record every round" \
+  "$(spine_has "$SPINE_ONLY" '**Record the round on EVERY exit, reopen included.**')"                                 "yes"
+expect "spine: P4 non-negotiable — reopened is the basis" \
+  "$(spine_has "$SPINE_ONLY" '**`reopened` is the declared convergence basis, never the label counts.**')"            "yes"
+expect "spine: P4 non-negotiable — minimal fix" \
+  "$(spine_has "$SPINE_ONLY" '**Minimal fix.** Correct the defect in place')"                                         "yes"
+# NEGATIVE CONTROL, and the load-bearing one: the entire change is that a severity LABEL
+# no longer decides whether a round is spent. If the old unconditional sentence returns
+# by revert or bad merge, the grading above is dead prose. This must go red then.
+expect "spine: P4 label-driven step is GONE" \
+  "$(spine_has "$SPINE_ONLY" 'If any Blocker or Required: apply the fix(es)')"                                        "no"
+# The convergence test must be named as a Phase-4 surfacing trigger, not only at Gate B.
+expect "spine: P4 exit names the convergence test" \
+  "$(spine_has "$SPINE_ONLY" 'a fired convergence test** (`reopened` did not decrease)')"                             "yes"
 
 # The trace contract stays inline for a load-bearing reason, not by accident:
 # three sibling skills cite it by section path (auto-task-fix, auto-task-verify,
@@ -1371,13 +1436,19 @@ expect "gate-b: delta-scoped after pass 1" \
 expect "gate-b: verified_diff_sha uses the reviewed_diff_sha formula" \
   "$(spine_has "$GATESREF" 'the **byte-identical** pinned-flag formula `reviewed_diff_sha` uses')"   "yes"
 # The pinned-flag string must be ONE spelling across every site that computes a
-# diff hash (SKILL.md's reviewed_diff_sha, this new one, and the hook that checks
-# it). Count > distinct proves the new site exists; distinct == 1 proves identity.
+# diff hash. Count > distinct proves each site exists; distinct == 1 proves identity.
+# The `reviewed_diff_sha` copy moved from SKILL.md to state-schema.md when Phase 4
+# became a graded loop: the spine needed the bytes, and the schema is where Gate B's
+# `verified_diff_sha` note already pointed for "the byte-identical formula", so ONE
+# copy now serves the spine, Gate B and the hook instead of three near-copies.
 PINFLAGS='--no-color --no-ext-diff --no-textconv --no-renames --diff-algorithm=myers --src-prefix=a/ --dst-prefix=b/'
 expect "gate-b: pinned diff flags occur at 3 sites" \
-  "$(grep -ohF -- "$PINFLAGS" "$SPINE_ONLY" "$GATESREF" "$HOOKS/enforce-gates.sh" | wc -l | tr -d ' ')" "3"
+  "$(grep -ohF -- "$PINFLAGS" "$SCHEMAREF" "$GATESREF" "$HOOKS/enforce-gates.sh" | wc -l | tr -d ' ')" "3"
 expect "gate-b: pinned diff flags are byte-identical everywhere" \
-  "$(grep -ohF -- "$PINFLAGS" "$SPINE_ONLY" "$GATESREF" "$HOOKS/enforce-gates.sh" | sort -u | wc -l | tr -d ' ')" "1"
+  "$(grep -ohF -- "$PINFLAGS" "$SCHEMAREF" "$GATESREF" "$HOOKS/enforce-gates.sh" | sort -u | wc -l | tr -d ' ')" "1"
+# ...and the spine must no longer carry its own copy, or the relocation was cosmetic.
+expect "gate-b: the spine carries no duplicate flag copy" \
+  "$(grep -cF -- "$PINFLAGS" "$SPINE_ONLY" | tr -d ' ')" "0"
 
 # (4) ENTRY BUDGET CHECK. The whole point is that it fires where the commit-time
 # block cannot: this loop never commits.
@@ -1630,6 +1701,39 @@ expect "arch: flowchart routes convergence to the surface" \
   "$(spine_has "$ARCHREF" 'or CONVERGED (count stopped falling)')"                                    "yes"
 expect "arch: flowchart has no convergence->pass edge" \
   "$(grep -c 'CONVERGED.*park + advance' "$ARCHREF" | tr -d ' ')"                                     "0"
+
+# GATE-A ROUND-2 FINDING (this change), and the SAME CLASS as the round-5 finding above —
+# which is exactly why it is worth pinning rather than trusting. ARCHITECTURE.md's Phase-4
+# flowchart and glance row still documented the RETIRED ungraded loop ("parse Blockers /
+# Required / Follow-ups", "only follow-ups --> pass", "blocker / required --> fix"). A
+# model following the authoritative diagram would therefore never grade a finding, never
+# append a rounds[] row and never apply the batch — i.e. the whole contract inert by a
+# second route, after the first inert reading was already fixed once this run. Pin the
+# graded flow AND assert each retired edge is gone; ARCHITECTURE.md sits outside
+# spec-inventory's file set, so nothing else guards it.
+expect "arch: Phase-4 flowchart grades by reachability" \
+  "$(spine_has "$ARCHREF" 'grade each finding: a AC breach / b runtime-reachable / c security')"       "yes"
+expect "arch: Phase-4 flowchart records the rounds[] row" \
+  "$(spine_has "$ARCHREF" 'append gates.code_review.rounds[] row')"                                   "yes"
+expect "arch: Phase-4 flowchart has the deferral edge" \
+  "$(spine_has "$ARCHREF" 'defer to gates.code_review.deferred[]<br/>costs NO round')"                "yes"
+expect "arch: Phase-4 flowchart has the batch edge, spent once" \
+  "$(spine_has "$ARCHREF" 'spent once per run')"                                                      "yes"
+expect "arch: Phase-4 flowchart routes convergence to the surface" \
+  "$(spine_has "$ARCHREF" 'convergence test fired<br/>surface: user-approval')"                       "yes"
+expect "arch: Phase-4 label-driven pass edge is GONE" \
+  "$(grep -c 'P4Cls -- only follow-ups -->' "$ARCHREF" | tr -d ' ')"                                   "0"
+expect "arch: Phase-4 label-driven fix edge is GONE" \
+  "$(grep -c 'P4Cls -- blocker / required -->' "$ARCHREF" | tr -d ' ')"                                "0"
+expect "arch: Phase-4 label-driven parse note is GONE" \
+  "$(grep -c 'parse Blockers / Required / Follow-ups' "$ARCHREF" | tr -d ' ')"                         "0"
+expect "arch: glance-table Phase-4 exit is the graded test" \
+  "$(spine_has "$ARCHREF" 'zero **reopening** findings (the Step-A grade, not the label)')"            "yes"
+expect "arch: glance-table Phase-4 no longer states the retired exit" \
+  "$(grep -c '| only follow-ups, no Blockers/Required |' "$ARCHREF" | tr -d ' ')"                      "0"
+# ...and the retired-edge controls must be able to FAIL, or they certify nothing.
+expect "  ...and the retired-edge control trips when restored" \
+  "$(printf '    P4Cls -- only follow-ups --> P4OK[x]\n' | grep -c 'P4Cls -- only follow-ups -->' | tr -d ' ')" "1"
 
 # restore a sane state file for anything appended after this block
 printf '%s' '{"approved":true,"phase":"review","expected_next_action":"auto-continue"}' > "$ST"

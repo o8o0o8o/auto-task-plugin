@@ -526,6 +526,545 @@ expect "  ...and it trips on a backticked literal (round-3 defeater)" \
 # And the entry budget check must resolve the budget through the helper, not restate it.
 expect "entry budget check names the helper"  "$(printf '%s' "$lookup_block" | grep -c 'lb_effective_budget <cap> <acked_through>' | tr -d ' ')" "1"
 
+echo "================ Phase 4: the graded round contract ================"
+# WHY THIS GROUP LIVES IN THIS SUITE. Bounding Gate B did not bound the run -- the
+# churn moved one phase upstream. Measured: `iteration.review` reached 9 and 5 against
+# a STANDARD cap of 4, while the nine-round run's `gate_b.passes[]` holds exactly two
+# rows, both `reopened: 0`. So every one of those rounds was a Phase-4 round, and the
+# Phase-4 contract is the sibling of the Gate B ladder above, sharing its reopen test
+# by reference. Keeping both in one suite is deliberate: a separate file would let the
+# two drift apart, which is the failure the shared test exists to prevent.
+SPINE="$ROOT/skills/auto-task/SKILL.md"
+[ -f "$SPINE" ] || { echo "FAIL: $SPINE missing"; exit 1; }
+P4="$(awk '/^## phase-4-round-mechanics/,/^## fix-loop-budget-mechanics/' "$GATES")"
+
+# The section must exist at all. Everything below reads from it, so a zero-length
+# extract would make every later grep vacuously "0" rather than failing loudly.
+expect "P4: the section exists in the reference" \
+  "$([ -n "$P4" ] && echo yes || echo no)" "yes"
+
+# --- Step A: grading, by the SAME test Gate B applies ----------------------------
+# All three clauses must be present, and the fail-closed default with them: a finding
+# whose `ac:` cannot be read is the one case where guessing wrong ships a real breach.
+expect "P4: reopen clause (a) AC breach" \
+  "$(printf '%s' "$P4" | grep -c 'breaks an approved Acceptance Criterion' | tr -d ' ')" "1"
+expect "P4: reopen clause (b) runtime-reachable" \
+  "$(printf '%s' "$P4" | grep -c 'runtime-reachable regression or bypass' | tr -d ' ')" "1"
+expect "P4: reopen clause (c) security/data-loss" \
+  "$(printf '%s' "$P4" | grep -c 'security or data-loss path' | tr -d ' ')" "1"
+# GATE A round-1 finding (residual B): the fail-closed rule keyed on a literal `ac:`
+# field copied from Gate B, where the VERIFIER PROMPT mandates it. auto-task-code-review
+# emits no such field, so read literally EVERY Phase-4 finding failed closed, reopened
+# the loop, and the deferral path was unreachable -- the contract was inert. Both halves
+# of the correction are pinned: the orchestrator grades, and it fails closed on its own
+# uncertainty. Dropping either one restores the inert reading.
+expect "P4: the orchestrator grades, not the review skill" \
+  "$(printf '%s' "$P4" | grep -c 'the review skill does not hand you a classification' | tr -d ' ')" "1"
+expect "P4: names the missing ac:/reachable: fields as the reason" \
+  "$(printf '%s' "$P4" | grep -c 'emits .file:line. plus a severity label and \*\*no such fields\*\*' | tr -d ' ')" "1"
+expect "P4: grades from the AC table and the diff" \
+  "$(printf '%s' "$P4" | grep -c "PLAN.md's Acceptance Criteria table" | tr -d ' ')" "1"
+expect "P4: fail-closed on the orchestrator's own uncertainty" \
+  "$(printf '%s' "$P4" | grep -c 'Fail closed on your own uncertainty' | tr -d ' ')" "1"
+expect "P4: an unplaceable finding counts as AC-breaking" \
+  "$(printf '%s' "$P4" | grep -c 'treat it as AC-breaking and reopen' | tr -d ' ')" "1"
+# GATE A round-1 finding (residual A): the batch round's own non-reopening findings park,
+# which is safe ONLY because Gate B re-applies the identical test. LIGHT skips Gate B, so
+# that park is final and the gate passes over an unre-checked blocker/required. Present
+# tense deliberately: a LIGHT hold was built for this and REMOVED at Gate B pass 3, so this
+# is the accepted, documented state — see the limitation paragraph in the reference.
+expect "P4: the rule covers every round after the batch, not just that round" \
+  "$(printf '%s' "$P4" | grep -c 'ONE rule covering every round after the batch' | tr -d ' ')" "1"
+# GATE-A ROUND-2 FINDING (runtime-reachable): the LIGHT exception was scoped to a finding
+# "first raised in the batch round", but rounds continue AFTER the batch -- the batch
+# pass's reopening findings re-enter Step A, so a later round can raise a fresh
+# non-reopening blocker/required with no batch left to fix it in. On LIGHT that was
+# neither fixed nor surfaced and the gate passed over it: residual A displaced by one
+# round. The rule must NOT be batch-round-scoped, and this pins that it is not.
+expect "P4: the post-batch rule is not scoped to the batch round" \
+  "$(printf '%s' "$P4" | grep -c 'deliberately \*\*not\*\* scoped to the batch round' | tr -d ' ')" "1"
+expect "P4: names the later-round trigger explicitly" \
+  "$(printf '%s' "$P4" | grep -c 'a \*later\* round can raise a fresh non-reopening' | tr -d ' ')" "1"
+expect "P4: the batch-lands-before-the-gate claim is scoped, not absolute" \
+  "$(printf '%s' "$P4" | grep -c 'because the unqualified claim is false' | tr -d ' ')" "1"
+# It must apply Gate B's test BY REFERENCE, not restate it. A second copy would drift,
+# and the whole point of siding this contract with Gate B's is that it cannot.
+expect "P4: applies the Gate B test by reference" \
+  "$(printf '%s' "$P4" | grep -c 'Step-2 reopen test verbatim' | tr -d ' ')" "1"
+
+# --- Step B: the deferred batch, and its once-per-run bound ----------------------
+# Deferral is NOT Gate B's park. The distinction is the user's explicit choice: a wrong
+# README figure still gets fixed, it just does not buy a full review cycle.
+expect "P4: deferred is not parked" \
+  "$(printf '%s' "$P4" | grep -c 'not parked and not round-triggering' | tr -d ' ')" "1"
+expect "P4: the whole set is fixed in ONE batch" \
+  "$(printf '%s' "$P4" | grep -c 'in ONE fix step' | tr -d ' ')" "1"
+expect "P4: the batch is spent once per run" \
+  "$(printf '%s' "$P4" | grep -c 'spent once per run and never renews' | tr -d ' ')" "1"
+# The spent-marker must be the RECORD, not a parallel boolean that could disagree with
+# it -- the same reasoning that made gate_b's allowance an object keyed by scope.
+expect "P4: spent-marker is a batch:true row, not a boolean" \
+  "$(printf '%s' "$P4" | grep -c 'existence of a .rounds\[\]. row with .batch: true' | tr -d ' ')" "1"
+# A batch that could renew is the same unbounded loop in a smaller room.
+expect "P4: a post-batch non-reopening finding earns no second batch" \
+  "$(printf '%s' "$P4" | grep -c 'does not earn a second batch' | tr -d ' ')" "1"
+# CODE-REVIEW ROUND-1 BLOCKER (B1). Two bullets two lines apart gave OPPOSITE answers for
+# the batch pass's own non-reopening findings on LIGHT: one said "park in state.followups"
+# with no tier qualifier, the next said park on STANDARD/HEAVY and SURFACE on LIGHT. The
+# batch pass IS a round after the batch is spent, so both governed it -- and the losing
+# reading is precisely the gate passing over a blocker/required nobody re-checked. Four
+# Gate A rounds and the cross-file group all missed it because it is INTRA-file: every
+# guard compared files, never two statements inside one. Collapsed to ONE rule; this pins
+# that the unqualified park sentence does not return.
+expect "P4: the unqualified park sentence is GONE" \
+  "$(printf '%s' "$P4" | grep -c 'findings \*\*park in `state.followups`\*\*, because the batch has been spent' | tr -d ' ')" "0"
+expect "P4: the park rule is stated exactly ONCE, and it is park-at-every-tier" \
+  "$(printf '%s' "$P4" | grep -c 'parks in `state.followups` at every tier' | tr -d ' ')" "1"
+# The batch must land BEFORE the gate passes, or deferral would mean "ships unfixed".
+# This is also what keeps LIGHT (no Gate B) honest, so both are pinned.
+expect "P4: the batch lands before the gate passes" \
+  "$(printf '%s' "$P4" | grep -c 'BEFORE the gate passes, at every tier' | tr -d ' ')" "1"
+expect "P4: LIGHT tier addressed explicitly" \
+  "$(printf '%s' "$P4" | grep -c 'at every tier, LIGHT included' | tr -d ' ')" "1"
+
+# --- Step C: the record, and the convergence basis -------------------------------
+# Recording on EVERY exit is load-bearing for the same reason it is at Gate B: an
+# absent array counts as zero rows, so a round that resolves without recording
+# silently disarms the test on the very path it exists to bound.
+expect "P4: record on every exit, reopen included" \
+  "$(printf '%s' "$P4" | grep -c 'on EVERY exit, reopen included' | tr -d ' ')" "1"
+expect "P4: the rounds[] row names every field" \
+  "$(printf '%s' "$P4" | grep -c 'n, blockers, required, reopened, deferred, followups, batch, diff_sha, at' | tr -d ' ')" "1"
+expect "P4: absent rounds[] counts as zero rows" \
+  "$(printf '%s' "$P4" | grep -c 'absent or empty .rounds\[\]. counts as zero rows' | tr -d ' ')" "1"
+# The basis must be `reopened`, NEVER the label counts -- a deferred blocker cost no
+# round, so counting it would let a run that deferred everything look like churn.
+expect "P4: reopened is the declared convergence basis" \
+  "$(printf '%s' "$P4" | grep -c 'declared convergence basis' | tr -d ' ')" "1"
+expect "P4: never the label counts" \
+  "$(printf '%s' "$P4" | grep -c 'Never .blockers./.required.' | tr -d ' ')" "1"
+expect "P4: one non-decreasing round fires it" \
+  "$(printf '%s' "$P4" | grep -c 'One round is enough to fire' | tr -d ' ')" "1"
+expect "P4: a fired test surfaces, never advances" \
+  "$(printf '%s' "$P4" | grep -c 'surfacing is the only outcome this test has' | tr -d ' ')" "1"
+# The deferred entry -- and the missing entry-time cap -- must both be reasoned, not
+# silently absent. An unexplained omission is indistinguishable from an oversight.
+expect "P4: the absent entry-time cap is argued, not omitted" \
+  "$(printf '%s' "$P4" | grep -c 'Why no separate entry-time pass cap' | tr -d ' ')" "1"
+expect "P4: minimal-fix rule stated" \
+  "$(printf '%s' "$P4" | grep -c '\*\*Minimal fix\.\*\*' | tr -d ' ')" "1"
+
+# --- The spine must carry the non-negotiables AND point at the contract ----------
+# Same mitigation Gate B relies on: the reference holds the ladder, the spine restates
+# what a model must not get wrong even if the reference was never read.
+expect "P4 spine: cites phase-3-gates for the round mechanics" \
+  "$(grep -c 'phase-3-gates.md` ("phase-4-round-mechanics")' "$SPINE" | tr -d ' ')" "1"
+expect "P4 spine: non-negotiable — the three-clause test" \
+  "$(grep -c 'A finding costs a round only if it (a) breaks an approved AC' "$SPINE" | tr -d ' ')" "1"
+expect "P4 spine: non-negotiable — deferred, not parked" \
+  "$(grep -c 'is DEFERRED to `gates.code_review.deferred\[\]`' "$SPINE" | tr -d ' ')" "1"
+expect "P4 spine: non-negotiable — record every round" \
+  "$(grep -c 'Record the round on EVERY exit, reopen included' "$SPINE" | tr -d ' ')" "1"
+expect "P4 spine: non-negotiable — minimal fix" \
+  "$(grep -c '\*\*Minimal fix\.\*\* Correct the defect in place' "$SPINE" | tr -d ' ')" "1"
+# NEGATIVE CONTROL. The whole change is that a label no longer decides the round. If
+# the old unconditional sentence ever comes back -- a revert, a bad merge, a
+# well-meaning restoration -- the grading is dead prose and this must go red.
+expect "P4 spine: the unconditional label-driven step is GONE" \
+  "$(grep -c 'If any Blocker or Required: apply the fix(es)' "$SPINE" | tr -d ' ')" "0"
+expect "P4 spine: the label-driven exit condition is GONE" \
+  "$(grep -c "latest pass produces only follow-ups" "$SPINE" | tr -d ' ')" "0"
+# ...and the control discriminates: the sentence must be detectable when present.
+expect "  ...and that control trips on the restored sentence" \
+  "$(printf '3. If any Blocker or Required: apply the fix(es), re-run x\n' | grep -c 'If any Blocker or Required: apply the fix(es)' | tr -d ' ')" "1"
+
+# --- The record must be documented, and visible to the anti-stall fingerprint ----
+SCHEMA="$ROOT/skills/auto-task/references/state-schema.md"
+STALL="$ROOT/hooks/prevent-mid-protocol-stall.sh"
+expect "P4: rounds[] documented in the state schema" \
+  "$(grep -c '\*\*`rounds\[\]`\*\*' "$SCHEMA" | tr -d ' ')" "1"
+expect "P4: deferred[] documented in the state schema" \
+  "$(grep -c '\*\*`deferred\[\]`\*\*' "$SCHEMA" | tr -d ' ')" "1"
+# A round that defers everything applies no fix, bumps no counter and leaves
+# reviewed_diff_sha alone -- so without this field every signature component is
+# constant and the round reads as a frozen turn-end. Same case the hook's own comment
+# already documents for the poll counters and the budget ack.
+expect "P4: rounds length is in the no-progress fingerprint" \
+  "$(grep -c 'if type == \"array\" then length else 0 end' "$STALL" | tr -d ' ')" "1"
+# CODE-REVIEW ROUND-1 BLOCKER (B2), reproduced before fixing: `// []` only replaces
+# null/false, so a truthy non-array (`rounds: true`) reached `length`, which ERRORS on a
+# boolean -- blanking the whole signature via `|| echo ""`. Two consecutive blanks compare
+# EQUAL, so the frozen-turn counter incremented and the hook blocked a turn-end it should
+# have released. It is the only field in that expression that can abort the expression, so
+# the guard belongs exactly here. Asserted behaviourally, not just by grepping the source.
+expect "P4: a non-array rounds does not abort the fingerprint" \
+  "$(printf '{"gates":{"code_review":{"rounds":true}}}' | jq -r '(.gates.code_review.rounds | if type == "array" then length else 0 end)|tostring' 2>/dev/null || echo ABORTED)" "0"
+expect "P4: ...and the pre-fix form DID abort (control)" \
+  "$(printf '{"gates":{"code_review":{"rounds":true}}}' | jq -r '((.gates.code_review.rounds // []) | length)|tostring' 2>/dev/null || echo ABORTED)" "ABORTED"
+expect "P4: an array rounds still yields its length" \
+  "$(printf '{"gates":{"code_review":{"rounds":[1,2,3]}}}' | jq -r '(.gates.code_review.rounds | if type == "array" then length else 0 end)|tostring')" "3"
+expect "P4: an absent rounds still reads zero" \
+  "$(printf '{}' | jq -r '(.gates.code_review.rounds | if type == "array" then length else 0 end)|tostring')" "0"
+# CODE-REVIEW ROUND-1 REQUIRED (R1): the spine's step 2 routed on `deferred[]` non-empty
+# with NO spent guard, and nothing anywhere clears `deferred[]` -- the marker is the
+# `batch: true` row precisely so it cannot be inferred from the array being empty. Read as
+# written it re-batched forever, on every run that defers anything. Now guarded.
+expect "P4 spine: step 2 guards the batch on unspent" \
+  "$(grep -c 'non-empty \*\*and the batch is unspent\*\*' "$SPINE" | tr -d ' ')" "1"
+expect "P4 spine: the unguarded re-batch route is GONE" \
+  "$(grep -c 'zero reopening but `deferred\[\]` non-empty → apply the batch' "$SPINE" | tr -d ' ')" "0"
+# It must read the LENGTH only. Inspecting contents, or judging magnitude, would make
+# the anti-stall hook depend on findings data it has no business interpreting.
+expect "P4: the fingerprint reads only the length" \
+  "$(grep -c 'Only the LENGTH is read' "$STALL" | tr -d ' ')" "1"
+
+echo "======== Phase 4: CROSS-FILE agreement (the guard that was missing) ========"
+# WHY THIS GROUP EXISTS, AND WHY IT IS NOT MORE OF THE SAME. Gate A ran THREE rounds on
+# this contract and every round found the previous round's fix incomplete -- not because
+# the rule was wrong, but because the rule is stated in SIX places and each fix updated
+# fewer than all six: the reference ladder, the spine's inline non-negotiables, the spine's
+# loop-rule clause 5, the spine's loop exit conditions, ARCHITECTURE.md's flowchart, and
+# ARCHITECTURE.md's Phases-at-a-glance row. Round 2's finding was round 1's fix scoped too
+# narrowly; round 3's was round 2's fix applied to the reference but not the spine -- and
+# the spine assertion added alongside it then pinned the STALE wording green.
+#
+# Every guard in this file and in enforcement-spine.test.sh is a per-file substring
+# presence/absence check, so two files stating OPPOSITE rules both pass. That is the hole
+# the three rounds fell through, and the same class that "cost an earlier run four review
+# rounds when one marker grammar lived in three rules" (hooks/lib/loop-budget.sh header).
+# These assertions compare the sites against EACH OTHER instead. They are cheap, and one
+# of them fails on exactly the drift each Gate A round found by hand.
+SPINEONLY="$SPINE"
+ARCH="$ROOT/skills/auto-task/ARCHITECTURE.md"
+[ -f "$ARCH" ] || { echo "FAIL: $ARCH missing"; exit 1; }
+
+# All six sites must exist to be compared. A missing one silently vacuums the checks below.
+expect "xfile: all six statement sites are present" \
+  "$([ -n "$P4" ] && grep -q 'Non-negotiables restated inline' "$SPINEONLY" \
+     && grep -q 'Returns have not diminished' "$SPINEONLY" \
+     && grep -q 'The most recent `auto-task-code-review` round' "$SPINEONLY" \
+     && grep -q 'P4Cls' "$ARCH" && grep -q '| 4 Code review |' "$ARCH" && echo yes || echo no)" "yes"
+
+# (1) ROUND-3 FINDING A, mechanised. The reference declares the park/surface rule is NOT
+# batch-round-scoped. If it says that, NO site may still scope it to the batch round.
+# This is the assertion that would have caught the spine lagging the reference.
+if printf '%s' "$P4" | grep -q 'deliberately \*\*not\*\* scoped to the batch round'; then
+  expect "xfile: no site still scopes the LIGHT rule to the batch round" \
+    "$(grep -l 'batch-round `blocker`' "$SPINEONLY" "$ARCH" 2>/dev/null | wc -l | tr -d ' ')" "0"
+else
+  expect "xfile: reference declares the rule unscoped" "absent" "present"
+fi
+
+# (2) ROUND-3 FINDING A, second half. The reference retracts the UNQUALIFIED claim that
+# deferral never ships a defect unfixed. No site may still assert it without the scope.
+expect "xfile: the unqualified never-ships-unfixed claim is gone everywhere" \
+  "$(grep -c 'so deferral never ships a defect unfixed' "$SPINEONLY" "$ARCH" "$GATES" 2>/dev/null | grep -cv ':0$' | tr -d ' ')" "0"
+
+# (3) ROUND-3 FINDING C. Clause 5's reopened-basis carve-out must cover BOTH graded loops.
+# Scoped to "At Gate B" it licensed label counting at Phase 4 -- the exact misfire measured
+# as 6,7,2,3,1,3 -- while the Phase-4 bullet 540 lines below said the opposite.
+expect "xfile: clause 5 applies the reopened basis to both loops" \
+  "$(grep -c 'In \*\*both\*\* graded loops — Phase 4 and Gate B — count only findings that \*\*reopened\*\*' "$SPINEONLY" | tr -d ' ')" "1"
+expect "xfile: clause 5 no longer scopes it to Gate B alone" \
+  "$(grep -c 'At Gate B, count only findings that \*\*reopened\*\*' "$SPINEONLY" | tr -d ' ')" "0"
+
+# (4) ROUND-3 FINDING C, second half. The loop's own exit condition must state the graded
+# test, not the label test it contradicted.
+# Re-pinned at Gate B pass 2: this bullet no longer RESTATES the predicate (restating it at
+# seven sites is what the state-once guard above now forbids) — it defers to the single
+# statement. The graded-not-label property it was protecting is unchanged and still pinned:
+# the deferral names Phase 4's exit conditions, whose one statement is graded, and the
+# label-driven form is separately asserted absent two lines below.
+expect "xfile: the loop exit condition is graded, not label-driven" \
+  "$(grep -cF "round meets Phase 4's advance condition — the grade decides, not the label" "$SPINEONLY" | tr -d ' ')" "1"
+expect "xfile: the label-driven loop exit is gone" \
+  "$(grep -c 'produces only follow-ups (no blockers, no required fixes)' "$SPINEONLY" | tr -d ' ')" "0"
+
+# (5) ROUND-3 FINDING B. Edge TARGETS and GUARDS, which no substring check covered. The
+# deferral edge must NOT return to the review node -- that is another review pass, which
+# "costs NO round" denies -- and the gate-pass edge must carry the `spent` qualifier or the
+# diagram routes a spent batch back into a renewing one.
+expect "xfile: the deferral edge does not trigger another review pass" \
+  "$(grep -c '^ *P4Def --> P4$' "$ARCH" | tr -d ' ')" "0"
+expect "xfile: the deferral edge returns to the decision node" \
+  "$(grep -c 'P4Def --> P4Cls' "$ARCH" | tr -d ' ')" "1"
+expect "xfile: the batch edge is guarded on NOT spent" \
+  "$(grep -c 'deferred non-empty AND batch NOT spent' "$ARCH" | tr -d ' ')" "1"
+expect "xfile: the gate-pass edge admits a spent batch" \
+  "$(grep -c 'deferred empty OR batch spent' "$ARCH" | tr -d ' ')" "1"
+# ...and the flowchart must carry the LIGHT duty the glance row and the spine both state,
+# or the three sites disagree again in the direction that ships a finding unfixed.
+expect "xfile: the flowchart states the park-at-every-tier rule" \
+  "$(grep -c 'post-batch non-reopening blocker/required parks at every tier' "$ARCH" | tr -d ' ')" "1"
+
+# (5b) CODE-REVIEW ROUND-2 BLOCKER (B3), and the guardrail that stops it needing a fourth
+# round. The batch-ENTRY condition is stated at four sites and, before this group, was
+# guarded at ZERO of them (`grep -c 'ZERO reopening findings and'` returned 0 in both test
+# files) -- which is why round 1's fix reached SKILL.md and ARCHITECTURE.md but missed
+# references/phase-3-gates.md, the file the spine's MANDATORY READ defers to as the
+# contract. Nothing clears `deferred[]`; the spent-marker is deliberately the `batch: true`
+# row so it cannot be inferred from the array being empty. So an entry test that omits the
+# unspent condition re-fires on every later zero-reopening round, unbounded, on the normal
+# path. Assert EVERY site carries the guard, and that no site states entry without it.
+expect "xfile: the reference's batch-entry test carries the unspent guard" \
+  "$(printf '%s' "$P4" | grep -c 'AND the batch is still unspent' | tr -d ' ')" "1"
+expect "xfile: the unguarded reference entry test is GONE" \
+  "$(printf '%s' "$P4" | grep -c 'ZERO reopening findings and `deferred\[\]` is non-empty\*\*, do not pass' | tr -d ' ')" "0"
+expect "xfile: the spine's batch-entry test carries the unspent guard" \
+  "$(grep -c 'is non-empty \*\*and the batch is unspent\*\*' "$SPINEONLY" | tr -d ' ')" "1"
+expect "xfile: the flowchart's batch edge carries the unspent guard" \
+  "$(grep -c 'deferred non-empty AND batch NOT spent' "$ARCH" | tr -d ' ')" "1"
+expect "xfile: the state schema's batch-entry mention carries it too" \
+  "$(grep -c 'zero reopening findings \*\*and the batch is still unspent\*\*' "$ROOT/skills/auto-task/references/state-schema.md" | tr -d ' ')" "1"
+# The set form: every site that mentions applying the batch must also mention the spent
+# condition within the same file. This is the shape that generalises beyond B3's wording --
+# a future re-statement in different words still has to carry a spent qualifier somewhere.
+for site_desc in "reference:$GATES" "spine:$SPINEONLY" "architecture:$ARCH" "schema:$ROOT/skills/auto-task/references/state-schema.md"; do
+  sdesc="${site_desc%%:*}"; sfile="${site_desc#*:}"
+  expect "xfile: $sdesc pairs batch entry with a spent condition" \
+    "$(grep -ciE 'unspent|NOT spent|or spent|spent once per run' "$sfile" | tr -d ' ' | awk '{print ($1>0)?1:0}')" "1"
+done
+
+# (6) The invariants every site that states the rule must agree on, checked as a set rather
+# than one file at a time. `reopened`-not-labels and batch-spent-once are the two the three
+# Gate A rounds kept splitting on.
+for site_desc in "reference:$GATES" "spine:$SPINEONLY" "architecture:$ARCH"; do
+  sdesc="${site_desc%%:*}"; sfile="${site_desc#*:}"
+  expect "xfile: $sdesc states the reopened basis, not label counts" \
+    "$(grep -c 'reopening\|reopened' "$sfile" | tr -d ' ' | awk '{print ($1>0)?1:0}')" "1"
+  expect "xfile: $sdesc states the batch is spent once" \
+    "$(grep -ci 'spent once per run\|batch spent\|batch NOT spent\|or spent' "$sfile" | tr -d ' ' | awk '{print ($1>0)?1:0}')" "1"
+done
+# Proof the set-check discriminates rather than matching anything: a file that states
+# neither must fail it. LICENSE is the control -- it mentions no loop rule at all.
+expect "  ...and the set-check fails on a file stating neither" \
+  "$(grep -c 'reopening\|reopened' "$ROOT/LICENSE" | tr -d ' ' | awk '{print ($1>0)?1:0}')" "0"
+
+echo "===== Phase 4: the PROPERTY guard (what ends the enumeration treadmill) ====="
+# CODE-REVIEW ROUND-3 BLOCKER (B1), and the reason this group is shaped differently from
+# every other guard in this file. FOUR consecutive rounds -- Gate A round 3, review rounds
+# 1, 2 and 3 -- each found the SAME class: a rule updated at fewer sites than state it.
+# Every fix was correct and every guard added alongside it was a hand-maintained list of
+# the sites known at that moment, so each round bought exactly one more enumeration and
+# the next round found the site the list omitted. B1 was the seventh site (SKILL.md's
+# always-loaded top-of-file NON-YIELDING CONTRACT) while the cross-file group above
+# enumerates six.
+#
+# So this assertion does not name a site. It asserts the PROPERTY: no line in the spine
+# may gate a Phase-4 advance on a LABEL count. Any line that mentions the review skill AND
+# a label-based clean predicate fails it -- including a future rephrasing at a site nobody
+# has thought of yet, which is precisely what the enumerations cannot do.
+# TWO checks, because they fail on different things and neither alone is enough. Round 4
+# measured the first attempt at this guard: it required a line to contain BOTH the literal
+# string `auto-task-code-review` AND one of three hard-coded label phrases, and it caught
+# 0 of 5 plausible rephrasings of the very bug it was written for. A phrase list is an
+# enumeration of WORDINGS -- the same treadmill as an enumeration of sites, one level down.
+#
+# CHECK 1 is the actual invariant, and it is closed-form rather than open-ended: a line may
+# not state a Phase-4 advance without naming BOTH halves of the exit predicate. It does not
+# care what words gate the advance, so a future rewording in words nobody has thought of
+# still has to name `zero reopening` and `deferred[]` or it goes red. This is what caught
+# round 4's B1-new, where the fix for round 3's B1 kept the first half and dropped the
+# second -- a shape a label-phrase blacklist cannot see, because the offending line
+# contained no label phrase at all.
+P4_ADVANCE='advances? to Gate B'
+# GATE-B PASS-2 BLOCKER (finding 1), and the STRUCTURAL fix for this run's recurring class.
+# Seven sites stated the Phase-4 advance and every fix reached a subset -- SKILL.md:28 alone
+# was found defective THREE times (round 3, round 4, Gate B pass 2). Requiring each site to
+# repeat the predicate correctly IS the treadmill; the fix is to let only ONE site state it.
+# Every other mention now DEFERS ("meets Phase 4's exit conditions"), which cannot drift
+# because it carries no predicate to get wrong.
+p4_advance_missing() {  # $1=file  $2=required substring (grep -F)
+  grep -inE "$P4_ADVANCE" "$1" 2>/dev/null | grep -ivF "$2" | grep -c . | tr -d ' '
+}
+# GATE-B PASS-3 (finding 1). The first cut of this was DISJUNCTIVE -- it exempted a line
+# containing EITHER 'zero reopening' OR the deferral phrase -- which silently re-admitted
+# round 4's B1-new shape (reopening half stated, `deferred[]` half dropped), the exact
+# blocker the guard was written for. It is now a conjunction: a line either states BOTH
+# halves, or it defers using the EXACT phrase. A loose substring was the other half of that
+# bug: 'exit conditions' matched any line saying those two words, including one stating a
+# different predicate, so the phrase is now pinned in full.
+P4_DEFER="Phase 4's advance condition"
+p4_advance_bad() {  # advance lines that neither state the full predicate nor properly defer
+  grep -inE "$P4_ADVANCE" "$1" 2>/dev/null \
+    | grep -ivF "$P4_DEFER" \
+    | grep -viE 'zero reopening.*deferred\[\]|deferred\[\].*zero reopening' \
+    | grep -c . | tr -d ' '
+}
+expect "prop: every spine Phase-4 advance states BOTH halves or defers exactly" \
+  "$(p4_advance_bad "$SPINEONLY")" "0"
+# ...and the SHIPPED guard gets its own controls, which the disjunctive version never had:
+# its two "must discriminate" assertions exercised p4_advance_missing, a helper with no
+# live use, so the guard that actually runs was uncontrolled.
+P4BAD="$T/p4-advance-bad.txt"
+{ printf -- '- A clean `auto-task-code-review` pass (no Blockers/Required) advances to Gate B.\n'
+  printf -- '- A round with **zero reopening findings** advances to Gate B (Phase 5 at LIGHT).\n'
+  printf -- '- A round advances to Gate B once the exit conditions (no blockers) are met.\n'
+} > "$P4BAD"
+expect "  ...and it flags all three bad shapes (r3 neither / r4 half / loose-defer)" \
+  "$(p4_advance_bad "$P4BAD")" "3"
+{ printf -- "- A round meeting Phase 4's advance condition advances to Gate B. Continue.\n"
+  printf -- '- **Zero reopening findings and an empty (or spent) `deferred[]`** advances to Gate B.\n'
+} > "$P4BAD"
+expect "  ...and spares both legitimate shapes (proper deferral / full predicate)" \
+  "$(p4_advance_bad "$P4BAD")" "0"
+# GATE-B PASS-4 (finding 1). The first version of this fixture said "goes to Gate B", which
+# never matched the anchor -- so it was spared one stage EARLY and the `grep -ivF "$P4_DEFER"`
+# branch was reached by no line at all, live or fixture. Mutating P4_DEFER to a garbage string
+# left the suite green: dead code wearing a control's clothes, the same zero-control defect
+# pass 3 raised one level up, reproduced inside its own fix. Both halves are closed -- the
+# fixture now uses the anchored verb, and SKILL.md:28 was restored to "advances" so the branch
+# has a LIVE subject as well. These two assert the branch is load-bearing instead of trusting it.
+p4_advance_bad_with() {  # $1=file  $2=deferral phrase to use
+  grep -inE "$P4_ADVANCE" "$1" 2>/dev/null | grep -ivF "$2" \
+    | grep -viE 'zero reopening.*deferred\[\]|deferred\[\].*zero reopening' | grep -c . | tr -d ' '
+}
+expect "  ...and the deferral branch is LIVE: a wrong phrase flags the deferring line" \
+  "$(p4_advance_bad_with "$P4BAD" 'ZZZ-NEVER-APPEARS')" "1"
+expect "  ...and it is live over the SPINE too, not just the fixture" \
+  "$(p4_advance_bad_with "$SPINEONLY" 'ZZZ-NEVER-APPEARS')" "1"
+# THE STRUCTURAL GUARD: the spine may state the exit predicate exactly ONCE. A second copy
+# is how sites 2..7 came to exist, so the COUNT is pinned, not merely the wording.
+expect "prop: the spine states the Phase-4 exit predicate exactly once" \
+  "$(grep -cF 'reopening findings and an empty (or spent) `deferred[]`' "$SPINEONLY" | tr -d ' ')" "1"
+expect "prop: ...and no line restates it in the other word order" \
+  "$(grep -cF 'zero reopening findings** and an empty or spent `deferred[]`' "$SPINEONLY" | tr -d ' ')" "0"
+# The two always-loaded sites must DEFER -- these are the exact lines Gate B pass 2 found
+# still saying "advances ... Continue." with no LIGHT hold.
+expect "prop: the NON-YIELDING list defers instead of restating" \
+  "$(grep -cF "round meeting Phase 4's advance condition advances to Gate B" "$SPINEONLY" | tr -d ' ')" "1"
+expect "prop: the loop-rule exit bullet defers instead of restating" \
+  "$(grep -cF "round meets Phase 4's advance condition" "$SPINEONLY" | tr -d ' ')" "1"
+# (A companion assertion here required the legitimate-stops sentence to name a LIGHT surface.
+# It was deleted with the LIGHT hold at Gate B pass 3; :23 is back at its base wording, and
+# spec-inventory reported the retirement STALE, which is how the revert was caught.)
+# ...and CHECK 1 must discriminate. Both historical shapes go red: round 3's B1 (neither
+# half, label-gated) and round 4's B1-new (reopening half only, no `deferred[]`) -- the
+# latter is the one that matters, since it is the shape a blacklist provably misses.
+# Reuse the fixture dir created at the top of the self_inflicted group rather than taking
+# a second `mktemp` + `trap`. CODE-REVIEW ROUND-5 BLOCKER: bash allows ONE EXIT trap per
+# shell and a second `trap ... EXIT` REPLACES the first, it does not chain -- so the
+# `trap 'rm -rf "$T"' EXIT` above stopped running the moment this group added its own, and
+# every run of this suite orphaned $T (measured: TMPDIR +1 per run, holding src/thing.sh
+# and src/dup.sh). Reusing $T removes the second trap entirely, which is why it cannot be
+# re-broken by the next addition the way a chained-trap helper could.
+P4CTL="$T/p4-control.txt"
+{ printf -- '- A clean `auto-task-code-review` pass (no Blockers/Required) advances to Gate B.\n'
+  printf -- '- A round with **zero reopening findings** advances to Gate B (Phase 5 at LIGHT).\n'
+} > "$P4CTL"
+expect "  ...and it trips on the round-3 shape (neither half)" \
+  "$(p4_advance_missing "$P4CTL" 'zero reopening')" "1"
+expect "  ...and on the round-4 shape (reopening half only)" \
+  "$(p4_advance_missing "$P4CTL" 'deferred[]')" "2"
+
+# CHECK 2 is a blacklist of the retired label predicates, and is labelled as one -- it
+# generalises no further than the phrasings listed. It earns its place by covering the
+# lines CHECK 1's anchor misses (an advance stated without the words "advance to Gate B"),
+# and it is dropped from the skill-name conjunction the first attempt used, which was what
+# let "A clean code-review pass (no Blockers/Required) advances" through.
+#
+# SCOPE, stated rather than implied: spine + ARCHITECTURE.md only. `phase-3-gates.md` is
+# excluded because it legitimately QUOTES the retired rule when explaining why it was
+# replaced ("The earlier \"two consecutive rounds with zero blockers and zero required\"
+# test could not fire..."), and a guard that reddens on a file's own account of its history
+# would just get deleted.
+P4_LABEL_GATE='\(no blockers?/required\)|no blockers,? and no required|zero blockers and zero required|reports only follow-ups|nothing but follow-ups'
+expect "prop: no retired label predicate gates an advance (spine)" \
+  "$(grep -icE "$P4_LABEL_GATE" "$SPINEONLY" | tr -d ' ')" "0"
+expect "prop: no retired label predicate gates an advance (architecture)" \
+  "$(grep -icE "$P4_LABEL_GATE" "$ARCH" | tr -d ' ')" "0"
+# CHECK 2's discrimination, measured against the five rephrasings that defeated the first
+# attempt -- all five must now go red, including the two that never name the review skill.
+{ printf -- '- A clean code-review pass (no Blockers/Required) advances to Gate B. Continue.\n'
+  printf -- '- A review round with no blockers and no required fixes advances to Gate B.\n'
+  printf -- '- An `auto-task-code-review` round advances when the reviewer reports only Follow-ups.\n'
+  printf -- '- An `auto-task-code-review` pass with zero blockers and zero required fixes advances.\n'
+  printf -- '- The `auto-task-code-review` skill returning nothing but follow-ups advances the gate.\n'
+} > "$P4CTL"
+expect "  ...and CHECK 2 trips on all five rephrasings that defeated v1" \
+  "$(grep -icE "$P4_LABEL_GATE" "$P4CTL" | tr -d ' ')" "5"
+# ...and it must NOT fire on the two legitimate label statements in the spine: clause 5's
+# description of a CLEAN round taking its clean exit, and Gate B's own park disposition.
+# Both are correct prose; a guard that reddened on them would be reverted, not obeyed.
+{ printf -- 'a clean round (zero blockers, zero required) has nothing to park and takes its exit.\n'
+  printf -- '- **Only follow-ups -> park** in `state.followups` and set the gate.\n'
+} > "$P4CTL"
+expect "  ...and CHECK 2 spares the legitimate label prose it sits beside" \
+  "$(grep -icE "$P4_LABEL_GATE" "$P4CTL" | tr -d ' ')" "0"
+
+# B1 and B1-new pinned at their own site too -- belt and braces on the exact line four
+# rounds of guards failed to cover.
+expect "prop: the label-driven top-of-file advance line is GONE" \
+  "$(grep -cF 'no Blockers/Required) advances to Gate B' "$SPINEONLY" | tr -d ' ')" "0"
+expect "prop: ...replaced by a deferral, so it carries no predicate to drift" \
+  "$(grep -cF "round meeting Phase 4's advance condition advances to Gate B (Phase 5 at LIGHT). Continue." "$SPINEONLY" | tr -d ' ')" "1"
+
+# GATE-B PASS-3: the LIGHT-only HOLD was REMOVED, not repaired. It had to be restated at
+# every site stating the advance, and across three gates it produced more defects in its own
+# hardening than the hole it closed could cost -- LIGHT is max(D,R)<=2 and a non-reopening
+# finding breaks no AC, is not runtime-reachable and is not a security path. The gap is now
+# a DOCUMENTED limitation. These controls keep the removal honest: the hold must not creep
+# back as prose without the reasoning, and the limitation must stay stated.
+expect "light: the removed hold has not crept back into the spine" \
+  "$(grep -ciE 'hold the gate|HELD, not passed|pending its surface' "$SPINEONLY" | tr -d ' ')" "0"
+expect "light: ...nor into the flowchart" \
+  "$(grep -c 'P4Hold' "$ARCH" | tr -d ' ')" "0"
+expect "light: the LIGHT limitation is stated, not silently dropped" \
+  "$(printf '%s' "$P4" | grep -c 'The LIGHT-tier limitation, stated rather than engineered around' | tr -d ' ')" "1"
+expect "light: ...and records that a hold was tried and removed" \
+  "$(printf '%s' "$P4" | grep -c 'A LIGHT-only hold was implemented and then removed' | tr -d ' ')" "1"
+expect "light: ...and is honest that the loss is the MIS-GRADE catch, not a cosmetic residue" \
+  "$(printf '%s' "$P4" | grep -c 'a mis-graded finding is by construction not cosmetic' | tr -d ' ')" "1"
+expect "light: ...and does not claim Gate B unconditionally follows" \
+  "$(printf '%s' "$P4" | grep -c 'Gate B normally follows and re-applies the identical test' | tr -d ' ')" "1"
+
+# GATE-B PASS-2 REQUIRED (finding 3), and this block is SHORTER than what it replaces.
+# Pass 1 said Step C's comparand ("the previous round") fires on every batch round, since
+# the batch trigger has `reopened: 0` by definition. The fix qualified the comparand to
+# "the previous round with a reopening finding" -- and pass 2 measured that the fix does
+# not deliver: the surviving comparand is always the run's running MINIMUM, so any later
+# reopening round fires either way. Round 7's own history entry had already recorded
+# "it fires under the old previous-row reading too". So the qualifier was reverted and the
+# real defect fixed instead: Step B's promise, which over-claimed. A rule was removed, not
+# added. The tautological `conv_fires()` control went with it -- it asserted a function the
+# test file defined two lines above, so inverting the shipped prose left it green.
+expect "conv: the comparand is plain and unqualified again" \
+  "$(printf '%s' "$P4" | grep -c "against the previous round's" | tr -d ' ')" "1"
+expect "conv: the reverted qualifier is GONE from the reference" \
+  "$(printf '%s' "$P4" | grep -c 'previous round with at least one reopening finding' | tr -d ' ')" "0"
+expect "conv: ...and from the spine" \
+  "$(grep -cF 'with a reopening finding**' "$SPINEONLY" | tr -d ' ')" "0"
+# Step B must no longer promise an ordinary round for a post-batch reopening finding.
+expect "conv: Step B no longer over-claims 're-enters normally'" \
+  "$(printf '%s' "$P4" | grep -c "re-enters Step A's graded loop normally" | tr -d ' ')" "0"
+expect "conv: Step B states the batch pass is NOT exempt from Step C" \
+  "$(printf '%s' "$P4" | grep -c 'It is not exempt from Step C either' | tr -d ' ')" "1"
+expect "conv: ...and says to expect a surface there, not another round" \
+  "$(printf '%s' "$P4" | grep -c 'Expect a surface here rather than another round' | tr -d ' ')" "1"
+
+# CODE-REVIEW ROUND-5 BLOCKER, regression guard. This suite may hold exactly ONE
+# `trap ... EXIT`, because bash replaces rather than chains them: the second one added
+# silently disabled the fixture-directory cleanup and orphaned $T on every run, while the
+# suite kept exiting 0 -- so nothing here or in AC 9 noticed. Counted on non-comment lines
+# only, since the explanation above legitimately says the word.
+expect "hygiene: this suite installs exactly one EXIT trap" \
+  "$(grep -cE "^[[:space:]]*[^#]*\btrap[[:space:]]+'" "$0" | tr -d ' ')" "1"
+
+# CODE-REVIEW ROUND-3 REQUIRED (R2). The graded contract adds ONE Phase-4 user-approval
+# surfaces; the Yield-point table enumerated Gate B's equivalents and neither of these. A
+# spine-only reader therefore hit the table's strict-case `auto-continue` default, and on
+# LIGHT -- where Gate B is skipped -- the gate passed over an unre-checked blocker/required,
+# reopening the hole the LIGHT rule was added to close. The row is pinned WITH ITS VALUE,
+# for the reason the over-cap row above already records: keying on the left cell alone lets
+# the value be inverted to `auto-continue` with zero assertion failures.
+expect "yield: the table carries a Phase-4 surface row, value included" \
+  "$(grep -cF '| Phase 4 fired convergence test | `"user-approval"` |' "$SPINEONLY" | tr -d ' ')" "1"
+expect "yield: the Phase-4 row is not wired to auto-continue" \
+  "$(grep -c '| Phase 4 fired convergence test.*auto-continue' "$SPINEONLY" | tr -d ' ')" "0"
+# The inline non-negotiable must name the field too, not just the duty -- naming only
+# "surfaces on LIGHT" is what let the table's default win for a reader who skipped the
+# MANDATORY READ.
+
 echo
 printf 'gate-b-loop: PASS=%s FAIL=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

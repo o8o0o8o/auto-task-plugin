@@ -157,7 +157,24 @@ count_file="$project_dir/.auto-task/$branch/.stall-block-count"
 # leave every signature field constant, so that turn would be counted as another
 # frozen turn-end rather than as the progress it is. Same `// 0` backward-compat
 # shape as the poll counters — absent on every run that never went over budget.
-sig="$(jq -r '[(.base // ""), (.phase // ""), (.expected_next_action // ""), ((.iteration.review // 0)|tostring), ((.iteration.fix // 0)|tostring), (.gates.code_review.reviewed_diff_sha // ""), ((.preview.polls // 0)|tostring), ((.bot_review.polls // 0)|tostring), ((.external.polls // 0)|tostring), ((.gates.loop_budget.acked_through // 0)|tostring)] | join("|")' "$state" 2>/dev/null || echo "")"
+# `.gates.code_review.rounds | length` is in the signature for the SAME narrow reason
+# as the poll counters and the budget ack above, and it is not optional. Since the
+# Phase-4 graded round contract (references/phase-3-gates.md, "phase-4-round-mechanics"),
+# a round whose findings are all DEFERRED applies no fix, bumps no counter and leaves
+# `reviewed_diff_sha` untouched — so every other field here stays constant and the round
+# would be miscounted as another frozen turn-end, exactly the false positive the ack
+# field was added to prevent. Only the LENGTH is read; the contents are never inspected
+# and no magnitude judgment is made. Absent on every run that predates the record, where
+# it reads 0 and the signature behaves as before.
+#
+# TYPE-GUARDED, and that is not defensive habit — it is the one field here that can ABORT
+# the whole expression. `// []` only replaces null/false, so a truthy non-array (`rounds:
+# true`) reaches `length`, which errors on a boolean ("boolean (true) has no length",
+# rc=5). The `|| echo ""` below then blanks the ENTIRE signature, and two consecutive
+# blanks compare EQUAL, so the frozen-turn counter increments and this hook blocks a
+# turn-end it should have released. Every sibling field is error-proof (`// ""` plus
+# `tostring` cannot fail, booleans included), so the guard belongs here and only here.
+sig="$(jq -r '[(.base // ""), (.phase // ""), (.expected_next_action // ""), ((.iteration.review // 0)|tostring), ((.iteration.fix // 0)|tostring), (.gates.code_review.reviewed_diff_sha // ""), ((.preview.polls // 0)|tostring), ((.bot_review.polls // 0)|tostring), ((.external.polls // 0)|tostring), ((.gates.loop_budget.acked_through // 0)|tostring), ((.gates.code_review.rounds | if type == "array" then length else 0 end)|tostring)] | join("|")' "$state" 2>/dev/null || echo "")"
 prev_count=0; prev_sig=""
 if [ -f "$count_file" ]; then
   prev_line="$(cat "$count_file" 2>/dev/null || echo "")"

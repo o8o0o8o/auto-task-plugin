@@ -175,6 +175,105 @@ for f in refs:
 # `tokens_breakdown` line differs (cache_read/cache_creation vs cache), so it was never
 # a collision. The count exists for that single shared line.
 RETIRED_PREFIXES = {
+  # --- Phase 4 became a GRADED, bounded loop (the Phase-4 sibling of the Gate B
+  # --- bounding that retired thirteen lines in 0.29.0) ----------------------
+  # Gate B was bounded in 0.29.0 because measured runs went 4-11 passes; the churn
+  # then simply moved to Phase 4, which had no reachability grading, no per-round
+  # record and no in-loop bound (`enforce-gates.sh` sees only `git commit`, and
+  # this loop never reaches one). Measured: `iteration.review` hit 9 and 5 against
+  # a STANDARD cap of 4, while the nine-round run's `gate_b.passes[]` holds two
+  # rows, both `reopened: 0` — so every one of those rounds was a Phase-4 round.
+  # Per-round counts read 6,7,2,3,1,3 (non-convergent) while the *reachable*
+  # findings were decaying, because README figures and missing test assertions
+  # were labelled at the same severity as security holes.
+  #
+  # Each line below is replaced, in this same commit, by a graded equivalent that
+  # states the contract at least as strongly: the label no longer decides control
+  # flow (the Gate B (a)/(b)/(c) reopen test does, fail-closed on a missing `ac:`),
+  # a non-reopening blocker/required is DEFERRED and fixed in one batch rather
+  # than buying a full review cycle, and every round is recorded so the
+  # convergence test and the budget ack's evidence requirement are satisfiable.
+  # Full contract: `references/phase-3-gates.md` ("phase-4-round-mechanics").
+  #
+  # The three-step resolution list — now grades, records, and routes the batch.
+  '1. Parse the findings into Blockers / Required / Follow-ups.': 1,
+  '2. If only Follow-ups: park them in `state.followups`, set the gate,': 1,
+  '3. If any Blocker or Required: apply the fix(es), re-run `/auto-task-verify`': 1,
+  # The "Categorize findings" block: three label definitions that the reachability
+  # test supersedes as the control-flow basis. The labels still exist (the review
+  # skill assigns them); they simply no longer decide whether a round is spent.
+  'Categorize findings:': 1,
+  '- **Blockers** — bugs, regressions, security issues, plan violations.': 1,
+  '- **Required fixes** — style/correctness issues the project conventions': 1,
+  '- **Follow-ups** — nice-to-haves, future improvements, out-of-scope ideas.': 1,
+  # The unconditional per-finding fix instruction, replaced by the graded ladder
+  # (reopening -> fix now and bump the counter; deferred -> batch).
+  'For each blocker and required fix: invoke `/auto-task-fix`': 1,
+  # Both exit conditions: the first keyed on "only follow-ups" (a label reading),
+  # now keyed on zero REOPENING findings plus a spent/empty `deferred[]`; the
+  # second now also names the fired convergence test as a surfacing trigger.
+  "- Reviewer's latest pass produces only follow-ups → set `gates.code_review = { passed: true,": 1,
+  '- Loop rule triggers (no progress / out-of-scope / blocker / flakiness)': 1,
+  # The loop's own exit condition, keyed on the LABEL ("only follow-ups, no blockers, no
+  # required fixes"). Under the graded contract a round can legitimately exit with a
+  # deferred-and-batch-fixed or parked `blocker`/`required`, so this predicate both
+  # excluded a legitimate exit and licensed the retired label-driven one — Gate A round 3
+  # found it contradicting the Phase-4 bullet in the same file. Replaced by the graded
+  # form ("zero reopening findings and an empty or spent `deferred[]`"), which states the
+  # exit at least as strongly and now agrees with clause 5 and the Phase-4 section.
+  '- The most recent `auto-task-code-review` produces only follow-ups': 1,
+  # CODE-REVIEW ROUND-3 BLOCKER (B1). The SEVENTH site stating the Phase-4 exit, and the
+  # most-read one: the always-loaded top-of-file NON-YIELDING CONTRACT. It stated the exit
+  # in LABEL terms ("no Blockers/Required"), which is STRICTER than the graded exit in the
+  # same file, so a model following it keeps re-reviewing while a deferred `required`
+  # exists — reinstating the exact churn this change removes. Two lines above it, the
+  # verifier-agent bullet already carried the equivalent Gate B caveat from 0.29.0, so the
+  # omission was the same "fix landed in fewer sites than state the rule" class this run
+  # hit four rounds running. Replaced by the graded form, which states the exit at least
+  # as strongly; the new property guard in tests/gate-b-loop.test.sh now fails on ANY
+  # spine line that gates a Phase-4 advance on label counts, so an eighth site cannot
+  # reappear silently.
+  '- A clean `auto-task-code-review` pass (no Blockers/Required) advances to Gate B': 1,
+  # The `reviewed_diff_sha` formula: relocated to `references/state-schema.md`
+  # (`gates.code_review` notes) so the spine, Gate B's `verified_diff_sha` and the
+  # staleness hook all cite ONE copy instead of three. Reworded there, not dropped
+  # — every clause survives, including the flag-parity requirement.
+  '  - **`reviewed_diff_sha`** pins the exact diff this clean pass covered': 1,
+  # CODE-REVIEW ROUND-3 REQUIRED (R1), deferred then fixed in the batch. The relocation
+  # above left the staleness paragraph pointing at the flags' OLD home — "the pinned flags
+  # are listed under Phase 4 `reviewed_diff_sha`" — where Phase 4 now carries only a
+  # pointer of its own, so the reader got a redirect instead of the flags and the spine
+  # held zero copies (`grep -cF -- '--diff-algorithm=myers' SKILL.md` → 0). Re-pointed at
+  # `references/state-schema.md`, the one place the formula now lives. Pointer text only;
+  # every clause of the staleness rule is unchanged.
+  'Beyond the booleans, the hook enforces two further things. The first is **review staleness**': 1,
+  # GATE-B PASS-3 (finding 4). SKILL.md:28 and :76 stopped restating the Phase-4 exit
+  # predicate and now DEFER to it -- the structural fix for a rule that had drifted across
+  # seven sites. But the block they defer to lists TWO bullets, the second of which is
+  # "STOP and surface", so an unqualified "meets Phase 4's exit conditions ... Continue"
+  # could be read as advancing on the very round the contract exists to surface. The heading
+  # now names the first bullet as THE ADVANCE CONDITION and the deferrals point at that,
+  # making the referent single-valued. Heading text only; neither exit condition changed.
+  'Exit conditions for this phase:': 1,
+  # The `gates.code_review` schema line: gained `rounds` and `deferred`, and wraps
+  # onto two lines. Additive only; no existing field changed.
+  '    "code_review": { "passed": false, "tool": null, "clean_pass_after_last_fix": false, "reviewed_diff_sha": null, "at": null, "evidence": null },': 1,
+  # The loop-count definition: `iteration.review` now counts Phase-4 rounds that
+  # REOPEN, not every round. The replacement states the same max() rule and adds
+  # the narrowing, so the budget still bounds the same quantity (fix volume).
+  '**Loop count** = `max(iteration.fix, iteration.review)` — and it must be both counters': 1,
+  # --- byte budget: two Phase-4 anti-stall restatements compressed -----------
+  # Not a contract change. The Phase-4 section duplicated the top-of-file
+  # NON-YIELDING CONTRACT nearly verbatim; the spine has a HARD 122,880 B ceiling
+  # (`tests/enforcement-spine.test.sh`) and 47 bytes of headroom, so the graded
+  # contract above had to be paid for. Every clause of both lines is still stated
+  # in the spine: the re-invoke cue by the "Do not stop" paragraph and step 3, and
+  # the Phase-4 "Mechanical backstop" by the identical top-of-file section plus
+  # the Yield-point contract's own no-speculative-`user-approval` rule. The
+  # replacements point at those, so nothing became unreachable.
+  'If the latest skill output contains words like "needs one more fix"': 1,
+  '**Mechanical backstop.** The Stop hook reads `STATE.json` on every turn-end.': 1,
+  '**Do not stop, summarize for the user, ask permission, or wait.**': 1,
   # --- intent-add before every diff-sha re-pin (RELIABILITY-AUDIT item 1) ----
   # The merge-conflict finalize is a `reviewed_diff_sha` re-pin site like the
   # Phase-6 bot-fix one, but it carried no intent-add instruction: a resolution
