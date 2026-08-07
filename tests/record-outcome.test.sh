@@ -55,7 +55,8 @@ cat > "$SD/STATE.json" <<EOF
  "history":[{"phase":"execute","result":"ok","at":"2026-01-01T10:00:00Z"},
             {"phase":"gate-b","result":"blocker","summary":"found a blocker","at":"2026-01-01T10:10:00Z"},
             {"phase":"handover","result":"done","at":"2026-01-01T10:27:00Z"}],
- "gates":{"gate_b":{"passed":true}},"followups":[{"note":"a"},{"note":"b"}]}
+ "gates":{"gate_b":{"passed":true},
+          "code_review":{"rounds":[{"n":1},{"n":2},{"n":3},{"n":4}]}},"followups":[{"note":"a"},{"note":"b"}]}
 EOF
 
 # (c) opt-OUT first: no ledger file → nothing written, no sentinel.
@@ -81,6 +82,10 @@ expect "row.tier_initial"      "$(printf '%s' "$ROW" | jq -r '.tier_initial')"  
 expect "row.escalations"       "$(printf '%s' "$ROW" | jq -r '.escalations')"      "1"
 expect "row.fix_iterations"    "$(printf '%s' "$ROW" | jq -r '.fix_iterations')"   "3"
 expect "row.review_iterations" "$(printf '%s' "$ROW" | jq -r '.review_iterations')" "2"
+# [v7] review_rounds — rounds RUN, not rounds that reopened. The fixture sets 4 rounds
+# against 2 reopening iterations precisely so the two cannot be confused: a field wired
+# to `.iteration.review` by mistake reads 2 here and this assertion catches it.
+expect "row.review_rounds"     "$(printf '%s' "$ROW" | jq -r '.review_rounds')"    "4"
 expect "row.gate_b"            "$(printf '%s' "$ROW" | jq -r '.gate_b')"           "passed"
 expect "row.followups"         "$(printf '%s' "$ROW" | jq -r '.followups')"        "2"
 expect "row.duration_min"      "$(printf '%s' "$ROW" | jq -r '.duration_min')"     "27"
@@ -141,6 +146,34 @@ expect "empty-base: first run records"               "$(rec "$TE"; rows "$TE")" 
 expect "empty-base: rerun does NOT duplicate"        "$(rec "$TE"; rec "$TE"; rows "$TE")" "$(printf '0\n0\n1')"
 # forward-compat: a legacy STATE without pr_url yields pr_url null (never errors).
 expect "empty-base row.pr_url defaults null"         "$(head -1 "$TE/.auto-task/outcomes.jsonl" | jq -r '.pr_url')" "null"
+# [v7] THE DISCRIMINATOR IS THE `rounds` KEY, and this trio is the whole contract.
+#
+# CODE-REVIEW ROUND-1 FINDING. The first version keyed on `gates.code_review` and
+# asserted that its ABSENCE yields 0. That conflated the two states the column exists
+# to separate: a run that ran zero rounds (a measurement) and a state written before
+# `rounds[]` existed (unmeasurable). Every pre-0.30.0 STATE.json is the second, they are
+# still on disk, and auto-task-stats.sh derives them LIVE into the same array whose
+# median carefully excludes nulls — so the hard 0 fabricated exactly the review-volume
+# drop the exclusion was built to prevent. Reproduced: a mixed ledger printed `med
+# rounds 0` with the legacy state present and `-` without it.
+#
+# The state skeleton initializes `rounds: []`, so a post-0.30.0 run that never reached
+# Phase 4 still HAS the key and still reads 0. Only a state lacking it is null.
+expect "no code_review at all -> null (unmeasurable)" \
+  "$(head -1 "$TE/.auto-task/outcomes.jsonl" | jq -r '.review_rounds')" "null"
+expect "review_rounds key always present"            "$(head -1 "$TE/.auto-task/outcomes.jsonl" | jq -r 'has("review_rounds")')" "true"
+# gates.code_review present but WITHOUT `rounds` — the literal pre-0.30.0 shape.
+jq '.gates.code_review = {"passed":true,"tool":"skill:auto-task-code-review"} | .base="LEGACYSHAPE"' \
+  "$SDE/STATE.json" > "$SDE/STATE.json.tmp" && mv "$SDE/STATE.json.tmp" "$SDE/STATE.json"
+: > "$TE/.auto-task/outcomes.jsonl"; rm -f "$SDE/.outcome-recorded"; rec "$TE" >/dev/null
+expect "pre-rounds[] shape -> null, NOT a measured 0" \
+  "$(head -1 "$TE/.auto-task/outcomes.jsonl" | jq -r '.review_rounds')" "null"
+# ...and the positive control: an EMPTY rounds[] is a real measured zero.
+jq '.gates.code_review.rounds = [] | .base="EMPTYROUNDS"' \
+  "$SDE/STATE.json" > "$SDE/STATE.json.tmp" && mv "$SDE/STATE.json.tmp" "$SDE/STATE.json"
+: > "$TE/.auto-task/outcomes.jsonl"; rm -f "$SDE/.outcome-recorded"; rec "$TE" >/dev/null
+expect "empty rounds[] -> 0, a real measurement" \
+  "$(head -1 "$TE/.auto-task/outcomes.jsonl" | jq -r '.review_rounds')" "0"
 rm -rf "$TE"
 
 echo ""

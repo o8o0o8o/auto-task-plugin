@@ -53,7 +53,8 @@ mk_state() {
                "diff": { "loc_added": 40, "loc_removed": 8 }, "planning": { "first_pass_ac": 0.75 },
                "satisfaction": $satj, "correctness": $corj },
   "iteration": { "fix": 1, "review": 2 }, "followups": [ {"x":1}, {"x":2} ],
-  "gates": { "gate_b": { "passed": true } },
+  "gates": { "gate_b": { "passed": true },
+             "code_review": { "rounds": [ {"n":1}, {"n":2}, {"n":3}, {"n":4}, {"n":5} ] } },
   "checks": [ {"result":"pass"}, {"result":"pass"}, {"result":"fail"} ],
   "history": [ { "at": "2026-07-09T09:00:00Z" }, { "at": "2026-07-09T09:45:00Z" } ]
 }
@@ -281,7 +282,29 @@ for doc in "$REPO_ROOT/README.md" "$REPO_ROOT/skills/auto-task/references/settin
     "$(grep -oE 'schema_version: [0-9]+' "$doc" | grep -vc "schema_version: $SV")" "0"
 done
 
-expect "schema_version is 6"        "$(printf '%s' "$P" | jq -r '.schema_version')" "6"
+expect "schema_version is 7"        "$(printf '%s' "$P" | jq -r '.schema_version')" "7"
+# [v7] `review_rounds` — the count of Phase-4 rounds RUN, which is a different quantity
+# from `review_iterations` (rounds that REOPENED). The fixture deliberately sets them to
+# different values (5 rounds vs 2 reopening iterations) so a field wired to the wrong
+# source, or copy-pasted from its sibling, cannot pass this pair.
+expect "review_rounds counts rounds run"   "$(printf '%s' "$P" | jq -r '.review_rounds')"      "5"
+expect "review_iterations still counts reopens" "$(printf '%s' "$P" | jq -r '.review_iterations')" "2"
+# CODE-REVIEW ROUND-1 FINDING, mirrored from record-outcome.test.sh: the discriminator
+# is the `rounds` KEY, not `gates.code_review`. A state that lacks the key predates it
+# (0.30.0) and is UNMEASURABLE -> null, so the receiver can exclude it; a state carrying
+# an empty `rounds: []` really did run zero rounds -> 0, a measurement. Coalescing the
+# first into the second fabricates a review-volume drop during exactly the transition
+# the null was introduced for.
+SNR="$T/state-norounds.json"; jq 'del(.gates.code_review)' "$STATE" > "$SNR"
+Pnr="$(AUTO_TASK_HOME="$HOME_DIR" AUTO_TASK_STATE_FILE="$SNR" AUTO_TASK_SETTINGS_FILE="$T/on.json" \
+  AUTO_TASK_GLOBAL_SETTINGS_FILE="$NOFILE" AUTO_TASK_TELEMETRY_DRYRUN=1 \
+  AUTO_TASK_TELEMETRY_IGNORE_SENTINEL=1 bash "$SH" 2>/dev/null)"
+expect "no code_review -> null (unmeasurable)"  "$(printf '%s' "$Pnr" | jq -r '.review_rounds')"    "null"
+SER="$T/state-emptyrounds.json"; jq '.gates.code_review = {"rounds":[]}' "$STATE" > "$SER"
+Per="$(AUTO_TASK_HOME="$HOME_DIR" AUTO_TASK_STATE_FILE="$SER" AUTO_TASK_SETTINGS_FILE="$T/on.json" \
+  AUTO_TASK_GLOBAL_SETTINGS_FILE="$NOFILE" AUTO_TASK_TELEMETRY_DRYRUN=1 \
+  AUTO_TASK_TELEMETRY_IGNORE_SENTINEL=1 bash "$SH" 2>/dev/null)"
+expect "empty rounds[] -> 0, a real measurement" "$(printf '%s' "$Per" | jq -r '.review_rounds')"   "0"
 expect "est_tokens is the OUTPUT estimate" "$(printf '%s' "$P" | jq -r '.est_tokens')" "5000"
 expect "tokens_output is the measured output" "$(printf '%s' "$P" | jq -r '.tokens_output')" "5500"
 expect "act_tokens keeps total semantics"  "$(printf '%s' "$P" | jq -r '.act_tokens')" "6000"

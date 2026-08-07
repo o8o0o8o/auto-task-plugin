@@ -41,7 +41,20 @@ CREATE TABLE IF NOT EXISTS runs (
 
   -- loop effort
   fix_iterations    INTEGER,
-  review_iterations INTEGER,
+  review_iterations INTEGER,           -- rounds that REOPENED the loop (graded count)
+  review_rounds     INTEGER,           -- [v7] Phase-4 review rounds RUN, reopening or
+                                       -- not. Distinct from review_iterations above:
+                                       -- comparing the two separates "the review keeps
+                                       -- finding real breaches" from "the review keeps
+                                       -- running and finding nothing". 0 is a real
+                                       -- measurement; NULL means the row cannot say.
+                                       -- NULL is NOT a pre-v7 marker: pre-v7 rows carry
+                                       -- it, and so does a v7 row whose sender state
+                                       -- predates rounds[]. So schema_version < 7 is
+                                       -- NARROWER than "IS NULL" and is no substitute
+                                       -- for it -- exclude NULLs, never coalesce them
+                                       -- to 0, or a pooled aggregate reports a
+                                       -- review-volume drop that never happened.
   gate_b            TEXT,                -- "passed" | skip reason
   followups         INTEGER,
   requirements_count INTEGER,           -- [v2]

@@ -244,6 +244,16 @@ DERIVE='
       escalations: ((.effort.history // []) | length),
       fix_iterations: (.iteration.fix | num0),
       review_iterations: (.iteration.review | num0),
+      # Mirrors the derivation in record-outcome.sh exactly -- see the note there for
+      # why rounds and iterations are both carried, and why the discriminator is the
+      # `rounds` KEY rather than `gates.code_review`. This path is the one that made
+      # the distinction load-bearing: it derives rows LIVE from STATE.json files still
+      # on disk, so a pre-0.30.0 state reaches the aggregator directly, and a `// []`
+      # here would feed it a fabricated 0 that med_rounds below cannot exclude.
+      review_rounds: (if (.gates.code_review | type) == "object"
+                         and (.gates.code_review | has("rounds"))
+                      then ((.gates.code_review.rounds // []) | length | num0)
+                      else null end),
       gate_b: (if (.gates.gate_b.passed // false) then "passed" else ((.gates.gate_b.skipped_reason | str0) | .[0:120]) end),
       followups: ((.followups // []) | length),
       duration_min: $dur,
@@ -710,6 +720,19 @@ agg="$(jq -s \
         n: length,
         med_fix: (map(.fix_iterations // 0) | median),
         med_review: (map(.review_iterations // 0) | median),
+        # NULL-EXCLUDING, unlike its two siblings above, and the difference is
+        # deliberate. Two kinds of row carry null here: every pre-[v7] ledger row (the
+        # ledger is append-only), AND any row -- ledger or live-derived -- whose
+        # STATE.json predates `rounds[]`. That is why this selects by TYPE rather than
+        # by schema_version: the version is strictly narrower than the null set. The
+        # `// 0` idiom the siblings use would read each of those as "this run ran zero
+        # review rounds" and drag the median toward 0 -- reporting a fabricated
+        # improvement exactly when you are trying to measure one. Selecting numbers
+        # first means the median is over the rows that actually carry the field; when
+        # none do, `median` on an empty array yields 0 and `n_rounds` is 0, which is
+        # how a reader tells "no data" from "a real 0".
+        med_rounds: (map(.review_rounds | select(type == "number")) | median),
+        n_rounds: (map(.review_rounds | select(type == "number")) | length),
         pct_escalated: (if length==0 then 0 else ((map(select(.escalations | pos)) | length) * 100 / length | floor) end)
       })),
     sh_total: (map(select(.tier=="standard" or .tier=="heavy")) | length),
@@ -867,14 +890,14 @@ fi
 echo ""
 
 echo "By tier"
-printf '  %-10s %5s %11s %14s %11s\n' "tier" "#done" "med fix" "med review" "escalated"
+printf '  %-10s %5s %11s %14s %14s %11s\n' "tier" "#done" "med fix" "med review" "med rounds" "escalated"
 # Columns are \037-delimited and read with IFS=\037, NOT whitespace-split. A tier value
 # containing a space — a `tostring`ed array like ["a b"], or simply a string tier with a
 # space — otherwise spills into the #done column and shifts every later one, turning a
 # blank table into a WRONG table presented as right. \037 is not whitespace, so the field
 # boundaries survive whatever the value contains.
-printf '%s' "$agg" | jq -r '.tiers[]? | "\(.tier | if type == "string" then .[0:10] else (tostring | .[0:10]) end)\(.n)\(.med_fix)\(.med_review)\(.pct_escalated)"' 2>/dev/null \
-  | while IFS="$(printf '\037')" read -r t n mf mr pe; do printf '  %-10s %5s %11s %14s %10s%%\n' "$t" "$n" "$mf" "$mr" "$pe"; done
+printf '%s' "$agg" | jq -r '.tiers[]? | "\(.tier | if type == "string" then .[0:10] else (tostring | .[0:10]) end)\(.n)\(.med_fix)\(.med_review)\(if .n_rounds > 0 then (.med_rounds|tostring) else "-" end)\(.pct_escalated)"' 2>/dev/null \
+  | while IFS="$(printf '\037')" read -r t n mf mr mrd pe; do printf '  %-10s %5s %11s %14s %14s %10s%%\n' "$t" "$n" "$mf" "$mr" "$mrd" "$pe"; done
 [ "$done_count" -eq 0 ] && echo "  (no completed runs yet)"
 echo ""
 

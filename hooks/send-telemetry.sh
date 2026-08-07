@@ -68,7 +68,25 @@ set -uo pipefail
 # v6 row are both plain integers, and v5's fallback `0` looks like a real fast run.
 # So a query pooling v5 and v6 rows MUST branch on schema_version before treating
 # any duration as measured, and must expect NULL from v6.
-SCHEMA_VERSION=6
+#
+# v7 (this version) is ADDITIVE, and that makes it a different kind of bump from the
+# two above — say so plainly so a consumer does not go looking for a semantics change
+# that is not there. It adds ONE nullable column, `review_rounds`: the number of
+# Phase-4 review rounds the run recorded, which is a different quantity from
+# `review_iterations` (that counts only the rounds that REOPENED). No existing field
+# changes meaning, scale, or nullability, so a query written against v6 stays correct
+# verbatim on a v7 row. What the version buys is the ability to tell "this run ran
+# zero review rounds" (0, a measurement) from "this row cannot say" (NULL).
+#
+# NULL IS NOT A PRE-v7 MARKER, and the version is NOT a substitute for testing the
+# value. Two different rows carry NULL: every pre-v7 row, which never had the field;
+# AND a v7 row whose STATE.json predates `rounds[]` (0.30.0) and therefore could not
+# be measured either. So `schema_version < 7` is NOT equivalent to
+# `review_rounds IS NULL` -- it is strictly narrower, and a consumer that treats it as
+# equivalent will coalesce the v7 NULLs to 0 and report a fabricated drop in review
+# volume, which is the exact error this column exists to prevent. The only correct
+# rule, and it needs no version at all: EXCLUDE NULLs, never coalesce them.
+SCHEMA_VERSION=7
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 settings_sh="$SCRIPT_DIR/settings.sh"
@@ -256,6 +274,10 @@ payload="$(jq -c \
       task_type: $ttype,
       fix_iterations: (.iteration.fix // 0),
       review_iterations: (.iteration.review // 0),
+      review_rounds: (if (.gates.code_review | type) == "object"
+                         and (.gates.code_review | has("rounds"))
+                      then ((.gates.code_review.rounds // []) | length)
+                      else null end),
       gate_b: (if (.gates.gate_b.passed // false) then "passed"
                else ((.gates.gate_b.skipped_reason // "") | .[0:120]) end),
       followups: ((.followups // []) | length),
