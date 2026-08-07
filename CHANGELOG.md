@@ -2,6 +2,32 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.32.0]
+
+<!-- release-notes: LIGHT-tier runs now get an independent adversarial pass. Previously the model that wrote the diff also self-verified and code-reviewed it, with nothing independent following — on LIGHT the self-review was the only review the code ever got. Also adds an opt-in, off-by-default shadow reviewer that measures what the self-review misses. -->
+
+### Fixed
+
+- **On LIGHT, the model that wrote the code was the only thing that ever reviewed it.** LIGHT now runs Gate B, capped at one pass.
+
+  **The gap was structural, not incidental.** Phases 2, 3 and 4 are skills invoked in the main loop, so the same model implements, self-verifies and code-reviews — independence enters only at Gate A (completeness) and Gate B (adversarial). LIGHT skipped Gate B, and Gate A judges AC completeness rather than hunting for defects. So a LIGHT run's diff was written, graded and passed by one context with nothing independent in the path.
+
+  **Closed with the tier's own measurement, not an argument.** The parking rule's LIGHT-limitation note already carried the number: *"Gate B's first pass found in one pass what six Phase-4 rounds had missed."* That note also stated exactly what was at risk, and stated it correctly — the residue is not cosmetic, because *non-reopening* only means the finding breaks no AC **if the grade is right**, and the grade is the orchestrator's own, made from the context that wrote the code. What Gate B adds is the catch on a **mis-grade**. `lb_gate_b_cap light` moves `0 → 1`.
+
+  **One pass, and no LIGHT-only hold.** One, because LIGHT is `max(D,R) <= 2` and the measured value is in the *first* independent look rather than in a loop; the tier exists to be the fast path. And no hold — a LIGHT-only hold was built during the graded-loop work and removed for producing more defects in its own hardening than the hole could cost. This closure moves the other way: it **deletes a special case** instead of adding one, which is why it costs a cap value and two table cells rather than prose at five sites. The documented limitation is rewritten in place as a closure record, keeping the mis-grade reasoning and the measurement, because those are what justified the change.
+
+  **Cost, stated honestly.** LIGHT runs get one extra adversarial pass — on the order of a Gate-A-sized spawn (~24k output tokens) and a few minutes. That is a real tax on the tier chosen for being trivial, and it is the price of the tier no longer being the one place nothing independent looks.
+
+### Added
+
+- **`shadow_review` — an opt-in, off-by-default second opinion that measures what the main-loop self-review misses, and decides nothing.** When enabled, one fresh-context `general-purpose` agent re-reviews the diff once per run, immediately after Phase 4 goes clean, by **invoking the `auto-task-code-review` skill** — never a hand-rolled prompt, which would measure "some prompt vs the skill" and answer the wrong question. Findings the final Phase-4 round did not raise land in `state.shadow_review.missed[]`, each graded with Phase 4's own Step-A test **by reference** so the two cannot drift, which is what separates a missed AC breach from a missed README nit.
+
+  **It sets no gate, reopens no round, blocks no commit and never routes**, and **no hook reads the object** — pinned by a negative-control assertion, because a measurement wired into control flow stops being a measurement and would rebuild the review churn `0.29.0`/`0.30.0` were spent bounding. The point is to answer "how much does the self-review actually miss, in *this* repo?" with data rather than argument. If the answer is "a lot", the follow-up is to make Phase 4 itself independent — a deliberate change in a later release, informed by the number, not a shadow pass promoted to an authority. Absent on every run where the setting is off, so nothing migrates.
+
+  **Spec accounting.** The always-loaded spine is a **122,851 B spine**, leaving **29 B of headroom** against the 122,880 B cap — three bytes, from a tier-table cell and the Phase-4 exit clause; this change spends its words in `references/`, not the spine. `tests/spec-inventory.sh` reports `retired=57` (the LIGHT tier row, retired for a behavioural reason rather than a wording one), and conservation stays at `missing=0 duplicated=0 restated=0`.
+
+  **Guards.** `tests/gate-b-loop.test.sh` grows to **263 assertions**, covering the LIGHT closure in both directions (the cap, the rewritten prose, the retired framing gone, and a sweep proving no spec file still claims the skip) and every "decides nothing" property of the shadow pass, including that it must invoke the skill, that the hand-rolled fallback is forbidden, that an unavailable skill records a status rather than degrading, and the no-hook-reads-it tripwire. `tests/spec-inventory.sh` reports `retired=55`.
+
 ## [0.31.0]
 
 <!-- release-notes: Verifier and critique agents are now spawned synchronously. The harness began backgrounding them, which returned launch metadata instead of a report and left runs thrashing against the anti-stall hook — eight blocked turn-ends in five minutes on one observed run, with the verifier's work never collected. -->
