@@ -435,6 +435,8 @@ In addition to what `auto-task-plan` produces, write a short feasibility note at
 
 ## critique-and-disclaimer — relocated verbatim from SKILL.md
 
+**Spawn the critique agent SYNCHRONOUSLY: pass `run_in_background: false`.** The loop below is written around the critique *returning* findings — "after the agent returns, classify each finding" is not executable against a spawn that returned launch metadata instead. If the harness backgrounds it regardless, wait by writing `expected_next_action: "awaiting-agent"` and ending the turn (the Stop hook releases that turn-end, capped, so the harness can deliver the report), never by polling. **Two prohibitions, both from an observed run of this very step:** a subagent's transcript file is not a completion signal — its size stalls while the agent is thinking, so `stat`/`sleep` loops report "done" at random; and a timeout is never a round result — a run that had started recording "round 2 has gone quiet" was handed five substantive findings moments later. Round 2 exists to catch what the amend broke, so skipping it on a timeout silently removes the safety net step 2 of the loop below relies on.
+
 **Critique pass.** Before stopping for human approval, spawn a `general-purpose` Agent (prefix its `label` with `state.title` per the "Run label" convention) with a fresh-context prompt containing:
 - `.auto-task/<branch>/PLAN.md` as the only input.
 - Explicit ask: "Critique this plan on four dimensions. Return at most 6 terse bullets total, one issue per bullet, prefixed with the dimension tag. Omit a dimension if it has no issues. If nothing to flag, return exactly `No issues found.`

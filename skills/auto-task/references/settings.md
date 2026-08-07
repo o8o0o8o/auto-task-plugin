@@ -129,3 +129,9 @@ _The settings file's location and the `settings.sh` sub-command list, moved here
 **Where they live:** `${AUTO_TASK_HOME:-$HOME/.claude}/auto-task/<project-key>/settings.json`, keyed by the git **common dir** so every linked worktree of a clone resolves to the same file. Nothing is written inside the working tree, so a setting never shows in `git status`.
 
 **Locate** `hooks/settings.sh` with the three-probe pattern (`CLAUDE_PLUGIN_ROOT` is empty in the Bash-tool env), then: `get <key>` · `all` (merged JSON) · `present <key>` (explicitly decided?) · `set <key> <value>` · `path` · `init` · `schema-status` · `reset --backup`.
+
+### Stop-hook registration (the yield-point contract's mechanical half)
+
+_Relocated byte-exact from the spine's "Yield-point contract". The contract itself — the value table and the hook's decision procedure — stays in `SKILL.md`; only the registration mechanics live here, with the other install-time settings._
+
+The hook is registered via the plugin's `hooks/hooks.json` (marketplace install) or the `settings-fragment.json` fallback (`install.sh`/manual). Without it, the field is informational; with it, the field is enforced. Both must be aligned — never set `"user-approval"` speculatively to "escape" the hook, because that defeats the entire mechanism. The pre-commit hook for gates is the analogous precedent: don't flip flags speculatively.

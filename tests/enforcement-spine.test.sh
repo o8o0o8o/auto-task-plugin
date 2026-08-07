@@ -213,6 +213,79 @@ expect "Frozen poll: block #1"                           "$(stopS)" "block"
 expect "Frozen poll: block #2"                           "$(stopS)" "block"
 expect "Frozen poll: RELEASE #3 (backstop intact)"       "$(stopS)" "allow"
 
+echo "== In-flight Agent spawn: bounded turn-end release (awaiting-agent) =="
+# A backgrounded `Agent` spawn returns launch metadata, not the report; the report
+# arrives later as a task notification, so YIELDING is the only way to receive it.
+# That is the one mid-pipeline turn-end this hook releases on purpose. It is capped,
+# because no hook can observe an Agent spawn (PreToolUse is Bash-only), so an
+# uncapped release would be an unbounded stall hatch.
+rm -f "$SD/.stall-block-count" "$SD/.agent-wait-count"
+cat > "$ST" <<EOF
+{"approved":true,"phase":"gate-a","expected_next_action":"awaiting-agent","base":"$BASE","effort":{"tier":"standard"},
+ "iteration":{"review":0,"fix":0},
+ "gates":{"code_review":{"passed":false},"gate_b":{"passed":false}}}
+EOF
+# Raw stdout, so the JSON-object COUNT can be asserted (a Stop hook must emit exactly
+# one object; an early draft emitted a systemMessage in front of the block's decision).
+awRaw(){ CLAUDE_PROJECT_DIR="$T" AUTO_TASK_STALL_LIMIT=99 bash "$STOP" </dev/null 2>/dev/null; }
+awD(){ local o; o="$(awRaw)"; [ -z "$o" ] && { echo allow; return; }; printf '%s' "$o" | jq -r '.decision // "allow"' 2>/dev/null; }
+expect "Wait: release #1 (report in flight)"              "$(awD)" "allow"
+expect "Wait: release #2"                                 "$(awD)" "allow"
+expect "Wait: release #3 (default cap is 3)"              "$(awD)" "allow"
+expect "Wait: BLOCK #4 (cap exhausted)"                   "$(awD)" "block"
+expect "Wait: still blocks at #5"                         "$(awD)" "block"
+# Pin WHY it blocked, not just that it did — a block attributed to the wrong cause
+# would satisfy the decision assertion above while telling the run nothing usable.
+AWR="$(awRaw | jq -r '.reason')"
+expect "Wait: block reason names the synchronous-spawn fix" \
+  "$(printf '%s' "$AWR" | grep -qF 'run_in_background: false' && echo y || echo n)" "y"
+expect "Wait: block reason forbids polling the transcript" \
+  "$(printf '%s' "$AWR" | grep -qF 'Do NOT poll the agent' && echo y || echo n)" "y"
+expect "Wait: block reason forbids an outcome from a timeout" \
+  "$(printf '%s' "$AWR" | grep -qF 'from the absence of a report' && echo y || echo n)" "y"
+expect "Wait: stdout carries exactly ONE JSON object"     "$(awRaw | jq -s 'length')" "1"
+# The report lands: the model writes auto-continue, the signature changes, and the
+# NEXT gate's wait draws a full fresh allowance. A wait that is working never
+# approaches the cap.
+setstate '.expected_next_action="auto-continue"'; awD >/dev/null
+setstate '.phase="gate-b"|.expected_next_action="awaiting-agent"'
+expect "Wait: fresh allowance after the state advances"   "$(awD)" "allow"
+# The frozen-run backstop must still be REACHABLE past an exhausted wait — the cap
+# path falls through to the ordinary counter-and-block instead of deciding early, or
+# a wait that never resolves would block forever with the soft-lock breaker
+# unreachable: a bounded thrash traded for an unrecoverable session.
+rm -f "$SD/.stall-block-count" "$SD/.agent-wait-count"
+setstate '.phase="gate-a"|.expected_next_action="awaiting-agent"'
+awS(){ local o; o="$(CLAUDE_PROJECT_DIR="$T" AUTO_TASK_STALL_LIMIT=2 AUTO_TASK_AGENT_WAIT_LIMIT=1 bash "$STOP" </dev/null 2>/dev/null)"; [ -z "$o" ] && { echo allow; return; }; printf '%s' "$o" | jq -r '.decision // "allow"' 2>/dev/null; }
+expect "Wait+backstop: release #1 (wait cap 1)"           "$(awS)" "allow"
+expect "Wait+backstop: block #1 (wait exhausted)"         "$(awS)" "block"
+expect "Wait+backstop: soft-lock RELEASE still reachable" "$(awS)" "allow"
+# Cap is env-overridable in the tightening direction too.
+rm -f "$SD/.stall-block-count" "$SD/.agent-wait-count"
+expect "Wait: AUTO_TASK_AGENT_WAIT_LIMIT=0 blocks immediately" \
+  "$(o="$(CLAUDE_PROJECT_DIR="$T" AUTO_TASK_AGENT_WAIT_LIMIT=0 bash "$STOP" </dev/null 2>/dev/null)"; [ -z "$o" ] && echo allow || printf '%s' "$o" | jq -r '.decision // "allow"')" "block"
+# NEAR-MISSES — the assertions that matter. Only the exact value releases; anything
+# that merely LOOKS like a wait must still block, or the release becomes the hatch.
+rm -f "$SD/.stall-block-count" "$SD/.agent-wait-count"
+for v in awaiting-external awaiting awaiting-agents Awaiting-Agent "awaiting-agent " auto-continue; do
+  rm -f "$SD/.stall-block-count" "$SD/.agent-wait-count"
+  setstate ".expected_next_action=\"$v\""
+  expect "Near-miss: '$v' still BLOCKS"                   "$(awD)" "block"
+done
+# And the ordinary block message is byte-identical to before — the wait note must not
+# leak into a turn-end that never waited.
+rm -f "$SD/.stall-block-count" "$SD/.agent-wait-count"
+setstate '.expected_next_action="auto-continue"'
+expect "Wait: ordinary block carries no in-flight note" \
+  "$(awRaw | jq -r '.reason' | grep -c 'IN-FLIGHT WAIT')" "0"
+# A RELEASED wait must not count as a frozen turn-end: the release sits before the
+# soft-lock counter's write, so it cannot consume the backstop's budget.
+rm -f "$SD/.stall-block-count" "$SD/.agent-wait-count"
+setstate '.expected_next_action="awaiting-agent"'; awD >/dev/null; awD >/dev/null
+expect "Wait: a release leaves no .stall-block-count"     "$([ -f "$SD/.stall-block-count" ] && echo yes || echo no)" "no"
+expect "Wait: the release IS counted in its own sidecar"  "$([ -f "$SD/.agent-wait-count" ] && echo yes || echo no)" "yes"
+rm -f "$SD/.stall-block-count" "$SD/.agent-wait-count"
+
 echo "================ AI-attribution block ================"
 expect "Attr: Co-Authored-By Claude BLOCKED"              "$(attr '{"tool_input":{"command":"git commit -m \"x\n\nCo-Authored-By: Claude <x@y>\""}}')" "2"
 expect "Attr: clean commit ALLOWED"                       "$(attr '{"tool_input":{"command":"git commit -m clean"}}')" "0"
@@ -1062,8 +1135,69 @@ expect "spine: yield table row — user-push-prompt semantics" \
   "$(spine_has "$SPINE_ONLY" '| `"user-push-prompt"` | The single allowed Phase 5 push/PR/hold prompt.')"              "yes"
 expect "spine: yield table row — null semantics" \
   "$(spine_has "$SPINE_ONLY" '| `null` | Pre-approval or terminal state. Stop hook allows.')"                          "yes"
-expect "spine: yield table four-value preamble" \
-  "$(spine_has "$SPINE_ONLY" 'MUST be one of these four values at all times after')"                                   "yes"
+expect "spine: yield table five-value preamble" \
+  "$(spine_has "$SPINE_ONLY" 'MUST be one of these five values at all times after')"                                   "yes"
+# ---- Synchronous spawns + the bounded in-flight release, pinned in the spec -------
+# The hook half is asserted behaviourally above ("In-flight Agent spawn"); these pin
+# the prose half, because prose IS the behavior for everything a hook cannot observe —
+# and a hook cannot observe an `Agent` spawn at all (PreToolUse is Bash-only), so the
+# synchronous-spawn rule has no mechanical backstop and only these hold it.
+expect "spine: yield table row — awaiting-agent semantics" \
+  "$(spine_has "$SPINE_ONLY" '| `"awaiting-agent"` | A spawned Agent is in flight; its report has not arrived. Stop hook allows the yield, **capped**.')" "yes"
+expect "spine: awaiting-agent row names the synchronous spawn as the reason it never applies" \
+  "$(spine_has "$SPINE_ONLY" 'Spawn with `run_in_background: false` so this never applies.')"                          "yes"
+expect "spine: the hook rule states the bounded exception" \
+  "$(spine_has "$SPINE_ONLY" '**One bounded exception:** `"awaiting-agent"` releases the turn-end')"                   "yes"
+expect "spine: the exception names its cap variable" \
+  "$(spine_has "$SPINE_ONLY" 'AUTO_TASK_AGENT_WAIT_LIMIT` (default 3) consecutive turn-ends in an unchanged state, then blocks again')" "yes"
+expect "spine: the exception refuses to be read as a resting place" \
+  "$(spine_has "$SPINE_ONLY" 'never a way to rest')"                                                                   "yes"
+expect "spine: every Agent spawn is synchronous, critique included" \
+  "$(spine_has "$SPINE_ONLY" '- Each Agent spawn (Phase-1 critique, Gate A, Gate B) is **synchronous** — pass `run_in_background: false`')" "yes"
+# The legal-value list must be stated ONCE. A second enumeration is how this rule
+# drifts: the fifth value would have had to be added in both places, and the copy
+# that was missed would read as a prohibition. Assert the deferral, and assert the
+# retired enumeration has not crept back.
+expect "spine: the non-negotiables bullet defers instead of re-enumerating" \
+  "$(spine_has "$SPINE_ONLY" 'The legal values are enumerated ONCE, in the "Yield-point contract" table above — defer to it, never restate it here.')" "yes"
+expect "spine: the retired second enumeration is GONE" \
+  "$(grep -c 'The only legitimate user-\* values are' "$SPINE_ONLY")"                                                  "0"
+# The JSON SKELETON is the enumeration the prose-level deferral above cannot reach, and
+# it is the copy the model reads on every turn. It went stale in exactly this change —
+# the sibling in ARCHITECTURE.md was updated and this one was not, leaving the skeleton
+# contradicting the value table four lines away and telling the model the fallback value
+# is illegal. Pin BOTH copies, and pin them by the full value list so a future value has
+# to update them or redden here.
+AW_ARCH="$HOOKS/../skills/auto-task/ARCHITECTURE.md"
+expect "spine: JSON skeleton enum carries every legal value" \
+  "$(spine_has "$SPINE_ONLY" '"expected_next_action": "auto-continue|user-approval|user-push-prompt|awaiting-agent|null",')" "yes"
+expect "spine: ARCHITECTURE skeleton enum matches the spine's" \
+  "$(spine_has "$AW_ARCH" '"expected_next_action": "auto-continue|user-approval|user-push-prompt|awaiting-agent|null",')" "yes"
+expect "spine: no skeleton still carries the retired four-value enum" \
+  "$(cat "$SPINE_ONLY" "$AW_ARCH" | grep -c '"expected_next_action": "auto-continue|user-approval|user-push-prompt|null"')" "0"
+# Reference half: all THREE spawn sites and the two prohibitions. Gate A owns the
+# canonical statement; Gate B and the Phase-1 critique defer to it. The critique site
+# is pinned separately and deliberately — it lives in a different reference file, it
+# was the site the observed PLAN run thrashed on, and it is the one spawn the Gate A
+# rule cannot reach by proximity.
+AW_GATES="$HOOKS/../skills/auto-task/references/phase-3-gates.md"
+AW_PRE="$HOOKS/../skills/auto-task/references/phase-1-preamble.md"
+expect "spine: Gate A spawn passes run_in_background false" \
+  "$(spine_has "$AW_GATES" 'pass `run_in_background: false` per the synchronous-spawn rule above')"                    "yes"
+expect "spine: Gate B spawn passes run_in_background false" \
+  "$(spine_has "$AW_GATES" 'pass `run_in_background: false` per the synchronous-spawn rule at Gate A')"                "yes"
+expect "spine: Phase-1 critique spawn passes run_in_background false" \
+  "$(spine_has "$AW_PRE" '**Spawn the critique agent SYNCHRONOUSLY: pass `run_in_background: false`.**')"               "yes"
+expect "spine: the synchronous-spawn rule covers every spawn site" \
+  "$(spine_has "$AW_GATES" 'This applies at every Agent spawn site in the pipeline — Gate A, Gate B, and the Phase-1 critique.')" "yes"
+expect "spine: transcript files are not a completion signal" \
+  "$(spine_has "$AW_GATES" "A subagent's transcript file is not a completion signal.")"                                "yes"
+expect "spine: a timeout is not a result" \
+  "$(spine_has "$AW_GATES" '**A timeout is not a result.**')"                                                          "yes"
+expect "spine: the critique site carries both prohibitions too" \
+  "$(spine_has "$AW_PRE" 'a subagent'"'"'s transcript file is not a completion signal')"                               "yes"
+expect "spine: the in-flight fallback yields rather than polls" \
+  "$(spine_has "$AW_GATES" 'wait by YIELDING — never by polling')"                                                     "yes"
 
 # Loop rule: the HEADING is not the contract — the five clauses are. The heading-only
 # assertion above passed with all five clauses deleted.

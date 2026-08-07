@@ -422,6 +422,54 @@ RETIRED_PREFIXES = {
   # keeps every clause of the retired line and adds the backstop, so it states the
   # contract strictly more strongly than the line it retires.
   'The merge gate is the single mandatory human stop — the point where work becomes shared/irreversible': 1,
+  # ---- Synchronous Agent spawns + the bounded in-flight release ----------------
+  #
+  # WHY THESE SIX MOVED. The harness now backgrounds an `Agent` spawn by default, so a
+  # spawn returns launch metadata and the report arrives later as a task notification.
+  # Every line below was written when a spawn returned its report inline, and each was
+  # made false or incomplete by that change. Observed on a real run: eight Stop-hook
+  # blocks in five minutes at `phase=gate-a`, the model answering each with a `stat` of
+  # the agent's transcript and a longer `sleep` because a blocked turn-end left it no
+  # legal way to wait, while the verifier's 380 KB of genuine work was never collected.
+  #
+  # The JSON skeleton's enum retires for the same additive reason as the prose table,
+  # and is listed separately because it is a DIFFERENT copy in a different form — which
+  # is precisely how it went stale mid-change: the prose table was updated, the skeleton
+  # was not, and the two contradicted each other four lines apart. Both copies (spine and
+  # ARCHITECTURE.md) are now pinned by assertion in enforcement-spine.test.sh.
+  '  "expected_next_action": "auto-continue|user-approval|user-push-prompt|null",': 1,
+  # The two enum lines retire because the value list grew by one (`"awaiting-agent"`),
+  # which is additive: every pre-existing value keeps its exact semantics, and the new
+  # one is the only value whose release is CAPPED, so the contract can only ever yield
+  # in strictly more-bounded circumstances than the retired lines described.
+  '`expected_next_action` MUST be one of these four values': 1,
+  '- Otherwise (run is mid-pipeline) → allow only when `expected_next_action ∈ {"user-approval", "user-push-prompt"}`.': 1,
+  #
+  # The two spawn-site lines retire because each gained `run_in_background: false`. The
+  # replacement is strictly more specific than the line it retires — same spawn, same
+  # inputs, one added parameter plus a pointer to the prohibitions (no transcript
+  # polling, no outcome recorded from a timeout).
+  'If every `gate-a` AC passed (or there are none), spawn the `task-execution-verifier` Agent': 1,
+  "Spawn with a fresh-context prompt (prefix the Agent's `label` with `state.title`": 1,
+  #
+  # The non-negotiables bullet retires its inline re-enumeration of the legal values.
+  # That enumeration is now stated ONCE, in the Yield-point contract table, and this
+  # bullet defers to it — the same "state once, defer by exact phrase" discipline the
+  # Phase-4 exit predicate already uses, and the reason it is retired rather than
+  # extended: a second copy would have had to grow the fifth value too, which is how
+  # the predicate drifted across seven sites before.
+  '- **`expected_next_action` is mandatory and mechanically enforced.**': 1,
+  #
+  # The Agent-spawn bullet retires to add BOTH the synchronous requirement and the
+  # Phase-1 critique, which was always an Agent spawn governed by the same fresh-context
+  # rule but was missing from the parenthetical. Purely additive to the retired clause.
+  '- Each Agent spawn (Gate A, Gate B) gets fresh context': 1,
+  #
+  # FUNDING (not a retirement — recorded here because it is the same edit). The spine's
+  # Stop-hook REGISTRATION paragraph moved BYTE-EXACT into `references/settings.md`,
+  # where the other install-time mechanics live; conservation still finds the line, and
+  # `restated` stays 0 because it is no longer in both files. It paid for the new table
+  # row. Nothing was paraphrased away.
 }
 
 bc = collections.Counter(l for l in base if l.strip())

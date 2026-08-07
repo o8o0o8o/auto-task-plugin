@@ -164,7 +164,7 @@ The block below is **abridged** for readability — the full JSON schema (includ
 ```json
 {
   "phase": "define|execute|self-verify|gate-a|review|gate-b|handover|bot-review|preview|done",
-  "expected_next_action": "auto-continue|user-approval|user-push-prompt|null",
+  "expected_next_action": "auto-continue|user-approval|user-push-prompt|awaiting-agent|null",
   "approved": true,
   "description": "<verbatim task input>",
   "branch": "<resolved branch name>",
@@ -306,7 +306,7 @@ This hook also carries the **checkout-drift block**: when the command is a `git 
 
 ### Hook 3 — warn on checkout drift
 
-The informational, never-blocking counterpart to the drift block above. Fires on every Bash command; when the current branch owns no active run yet another branch in this working tree does, it warns (via PreToolUse `additionalContext` + stderr) that the checkout drifted and that commits are hard-blocked until the user switches back or clears the abandoned run. Cheap early exits (not a repo / no `.auto-task/` dir / `jq` absent) keep non-auto-task sessions silent and near-free. Mirrors `inject-history-reminder`'s "informational, always `exit 0`" contract — of the PreToolUse hooks only the enforce-gates commit gate blocks. (The Stop hook `prevent-mid-protocol-stall.sh` blocks too, but a turn-end rather than a command — and since the loop-budget gate it also *releases* one turn-end per over-budget iteration so the run can surface its check-in.)
+The informational, never-blocking counterpart to the drift block above. Fires on every Bash command; when the current branch owns no active run yet another branch in this working tree does, it warns (via PreToolUse `additionalContext` + stderr) that the checkout drifted and that commits are hard-blocked until the user switches back or clears the abandoned run. Cheap early exits (not a repo / no `.auto-task/` dir / `jq` absent) keep non-auto-task sessions silent and near-free. Mirrors `inject-history-reminder`'s "informational, always `exit 0`" contract — of the PreToolUse hooks only the enforce-gates commit gate blocks. (The Stop hook `prevent-mid-protocol-stall.sh` blocks too, but a turn-end rather than a command — and since the loop-budget gate it also *releases* one turn-end per over-budget iteration so the run can surface its check-in. It releases in one further case: `expected_next_action: "awaiting-agent"`, when a spawned Agent's report is still in flight and yielding is the only way the harness can deliver it. That release is capped at `AUTO_TASK_AGENT_WAIT_LIMIT` consecutive turn-ends in an unchanged state, because no hook can observe an `Agent` spawn — `PreToolUse` is registered for the `Bash` matcher only — so an uncapped release would be an unbounded stall hatch. The primary fix is a synchronous spawn (`run_in_background: false`); this is the backstop for a harness that backgrounds it anyway.)
 
 ### Recommended permissions (NOT shipped by the plugin — opt-in)
 

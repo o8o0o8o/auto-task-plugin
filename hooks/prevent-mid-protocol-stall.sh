@@ -3,11 +3,17 @@
 #
 # Registered as a Stop hook. Once the run is approved and not done, the two explicit
 # user-gates allow a stop and everything else (including a missing/null field) blocks
-# — subject to the two bounded release valves documented below (the soft-lock breaker
-# and the fix-loop budget release), which are the only ways any other value yields.
+# — subject to the three bounded release valves documented below (the in-flight
+# Agent-spawn release, the soft-lock breaker and the fix-loop budget release), which
+# are the only ways any other value yields.
 # Reads the per-branch STATE.json's `expected_next_action`:
 #   - "user-approval"     → allow (Phase 1 plan gate, Loop-rule surface)
 #   - "user-push-prompt"  → allow (the one Phase 5 push/PR ask)
+#   - "awaiting-agent"    → allow, CAPPED (a spawned Agent's report is still in
+#     flight and yielding is the only way to receive it). Bounded at
+#     AUTO_TASK_AGENT_WAIT_LIMIT consecutive turn-ends in an unchanged state,
+#     then blocks — see the in-flight release below for why it cannot be
+#     unbounded and why the primary fix is a synchronous spawn, not this.
 #   - "auto-continue"     → block the stop, re-prompt the model to continue
 #   - null / unset / other → block. A null/unset value is only legitimate while
 #     approved=false or after phase=done, and BOTH are handled by the guards
@@ -111,7 +117,8 @@ case "$expected" in
 esac
 
 # We are past the approved + done guards, so the run is mid-pipeline. ANY value
-# other than the two explicit user-gates blocks — including an unset/null field.
+# other than the two explicit user-gates blocks — including an unset/null field —
+# with the single bounded exception of "awaiting-agent", handled further down.
 # Per the skill ("writing state without an explicit choice keeps the turn alive
 # is the correct failure mode"), a missing expected_next_action must fail closed,
 # not open. Make the unset case explicit in the reason so the model knows to set
@@ -175,6 +182,101 @@ count_file="$project_dir/.auto-task/$branch/.stall-block-count"
 # turn-end it should have released. Every sibling field is error-proof (`// ""` plus
 # `tostring` cannot fail, booleans included), so the guard belongs here and only here.
 sig="$(jq -r '[(.base // ""), (.phase // ""), (.expected_next_action // ""), ((.iteration.review // 0)|tostring), ((.iteration.fix // 0)|tostring), (.gates.code_review.reviewed_diff_sha // ""), ((.preview.polls // 0)|tostring), ((.bot_review.polls // 0)|tostring), ((.external.polls // 0)|tostring), ((.gates.loop_budget.acked_through // 0)|tostring), ((.gates.code_review.rounds | if type == "array" then length else 0 end)|tostring)] | join("|")' "$state" 2>/dev/null || echo "")"
+# Appended to the block reason when the in-flight wait below exhausts its cap; empty
+# on every other path, so the ordinary block message is byte-identical to before.
+aw_note=""
+
+# ---- In-flight Agent spawn: bounded turn-end release ----------------------
+# An `Agent` spawn that the harness runs in the background returns launch metadata,
+# NOT the verifier's report — the report arrives later, as a task notification that
+# re-invokes the model. Yielding is therefore the only way to receive it, and it is
+# the one mid-pipeline turn-end that is genuinely correct rather than a stall.
+#
+# Blocking it does not keep the run moving; it produces the opposite. Measured on a
+# real run: eight blocks in five minutes at phase=gate-a, the model answering each
+# one with a `stat` of the agent's transcript file and a longer `sleep`, because a
+# blocked turn-end leaves it no legal way to wait (foreground `sleep` is refused by
+# the harness, and the frozen-run backstop below is 25 turn-ends away). The verifier
+# meanwhile did 380 KB of real work that was never collected. That is the failure
+# this release exists for.
+#
+# THE PRIMARY FIX IS NOT HERE. The skill spawns with `run_in_background: false`, so
+# the report is the tool result and nothing ever waits. This is the backstop for a
+# harness that backgrounds the spawn anyway — it makes that case degrade to a clean
+# wait instead of a thrash. Both halves are needed: a spec rule cannot bind the
+# harness, and a hook cannot see an `Agent` spawn (PreToolUse is registered for the
+# `Bash` matcher only, so no hook can observe one).
+#
+# CAPPED, because this hook cannot verify that a spawn really happened — no hook
+# can. Left uncapped, `awaiting-agent` would be an unbounded stall hatch: the model
+# could write it and yield forever, which is precisely the non-yielding contract's
+# failure mode. The cap bounds the abuse at AUTO_TASK_AGENT_WAIT_LIMIT (default 3)
+# consecutive turn-ends in an UNCHANGED state, then blocks again with a reason that
+# names the fix. A wait that is working never approaches the cap: the report arrives,
+# the model writes `auto-continue`, the signature changes and the counter resets.
+# Three rather than one because a wakeup can arrive from something other than the
+# agent (a user message), and spending the whole budget on one of those would block
+# the report that is still legitimately in flight.
+#
+# WHAT THE CAP DOES NOT CLOSE, stated plainly rather than engineered around. It bounds
+# the PASSIVE hatch — write `awaiting-agent` once and yield forever — because those
+# turn-ends share a signature. It does NOT bound the ACTIVE one: a run that changes any
+# signature field between turn-ends (bumping `iteration.fix`, say) resets the counter
+# and can yield indefinitely. Measured: 8 consecutive releases while incrementing
+# `iteration.fix`. That is not a hole to plug by keying on fewer fields — the reset IS
+# the feature, and it is what lets a legitimate run wait at the Phase-1 critique, again
+# at Gate A and again at Gate B without inheriting a spent counter. A run-scoped total
+# would bound it, at the cost of a second counter and a ceiling that a re-gate-heavy run
+# could legitimately hit; not worth it while the residual is bounded elsewhere. It is:
+# the commit gate still blocks the landing, so the worst case is a run that idles rather
+# than one that ships unreviewed. Same trust model as the Gate B pass cap, which is also
+# a model-honored contract with a commit-time backstop rather than a hook-side proof.
+# Tracked as FU-AW1.
+#
+# The counter is keyed on the SAME signature as the soft-lock breaker, so it is
+# run-scoped by `.base` for the same reason, and it is a SEPARATE file: this branch
+# sits before the breaker's counter write so a released wait does not count as a
+# frozen turn-end. When the cap is exhausted, control falls through to the ordinary
+# counter-and-block path below, so the frozen-run backstop still sees the stall.
+if [ "$expected" = "awaiting-agent" ]; then
+  wait_file="$project_dir/.auto-task/$branch/.agent-wait-count"
+  wait_limit="${AUTO_TASK_AGENT_WAIT_LIMIT:-3}"
+  case "$wait_limit" in ''|*[!0-9]*) wait_limit=3 ;; esac
+  w_prev_count=0; w_prev_sig=""
+  if [ -f "$wait_file" ]; then
+    w_prev_line="$(cat "$wait_file" 2>/dev/null || echo "")"
+    w_prev_count="${w_prev_line%%$'\n'*}"; w_prev_count="${w_prev_count%%|*}"
+    w_prev_sig="${w_prev_line#*|}"
+    case "$w_prev_count" in ''|*[!0-9]*) w_prev_count=0 ;; esac
+  fi
+  if [ "$sig" = "$w_prev_sig" ]; then w_count=$((w_prev_count + 1)); else w_count=1; fi
+  if [ "$w_count" -le "$wait_limit" ]; then
+    # The release is conditional on the counter WRITE SUCCEEDING, for the identical
+    # reason R3 gives for the loop-budget marker below: an unwritable directory or a
+    # full disk would otherwise turn "release at most N times" into "release every
+    # turn", rebuilding the unbounded hatch the cap exists to prevent. Falling
+    # through to the block is this hook's pre-existing behavior, so a failed write
+    # costs the run nothing it cannot recover by spawning synchronously.
+    if printf '%s|%s\n' "$w_count" "$sig" > "$wait_file" 2>/dev/null; then
+      exit 0
+    fi
+  else
+    # Cap exhausted. Fall through to the ordinary block path rather than emitting a
+    # decision here, for two reasons. (1) The frozen-run counter below must still see
+    # this turn-end, or a wait that never resolves would block forever with the
+    # 25-turn soft-lock breaker unreachable — trading a bounded thrash for an
+    # unrecoverable session, which is the worse direction by this hook's own failure
+    # policy. (2) A Stop hook's stdout must carry exactly ONE JSON object; emitting a
+    # `systemMessage` here the way the loop-budget release does would put a second
+    # object in front of the block's, since that release exits and this one does not.
+    # So the message rides the block's own `reason` field, which is model-facing
+    # anyway, and stderr keeps the operator copy. It carries the fix, not just the
+    # refusal.
+    aw_note=" IN-FLIGHT WAIT EXHAUSTED: expected_next_action=\"awaiting-agent\" for $w_count consecutive turn-ends in an unchanged state, so the wait is no longer distinguishable from a stall. Re-spawn the Agent with run_in_background: false so the report is the tool result. Do NOT poll the agent's transcript file, and do NOT record a gate or round outcome from the absence of a report."
+    echo "auto-task anti-stall:$aw_note" >&2
+  fi
+fi
+
 prev_count=0; prev_sig=""
 if [ -f "$count_file" ]; then
   prev_line="$(cat "$count_file" 2>/dev/null || echo "")"
@@ -303,12 +405,12 @@ if command -v lb_cap_for_tier >/dev/null 2>&1 && command -v lb_effective_budget 
 fi
 
 # Mid-protocol stall. Block.
-jq -n --arg p "$phase" --arg e "$expected" '{
+jq -n --arg p "$phase" --arg e "$expected" --arg x "$aw_note" '{
   decision: "block",
   reason: ("auto-task is mid-pipeline (phase=\($p), expected_next_action=\($e)). " +
            "Per the NON-YIELDING CONTRACT in the auto-task skill, sub-skill and verifier reports are INPUT to the next step, not an end-of-turn. " +
            "Parse the most recent report and make the next tool call now (apply a fix, advance the phase, set a gate, or spawn the next verifier). " +
            "Do NOT compose a closing message. The only legitimate stops are Phase 1 plan approval, Phase 5 push prompt, or a Loop-rule surface — none of which apply here. " +
-           "If you believe this block is wrong, the bug is in the skill, not the hook: STATE.json should have been updated to expected_next_action=\"user-approval\" before yielding.")
+           "If you believe this block is wrong, the bug is in the skill, not the hook: STATE.json should have been updated to expected_next_action=\"user-approval\" before yielding." + $x)
 }'
 exit 0
