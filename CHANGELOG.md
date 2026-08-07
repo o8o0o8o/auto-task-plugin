@@ -2,6 +2,30 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.34.0]
+
+<!-- release-notes: PR bodies now open with a short plain-prose lede instead of a Summary bullet list, and may carry a "Review this first" section pointing at the few places worth reading before the rest of the diff — a removed guard, a migration, logic that gained no test, or the files the run itself kept returning to. -->
+
+### Changed
+
+- **The PR body leads with a sentence, not a bullet list.** `## Summary` and its two-to-four plan bullets are repealed, replaced by a single unheaded paragraph at the very top: **hard-capped at 300 characters**, plain prose, what changed and why.
+
+  **The bullets were a duplicate, and that is why they went rather than shrank.** Directly beneath them sat `## Task breakdown — planned vs. done`, which already said the same things per requirement — with a status and the acceptance-criterion evidence proving each one. A reader who meets the same content twice learns to skip both, so the section that carried it *worse* is the one that goes. The lede is deliberately unheaded: a heading above the first line defeats the one job it has, which is to be read before the reader decides whether to read on.
+
+  It is free prose, so a `VOICE.md` shapes it, and the 300-character cap joins the per-surface length limits alongside the PR title's 70 — a verbose voice does not license a long lede.
+
+### Added
+
+- **`## Review this first` — at most five lines telling a reviewer where to look.** A new PR-body section between the external-changes banner and the change diagram, each line formatted `path:line — what to look at (why flagged)`, and **omitted entirely when nothing fires**. A block that appears on every PR is one nobody reads by the third, so it is bounded on purpose and empty is a normal outcome.
+
+  **Four detectors feed it, chosen for signal-to-noise rather than coverage.** Three read the diff, in the new `hooks/review-highlights.sh`: a guard, validation or assertion **removed**, a test file deleted, a skip marker added, or an error swallowed by an empty handler; a **contract** surface whose blast radius the diff cannot show — a migration, schema or IDL file, an exported declaration's signature, a `package.json` entry point; and **logic changed with no co-changed test** naming it. The fourth reads run state and reports **where this run itself fought** — a path that appears in at least two review rounds or Gate-B passes — which is the one signal no generic review tool can produce.
+
+  **Deliberately absent:** anything derived from a file's commit history rather than from the diff. Change frequency, hotspot scores and fan-in are statistics *about* a file; they make a heat map, not a review instruction. "This file changed 40 times" tells a reviewer nothing to do.
+
+  **The helper never blocks a handover.** One `awk` pass over `git diff -U0`, fail-open — it emits `{}` rather than erroring, and its two empty shapes are distinguishable on purpose: `{}` means it could not run, `{"candidates":[]}` means the diff is clean. Conflating them would report a removed guard as a clean diff. Its `git diff` calls are pinned against ambient config for the same reason: under `color.ui=always` every pattern stops matching, and an unpinned call would return the success shape having seen nothing.
+
+- **`gates.code_review.rounds[].files`** — the repo-relative paths each Phase-4 round's fixes touched, feeding the fourth detector above. Additive, absent-tolerant, and **read by no gate**: the convergence test keys on `reopened`, the fix-loop budget on `iteration.*`, and `enforce-gates.sh` on the `gates.*` booleans plus `reviewed_diff_sha`. It is appended after `at` rather than inserted mid-row — which is what let it coexist with `0.33.0`'s `via` key without either displacing the other or breaking the row-shape assertion that pins both.
+
 ## [0.33.0]
 
 <!-- release-notes: Phase 4's code review now runs in a fresh-context subagent by default, so the model that wrote the diff is not the model that reviews it. Rounds 2+ read only the delta since the previous round, which is what keeps that independence affordable rather than doubling the review bill. -->

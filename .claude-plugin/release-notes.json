@@ -1,5 +1,4 @@
 {
-  "0.26.0": "Adds two optional end-of-run steps: a docs update that refreshes the repo's user-facing docs when a run changed the behavior they describe, and a release step that cuts the version bump, changelog entry, commit and annotated tag — locally, never pushing or publishing. Both are off by default…",
   "0.26.1": "The orchestrator spec is now a spine plus reference files — the always-loaded half shrank 70%.",
   "0.27.0": "hooks/estimate.sh is calibrated against measured actuals, and the estimate↔actual token comparison was a unit error.",
   "0.28.0": "Run duration was narrated, not measured — it is now stamped by a hook from date -u.",
@@ -8,5 +7,6 @@
   "0.30.1": "The mandatory high-risk merge gate is now enforced by the hook itself. Previously it was armed only by a Phase-5 prompt step, so a run that skipped that step could push with no human stop at all.",
   "0.31.0": "Verifier and critique agents are now spawned synchronously. The harness began backgrounding them, which returned launch metadata instead of a report and left runs thrashing against the anti-stall hook — eight blocked turn-ends in five minutes on one observed run, with the verifier's work never…",
   "0.32.0": "LIGHT-tier runs now get an independent adversarial pass. Previously the model that wrote the diff also self-verified and code-reviewed it, with nothing independent following — on LIGHT the self-review was the only review the code ever got. Also adds an opt-in, off-by-default shadow reviewer…",
-  "0.33.0": "Phase 4's code review now runs in a fresh-context subagent by default, so the model that wrote the diff is not the model that reviews it. Rounds 2+ read only the delta since the previous round, which is what keeps that independence affordable rather than doubling the review bill."
+  "0.33.0": "Phase 4's code review now runs in a fresh-context subagent by default, so the model that wrote the diff is not the model that reviews it. Rounds 2+ read only the delta since the previous round, which is what keeps that independence affordable rather than doubling the review bill.",
+  "0.34.0": "PR bodies now open with a short plain-prose lede instead of a Summary bullet list, and may carry a \"Review this first\" section pointing at the few places worth reading before the rest of the diff — a removed guard, a migration, logic that gained no test, or the files the run itself kept…"
 }
