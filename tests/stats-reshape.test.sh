@@ -464,8 +464,77 @@ hasnt "recal fail-open: prints no constant"       "$O_NOF" "$real_heavy"
 has   "recal fail-open: report still renders"     "$O_NOF" 'Estimate accuracy'
 rm -rf "$ESTTMP"
 
+echo "================ [v7] review_rounds: reported, and legacy nulls EXCLUDED ================"
+# `review_rounds` counts Phase-4 rounds RUN; `review_iterations` counts only the ones
+# that REOPENED. Reporting both is the whole point — a review that runs more while
+# reopening the same amount is churn, and one number alone cannot show that.
+#
+# The load-bearing case is the legacy row. The ledger is append-only, so every row
+# written before this column carries no `review_rounds` at all. The `// 0` idiom the
+# two sibling medians use would read each of those as a run that ran ZERO review
+# rounds and drag the median down — manufacturing exactly the improvement someone
+# would be running this report to look for. So the fixture below MIXES three legacy
+# rows in with three numeric ones and pins the median to the numeric rows only.
+mkrounds(){ # <path> — 3 rows carrying review_rounds 8/8/8, then 3 legacy rows with none
+  local f="$1" i
+  for i in 1 2 3; do
+    printf '{"at":"2026-05-01T10:00:00Z","branch":"feat/r%d","base":"R%d","plugin_version":"0.33.0","terminal_state":"done","tier":"standard","tier_initial":"standard","escalations":0,"fix_iterations":1,"review_iterations":2,"review_rounds":8,"gate_b":"passed","followups":0,"duration_min":40,"defects_early":0,"defects_late":0,"flaky":false,"tests_added":true,"diff_loc":10,"checks_run":1,"checks_failed":0,"pr_url":null}\n' "$i" "$i"
+  done
+  for i in 4 5 6; do
+    printf '{"at":"2026-05-01T10:00:00Z","branch":"feat/r%d","base":"R%d","plugin_version":"0.32.0","terminal_state":"done","tier":"standard","tier_initial":"standard","escalations":0,"fix_iterations":1,"review_iterations":2,"gate_b":"passed","followups":0,"duration_min":40,"defects_early":0,"defects_late":0,"flaky":false,"tests_added":true,"diff_loc":10,"checks_run":1,"checks_failed":0,"pr_url":null}\n' "$i" "$i"
+  done
+} >"$1"
+PR7="$(mkproj)"; mkrounds "$PR7/.auto-task/outcomes.jsonl"
+O_R7="$(runs "$PR7")"
+has "by-tier table has a med-rounds column"   "$O_R7" 'med rounds'
+# 8, not 4: a `// 0` median over all six rows would be 0, and a mean would be 4.
+has "median is over numeric rows only (8)"    "$O_R7" 'standard +6 +1 +2 +8'
+# All-legacy: nothing to report, and it must say so rather than print a fabricated 0.
+PR8="$(mkproj)"
+grep -v '"review_rounds"' "$PR7/.auto-task/outcomes.jsonl" > "$PR8/.auto-task/outcomes.jsonl"
+O_R8="$(runs "$PR8")"
+has "all-legacy prints '-' rather than a 0"   "$O_R8" 'standard +3 +1 +2 +-'
+hasnt "...and never reports a fabricated 0"   "$O_R8" 'standard +3 +1 +2 +0 '
+
+# CODE-REVIEW ROUND-1 FINDING (required), and the case NO test reached before.
+# $rows is ledger rows PLUS rows derived live from STATE.json files still on disk
+# (auto-task-stats.sh DERIVE). Every fixture above is a ledger row, so the DERIVE
+# path was completely unguarded for this field -- deleting review_rounds from the
+# DERIVE block left the whole suite green. Worse, that block coalesced a missing
+# `rounds` key to 0, so a single pre-0.30.0 STATE.json still on disk fed a FABRICATED
+# zero into the very median the ledger side excludes nulls to protect. Reproduced
+# before the fix: this exact fixture printed `med rounds 0`.
+PR9="$(mkproj)"
+grep -v '"review_rounds"' "$PR7/.auto-task/outcomes.jsonl" > "$PR9/.auto-task/outcomes.jsonl"
+mkdir -p "$PR9/.auto-task/feat/legacy"
+cat > "$PR9/.auto-task/feat/legacy/STATE.json" <<'LEG'
+{"phase":"done","approved":true,"branch":"feat/legacy","base":"LEG1","plugin_version":"0.29.0",
+ "description":"pre-0.30.0 shape: gates.code_review exists, rounds[] did not yet",
+ "effort":{"tier":"standard","history":[]},"iteration":{"review":7,"fix":1},
+ "history":[{"phase":"handover","result":"done","at":"2026-04-01T10:00:00Z"}],
+ "gates":{"gate_b":{"passed":true},"code_review":{"passed":true,"tool":"skill:auto-task-code-review"}},
+ "followups":[]}
+LEG
+O_R9="$(runs "$PR9")"
+has  "live legacy STATE counts toward #done (4)"      "$O_R9" 'standard +4'
+has  "...but contributes NO fabricated round count"   "$O_R9" 'standard +4 +1 +2 +-'
+hasnt "...specifically, never a measured 0"           "$O_R9" 'standard +4 +1 +2 +0 '
+# Positive control on the same path: a live state that DOES carry rounds[] is measured,
+# so the guard above cannot be satisfied by a DERIVE that simply emits null always.
+mkdir -p "$PR9/.auto-task/feat/modern"
+cat > "$PR9/.auto-task/feat/modern/STATE.json" <<'MOD'
+{"phase":"done","approved":true,"branch":"feat/modern","base":"MOD1","plugin_version":"0.33.0",
+ "description":"post-0.30.0 shape with a recorded rounds[]",
+ "effort":{"tier":"heavy","history":[]},"iteration":{"review":2,"fix":1},
+ "history":[{"phase":"handover","result":"done","at":"2026-04-02T10:00:00Z"}],
+ "gates":{"gate_b":{"passed":true},"code_review":{"rounds":[{"n":1},{"n":2},{"n":3}]}},
+ "followups":[]}
+MOD
+O_R10="$(runs "$PR9")"
+has "a live state WITH rounds[] is measured (heavy, 3)" "$O_R10" 'heavy +1 +1 +2 +3'
+
 # cleanup
-rm -rf "$PCK" "$P1" "$P0" "$PA" "$PB" "$PC" "$PD" "$PX" "$PL" "$PM" "$PN" "$PO" "$PV" "$PW" "$PY2" "$PZ"
+rm -rf "$PCK" "$P1" "$P0" "$PA" "$PB" "$PC" "$PD" "$PX" "$PL" "$PM" "$PN" "$PO" "$PV" "$PW" "$PY2" "$PZ" "$PR7" "$PR8" "$PR9"
 
 echo ""
 echo "================ SUMMARY: $PASS passed, $FAIL failed ================"

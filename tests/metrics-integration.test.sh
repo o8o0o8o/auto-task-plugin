@@ -52,7 +52,8 @@ cat > "$SD/STATE.json" <<'EOF'
            {"name":"diff-size","result":"info"},{"name":"lint","result":"fail"}],
  "history":[{"phase":"execute","result":"ok","at":"2026-03-01T10:00:00Z"},
             {"phase":"handover","result":"done","at":"2026-03-01T12:00:00Z"}],
- "gates":{"gate_b":{"passed":true}},"followups":[]}
+ "gates":{"gate_b":{"passed":true},
+          "code_review":{"rounds":[{"n":1},{"n":2},{"n":3},{"n":4},{"n":5},{"n":6}]}},"followups":[]}
 EOF
 : > "$T/.auto-task/outcomes.jsonl"   # opt in
 
@@ -64,6 +65,11 @@ expect "row.act_tokens (total)" "$(printf '%s' "$ROW" | jq -r '.act_tokens')"   
 expect "row.act_tokens_output"  "$(printf '%s' "$ROW" | jq -r '.act_tokens_output')" "2000000"
 expect "row.est_duration_min"  "$(printf '%s' "$ROW" | jq -r '.est_duration_min')"  "100"
 expect "row.act_duration_min"  "$(printf '%s' "$ROW" | jq -r '.act_duration_min')"  "120"
+# [v7] End-to-end: 6 rounds RUN against 1 reopening iteration. The two differ on this
+# fixture on purpose, so a review_rounds sourced from `.iteration.review` reads 1 and
+# fails here rather than looking plausible.
+expect "row.review_rounds"     "$(printf '%s' "$ROW" | jq -r '.review_rounds')"      "6"
+expect "row.review_iterations" "$(printf '%s' "$ROW" | jq -r '.review_iterations')"  "1"
 expect "row.defects_early"     "$(printf '%s' "$ROW" | jq -r '.defects_early')"      "1"
 expect "row.defects_late"      "$(printf '%s' "$ROW" | jq -r '.defects_late')"       "2"
 expect "row.flaky"             "$(printf '%s' "$ROW" | jq -r '.flaky')"              "true"

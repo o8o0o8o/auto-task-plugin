@@ -255,6 +255,28 @@ row="$(jq -c \
       escalations: ((.effort.history // []) | length),
       fix_iterations: (.iteration.fix | num0),
       review_iterations: (.iteration.review | num0),
+      # ROUNDS vs ITERATIONS -- they are different quantities and both are needed to
+      # read the review loop. `review_iterations` counts only rounds that REOPENED
+      # (the graded-loop narrowing); `review_rounds` counts every round the reviewer
+      # ran, reopening or not. Comparing them is what distinguishes "the review keeps
+      # finding real breaches" from "the review keeps running and finding nothing".
+      #
+      # THE DISCRIMINATOR IS THE `rounds` KEY, NOT `gates.code_review`, and the
+      # difference is the whole point of the column. `0` must mean "this run ran zero
+      # review rounds" -- a measurement -- while `null` means the state cannot say,
+      # so the aggregator can EXCLUDE the second rather than average it in.
+      # A `// [] | length` would collapse the two: every STATE.json written before
+      # `rounds[]` existed (0.30.0) reports a hard 0, and those states are still on
+      # disk and still get derived live by auto-task-stats.sh. That fabricates a
+      # review-volume drop precisely during the transition the null-exclusion exists
+      # for. The state skeleton initializes `rounds: []`, so a post-0.30.0 run that
+      # never reached Phase 4 still HAS the key and correctly reads 0; only a state
+      # that lacks it is unmeasurable. `num0` guards the array-length arithmetic; the
+      # null branch bypasses it deliberately.
+      review_rounds: (if (.gates.code_review | type) == "object"
+                         and (.gates.code_review | has("rounds"))
+                      then ((.gates.code_review.rounds // []) | length | num0)
+                      else null end),
       gate_b: (if (.gates.gate_b.passed // false) then "passed"
                else ((.gates.gate_b.skipped_reason | str0) | .[0:120]) end),
       followups: ((.followups // []) | length),

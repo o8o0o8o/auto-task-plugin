@@ -484,6 +484,36 @@ RETIRED_PREFIXES = {
   # rule but was missing from the parenthetical. Purely additive to the retired clause.
   '- Each Agent spawn (Gate A, Gate B) gets fresh context': 1,
   #
+  # --- Phase 4 reviews in a fresh-context subagent by default ----------------
+  # `review_in_subagent` (default true) moves the Phase-4 review out of the main loop
+  # into a `general-purpose` Agent that INVOKES the same `auto-task-code-review` skill.
+  # Both lines below named the call site as inline-only, so each was made incomplete by
+  # that change, and each is replaced in this same commit by wording that states the
+  # contract at least as strongly.
+  #
+  # The Phase-4 MANDATORY-tool paragraph: it said "invoke the skill via the Skill tool"
+  # with no notion of a call site, then spent two sentences restating the substitution
+  # ban that the Rules bullet below already owns. The replacement names both call sites,
+  # points at the Step-0 spawn contract, and DEFERS the ban to the Rules rather than
+  # restating it -- the same state-once-defer-by-phrase discipline the Phase-4 exit
+  # predicate uses, and part of what funded Step 0's bytes.
+  '**MANDATORY tool:** invoke the `auto-task-code-review` **skill** via the Skill tool, on the **working-tree diff**': 1,
+  # The Rules bullet: its "never spawn a `general-purpose` agent with a hand-rolled
+  # review prompt" was the operative ban, and under the new default a `general-purpose`
+  # agent IS spawned -- one that invokes the skill. Left as written, the bullet reads as
+  # forbidding the shipped default. The replacement keeps the ban on the thing actually
+  # banned (a hand-rolled prompt, and the `code-reviewer` agent), states explicitly that
+  # it holds at BOTH call sites, absorbs the 5-phase rationale from the retired paragraph
+  # above, and adds the no-edits requirement -- strictly more contract, not less.
+  '- Phase 4 code review is invoked via the **`auto-task-code-review` skill** through the Skill tool.': 1,
+  # FUNDING (not a retirement — recorded here because it is the same edit). The spine's
+  # Phase-4 `**Re-score hooks.**` block moved BYTE-EXACT into `references/phase-3-gates.md`
+  # ("phase-4-re-score-hooks"), beside the round mechanics both hooks fire inside.
+  # Conservation still finds both lines and `restated` stays 0 because they are no longer
+  # in two files. It paid for Step 0: the spine had 29 B of headroom against its 122,880 B
+  # ceiling, and Step 0's pointer had to come from somewhere. Nothing was paraphrased away
+  # — the spine keeps a one-line pointer naming both hooks.
+  #
   # FUNDING (not a retirement — recorded here because it is the same edit). The spine's
   # Stop-hook REGISTRATION paragraph moved BYTE-EXACT into `references/settings.md`,
   # where the other install-time mechanics live; conservation still finds the line, and

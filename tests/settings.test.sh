@@ -291,6 +291,35 @@ expect "reader does not validate the enum" "$(AUTO_TASK_SETTINGS_FILE="$DUM" bas
 ID="$T/initdocs"; AUTO_TASK_SETTINGS_FILE="$ID/settings.json" bash "$SH" init >/dev/null 2>&1
 expect "init template seeds docs_update_mode" "$(jq -r '.docs_update_mode' "$ID/settings.json" 2>/dev/null)"      "skip"
 
+# --- review_in_subagent (where Phase 4's code review runs) -------------------
+# The ONLY key in this file that defaults ON, and the assertions have to say so
+# explicitly: this suite asserts keys one by one rather than sweeping `keys`, so a key
+# nobody names here is invisible to it — it would ship, break, and the suite would stay
+# green. `false` is the documented restore of the pre-subagent inline behaviour, so the
+# round-trip below is the executable form of that promise, not a formality.
+echo "== review_in_subagent =="
+expect "default review_in_subagent=true"  "$(AUTO_TASK_SETTINGS_FILE="$N" bash "$SH" get review_in_subagent)"        "true"
+expect "keys lists review_in_subagent"    "$(bash "$SH" keys | grep -cx 'review_in_subagent')"                       "1"
+expect "all: review_in_subagent present"  "$(AUTO_TASK_SETTINGS_FILE="$N" bash "$SH" all | jq -r 'has("review_in_subagent")')" "true"
+expect "all: review_in_subagent=true"     "$(AUTO_TASK_SETTINGS_FILE="$N" bash "$SH" all | jq -r '.review_in_subagent')" "true"
+# Typed as a real JSON boolean in the merged view, not the string "true" — `all` is what
+# a consumer reads, and `"false"` is truthy in most of them.
+expect "all: review_in_subagent is a boolean" \
+  "$(AUTO_TASK_SETTINGS_FILE="$N" bash "$SH" all | jq -r '.review_in_subagent | type')"                              "boolean"
+RIS="$T/ris.json"; printf '{}' > "$RIS"
+AUTO_TASK_SETTINGS_FILE="$RIS" bash "$SH" set review_in_subagent false >/dev/null
+expect "set/get review_in_subagent=false" "$(AUTO_TASK_SETTINGS_FILE="$RIS" bash "$SH" get review_in_subagent)"       "false"
+expect "off is a real decision (present)" \
+  "$(AUTO_TASK_SETTINGS_FILE="$RIS" bash "$SH" present review_in_subagent)"                                          "true"
+# Unset it again and the built-in default returns — the restore is symmetric, so a user
+# who tried `false` is not stranded there by a deleted key.
+printf '{}' > "$RIS"
+expect "unset -> default true returns"    "$(AUTO_TASK_SETTINGS_FILE="$RIS" AUTO_TASK_GLOBAL_SETTINGS_FILE="$T/noglob.json" bash "$SH" get review_in_subagent)" "true"
+expect "present review_in_subagent: false when unset" \
+  "$(AUTO_TASK_SETTINGS_FILE="$N" AUTO_TASK_GLOBAL_SETTINGS_FILE="$T/noglob.json" bash "$SH" present review_in_subagent)" "false"
+IRS="$T/initris"; AUTO_TASK_SETTINGS_FILE="$IRS/settings.json" bash "$SH" init >/dev/null 2>&1
+expect "init template seeds review_in_subagent" "$(jq -r '.review_in_subagent' "$IRS/settings.json" 2>/dev/null)"     "true"
+
 # --- release_mode / release_command (the optional release step, Phase 9) -----
 # Both default OFF, the backward-compatible reading: a project that never opted in
 # gets no release step and no prompt. Unlike docs_update_mode these are NOT

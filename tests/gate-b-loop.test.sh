@@ -111,6 +111,20 @@ expect "no re-gate clause subtracts a spent main count" \
   "$(printf '%s' "$regate_clauses" | grep -ciE 'subtract|what is left of|remaining after' | tr -d ' ')" "0"
 # The Step-0 allowance lookup must resolve a regate scope through its own helper and
 # must not consult the main count either.
+# ANCHOR AMBIGUITY, pinned rather than left to luck. `^### Step 0 —` matched exactly one
+# heading until Phase 4 gained a Step 0 of its own; there are now two, and this awk takes
+# the FIRST. It still resolves to Gate B only because Gate B ships earlier in the file --
+# an ordering accident, not a guarantee. The repo already treats this as a hazard worth
+# pinning rather than tolerating (`enforcement-spine.test.sh`: "`6. **Re-pass the gates`
+# is AMBIGUOUS across the spec ... pin the count: if a third copy appears, the anchor
+# becomes order-dependent"). Same treatment here, in both directions: the count is fixed
+# at two, and the first occurrence must be Gate B's. A third heading, or a reorder that
+# floats Phase 4's above Gate B's, reddens this instead of silently re-pointing the two
+# region slices below at the wrong contract.
+expect "anchor: '### Step 0 —' occurs exactly twice" \
+  "$(grep -c '^### Step 0 —' "$GATES" | tr -d ' ')" "2"
+expect "anchor: ...and the FIRST is Gate B's, which both slices assume" \
+  "$(grep -m1 '^### Step 0 —' "$GATES" | grep -c 'pass accounting' | tr -d ' ')" "1"
 step0="$(awk '/^### Step 0 —/{f=1} f{print} f&&/^### Step 1 —/{exit}' "$GATES")"
 expect "Step 0 resolves regate scopes via their own helper" \
   "$(printf '%s' "$step0" | grep -c 'lb_gate_b_regate_cap` for any `regate:\*` scope' | tr -d ' ')" "1"
@@ -636,7 +650,106 @@ expect "P4: LIGHT tier addressed explicitly" \
 expect "P4: record on every exit, reopen included" \
   "$(printf '%s' "$P4" | grep -c 'on EVERY exit, reopen included' | tr -d ' ')" "1"
 expect "P4: the rounds[] row names every field" \
-  "$(printf '%s' "$P4" | grep -c 'n, blockers, required, reopened, deferred, followups, batch, diff_sha, at' | tr -d ' ')" "1"
+  "$(printf '%s' "$P4" | grep -c 'n, blockers, required, reopened, deferred, followups, batch, via, diff_sha, at' | tr -d ' ')" "1"
+# GATE-A FINDING (AC #12). `via` was named ONCE, in Step 0's inline-fallback rung, and in
+# none of the three places that define the row -- so an orchestrator following the row
+# definition verbatim drops it. That matters because Step 0's ladder can turn a run inline
+# MID-RUN (a twice-failed spawn, or a detected edit, which also disables the agent for the
+# rest of the run), leaving a run that reports review_in_subagent: true while most of its
+# rounds were self-reviewed -- and silently contaminating the review_rounds telemetry this
+# change added to measure exactly that. All three definitions now carry it.
+expect "P4: via records WHERE the round's review ran" \
+  "$(printf '%s' "$P4" | grep -c 'where this round.s review actually ran' | tr -d ' ')" "1"
+expect "P4: ...written on EVERY row, not only a degraded one" \
+  "$(printf '%s' "$P4" | grep -c 'Write it on every row, not only on a degraded one' | tr -d ' ')" "1"
+expect "P4: ...and an absent via is unknown, never subagent" \
+  "$(printf '%s' "$P4" | grep -c 'reads as unknown, never as .subagent.' | tr -d ' ')" "1"
+# CODE-REVIEW ROUND-1 FINDING (required). The enum was `subagent` / `inline` ("the
+# review_in_subagent: false configuration") / `inline-fallback` ("a Step-0 degradation"),
+# and those three did not cover the case the field was ADDED for: every round after the
+# sha-moved rung sets subagent_disabled. Those rounds have the setting on, ran inline, and
+# carry no degradation event of their own -- so they matched no value, in the majority-of-
+# rounds scenario. `inline` now covers both routes to the main loop, which makes the enum
+# total; pin the totality claim and the second route explicitly, since a future edit that
+# re-narrows `inline` to the setting would silently reopen the hole.
+expect "P4: the via enum is declared TOTAL over Step-0 paths" \
+  "$(printf '%s' "$P4" | grep -c 'total over every path Step 0 can take' | tr -d ' ')" "1"
+expect "P4: ...and inline covers the subagent_disabled route" \
+  "$(printf '%s' "$P4" | grep -c 'it is on but `gates.code_review.subagent_disabled` is `true`' | tr -d ' ')" "1"
+expect "P4: ...inline-fallback is the degradation round ITSELF" \
+  "$(printf '%s' "$P4" | grep -c 'the degradation round \*itself\*' | tr -d ' ')" "1"
+expect "P4: the schema mirrors the totality claim" \
+  "$(grep -c 'The three values are \*\*total\*\*' "$ROOT/skills/auto-task/references/state-schema.md" | tr -d ' ')" "1"
+# GATE-B PASS-1 FINDING (required). The justification added alongside the `via` fix
+# claimed that omitting the field "silently contaminates the review_rounds telemetry".
+# False in both directions: review_rounds is `rounds[] | length`, and no derivation reads
+# `via` at all -- `grep -n '\bvia\b'` over the three hooks returns nothing. Pin the
+# CORRECTED claim plus the real limit it replaced the false one with, and pin the
+# negative control on the hooks so the prose cannot drift back into asserting a wiring
+# that does not exist. This is the repo's own "verify prose against code" lesson: the
+# suite pinned the sentence's wording without ever checking its truth.
+expect "P4: via is scoped to STATE.json, and says so" \
+  "$(printf '%s' "$P4" | grep -c 'It lives in `STATE.json` and \*\*nowhere else\*\*' | tr -d ' ')" "1"
+expect "P4: ...and the retired false telemetry claim is gone" \
+  "$(printf '%s' "$P4" | grep -c 'silently contaminates the .review_rounds. telemetry' | tr -d ' ')" "0"
+expect "P4: ...replaced by the real limit (same count either way)" \
+  "$(printf '%s' "$P4" | grep -c 'reports the same `review_rounds: 6` as a fully independent run' | tr -d ' ')" "1"
+# Match a FIELD ACCESS (`.via`, `"via"`, `via:`), never the English preposition -- all
+# three hooks use "via" in prose comments, so a bare word match reports 10 and proves
+# nothing. If a derivation ever starts reading the field, this trips and the prose above
+# has to be rewritten to match the wiring rather than the other way round.
+expect "P4: NEGATIVE CONTROL — no hook derivation reads the via FIELD" \
+  "$(grep -hoE '\.via\b|"via"|(^|[[:space:]])via:' "$ROOT/hooks/record-outcome.sh" "$ROOT/hooks/send-telemetry.sh" \
+      "$ROOT/hooks/auto-task-stats.sh" 2>/dev/null | wc -l | tr -d ' ')" "0"
+# CONTROL for that control: the pattern must actually match a real field read.
+expect "P4: ...and that pattern does match a real field read" \
+  "$(printf '      review_via: (.gates.code_review.rounds[0].via),\n' | grep -coE '\.via\b|"via"|(^|[[:space:]])via:' | tr -d ' ')" "1"
+# GATE-B PASS-1 FINDING (follow-up, fixed in the same pass because it is the same
+# paragraph). The sha-moved rung asserted the inline re-review "re-pins
+# reviewed_diff_sha" -- false whenever that re-review reopens, since the field is written
+# only on a clean round. No gate hole (the hook keeps blocking), but the rung's stated
+# safety argument did not hold on the common post-incident path.
+expect "P4: the sha-moved rung no longer claims to re-pin" \
+  "$(printf '%s' "$P4" | grep -c 'inline re-review re-pins `reviewed_diff_sha`' | tr -d ' ')" "0"
+expect "P4: ...and credits the hook instead, naming the reopen case" \
+  "$(printf '%s' "$P4" | grep -c 'if the inline re-review reopens, nothing re-pins it' | tr -d ' ')" "1"
+for f in "$ROOT/skills/auto-task/SKILL.md" "$ROOT/skills/auto-task/references/state-schema.md"; do
+  expect "P4: $(basename "$f") row definition includes via" \
+    "$(grep -c 'batch, via, diff_sha, at' "$f" | tr -d ' ')" "1"
+done
+# The disable must survive a RESUME, which means it lives in state rather than in the
+# orchestrator's head: a resumed run re-reads review_in_subagent: true and would otherwise
+# re-enable the agent that edited the tree mid-review.
+expect "P4: subagent_disabled is recorded in state" \
+  "$(grep -c 'subagent_disabled' "$ROOT/skills/auto-task/references/state-schema.md" | tr -d ' ')" "1"
+expect "P4: ...and is in the state skeleton" \
+  "$(grep -c '"subagent_disabled": false' "$ROOT/skills/auto-task/SKILL.md" | tr -d ' ')" "1"
+expect "P4: ...absent counts as false (no migration)" \
+  "$(grep -c 'Absent counts as .false., so no existing run changes shape' "$ROOT/skills/auto-task/references/state-schema.md" | tr -d ' ')" "1"
+# GATE-A ROUND-2 FINDING. The three assertions above pin the WRITE only, and a flag that
+# is written but never consulted closes nothing: the spawn decision lived at one line that
+# named the setting and nothing else, so a RESUMED orchestrator re-read
+# `review_in_subagent: true` and re-spawned the agent the flag exists to keep out. Pin the
+# READ at its decision point, and pin that the resume reason is stated -- otherwise a
+# future edit can drop the condition and leave three green write-side assertions behind.
+expect "P4: the spawn decision READS subagent_disabled" \
+  "$(printf '%s' "$P4" | grep -c 'gates.code_review.subagent_disabled` is not `true`' | tr -d ' ')" "1"
+expect "P4: ...naming the resume as the reason it must be state" \
+  "$(printf '%s' "$P4" | grep -c 'a resumed orchestrator that consulted only the setting' | tr -d ' ')" "1"
+expect "P4: ...and the schema says the flag is read, not just written" \
+  "$(grep -c "Step 0's spawn decision READS this flag" "$ROOT/skills/auto-task/references/state-schema.md" | tr -d ' ')" "1"
+# ATTRIBUTION, not merely presence. Inserting the subagent_disabled bullet mid-run of the
+# rounds[] field definitions moved five of them under a boolean's bullet -- byte-identical
+# text, so spec-inventory's conservation check reported missing=0 restated=0 while the
+# reference had stopped defining `n`, `reopened`, `blockers`, `required` and `batch` as
+# fields of the row. Words surviving is not the same as the right bullet owning them.
+RB="$(awk '/^- \*\*`rounds\[\]`\*\*/,/^- \*\*`subagent_disabled`\*\*/' "$ROOT/skills/auto-task/references/state-schema.md")"
+for fld in 'n` is `1 +` the prior row count' 'reopened` is the count of findings' \
+           'blockers`/`required` are the raw label counts' 'deferred` is the count this round added' \
+           'batch: true` marks the single round'; do
+  expect "P4: rounds[] bullet still defines ${fld%%\`*}${fld#*\`}" \
+    "$(printf '%s' "$RB" | grep -cF "$fld" | tr -d ' ')" "1"
+done
 expect "P4: absent rounds[] counts as zero rows" \
   "$(printf '%s' "$P4" | grep -c 'absent or empty .rounds\[\]. counts as zero rows' | tr -d ' ')" "1"
 # The basis must be `reopened`, NEVER the label counts -- a deferred blocker cost no
@@ -1038,10 +1151,40 @@ expect "light: ...and still does not claim Gate B unconditionally follows" \
 # template. Both were found by hand in review, which is the wrong mechanism. Excludes the
 # CHANGELOG (historical entries describe old behaviour and must keep saying so) and this
 # file (it names the retired phrases to assert their absence).
+# WIDENED after three survivors were found by hand a release later. The pattern set
+# above was a list of FIXED phrasings, so it matched none of `README.md`'s "on LIGHT,
+# which skips Gate B, nothing re-grades it", `ARCHITECTURE.md`'s identical clause, or
+# `SKILL.md`'s "on LIGHT nothing does" -- three live claims contradicting the closure,
+# in the three most-read files, with this assertion green. The two additions below are
+# shaped to catch the relative-clause and the elliptical forms rather than one more
+# literal. They must NOT match the legitimate past-tense record in the reference
+# ("LIGHT used to skip Gate B"), which is history and has to keep saying so; the
+# negative control below pins exactly that boundary in both directions.
+LIGHT_SKIP_RX='LIGHT skips Gate B|skipped \(Gate A only\)|skipped at LIGHT|skipped for .tier=light|LIGHT SKIPS GATE B|LIGHT,? which skips|on LIGHT nothing does'
 expect "light: nothing outside the CHANGELOG still claims LIGHT skips Gate B" \
-  "$(grep -rniE 'LIGHT skips Gate B|skipped \(Gate A only\)|skipped at LIGHT|skipped for .tier=light|LIGHT SKIPS GATE B' \
+  "$(grep -rniE "$LIGHT_SKIP_RX" \
        "$ROOT/skills" "$ROOT/hooks" "$ROOT/tests" "$ROOT/README.md" 2>/dev/null \
      | grep -vE '/(gate-b-loop\.test\.sh|spec-inventory\.sh):' | wc -l | tr -d ' ')" "0"
+# CONTROL, in both directions -- a sweep that cannot fail is the failure mode that let
+# the three survivors through. The widened pattern must trip on each retired phrasing
+# and stay silent on the past-tense record that must survive.
+expect "light CONTROL: widened rx trips on the relative-clause form" \
+  "$(printf 'on LIGHT, which skips Gate B, nothing re-grades it\n' | grep -ciE "$LIGHT_SKIP_RX" | tr -d ' ')" "1"
+expect "light CONTROL: widened rx trips on the elliptical form" \
+  "$(printf 'On STANDARD/HEAVY Gate B re-grades it; on LIGHT nothing does\n' | grep -ciE "$LIGHT_SKIP_RX" | tr -d ' ')" "1"
+expect "light CONTROL: widened rx spares the past-tense record" \
+  "$(printf 'LIGHT used to skip Gate B, so a park there was final\n' | grep -ciE "$LIGHT_SKIP_RX" | tr -d ' ')" "0"
+expect "light: ...and that past-tense record is still in the reference" \
+  "$(printf '%s' "$P4" | grep -c 'LIGHT used to skip Gate B' | tr -d ' ')" "1"
+# The spine's own copy, pinned HERE rather than in enforcement-spine.test.sh. That file
+# is not one of the sweep's two exclusions, so quoting the retired clause there would
+# make the sweep report its own guard as a survivor -- while excluding a third file
+# would widen exactly the blind spot that let these three through. This file already
+# names every retired phrasing for that reason, so the absence check belongs with them.
+expect "light: the retired LIGHT-skip clause is gone from the spine" \
+  "$(grep -c 'on LIGHT nothing does' "$ROOT/skills/auto-task/SKILL.md" | tr -d ' ')" "0"
+expect "light: ...and the spine states the uniform re-grade instead" \
+  "$(grep -c 'where Gate B re-grades it at every tier too' "$ROOT/skills/auto-task/SKILL.md" | tr -d ' ')" "1"
 # Both exclusions are load-bearing, not convenience: this file names the retired phrases in
 # order to assert their absence, and spec-inventory.sh must quote the retired base line
 # verbatim as its RETIRED_PREFIXES key. Excluding anything else would hide a real survivor.
@@ -1052,6 +1195,401 @@ expect "light: skipped_reason survives as a field (descope path)" \
   "$(grep -c 'skipped_reason' "$GATES" | tr -d ' ' | awk '{print ($1>0)?"yes":"no"}')"      "yes"
 expect "light: ...but no spec tells the model to write tier=light" \
   "$(grep -rn 'tier=light' "$ROOT/skills" 2>/dev/null | wc -l | tr -d ' ')"                  "0"
+
+# ---- Step 0: WHERE the Phase-4 review runs (`review_in_subagent`) ------------
+# Phases 2, 3 and 4 all ran in the main loop, so the model that wrote the diff also
+# reviewed it. Moving Phase 4 into a fresh-context agent is the fix, and the danger is
+# the mirror image of the shadow pass's: not that it fails, but that it quietly loosens
+# the one rule the commit gate depends on. Every assertion below pins a property that,
+# if lost, would either weaken the gate or let a failure mode strand a run.
+S0="$(awk '/^### Step 0 — where the review RUNS/,/^### Step A/' "$GATES")"
+expect "step0: the contract exists in the phase-4 reference" \
+  "$([ -n "$S0" ] && echo yes || echo no)"                                                       "yes"
+expect "step0: default is ON"                      "$(bash "$ROOT/hooks/settings.sh" get review_in_subagent 2>/dev/null)" "true"
+expect "step0: the key is resolvable"              "$(bash "$ROOT/hooks/settings.sh" keys 2>/dev/null | grep -c '^review_in_subagent$' | tr -d ' ')" "1"
+expect "step0: it appears in the merged defaults"  "$(bash "$ROOT/hooks/settings.sh" all 2>/dev/null | jq -r '.review_in_subagent')" "true"
+expect "step0: false restores the inline call"     \
+  "$(printf '%s' "$S0" | grep -c 'Set `review_in_subagent: false` to invoke it inline instead' | tr -d ' ')" "1"
+# THE GATE IS NOT LOOSENED. This is the assertion that matters most: the whole change is
+# defensible only because the reviewer is still the skill and `tool` still records it.
+expect "step0: the agent MUST invoke the review skill" \
+  "$(printf '%s' "$S0" | grep -c 'MUST tell it to invoke the `auto-task-code-review` skill via the Skill tool' | tr -d ' ')" "1"
+expect "step0: a hand-rolled prompt is still the forbidden substitution" \
+  "$(printf '%s' "$S0" | grep -c 'A hand-rolled review prompt in an agent is the substitution' | tr -d ' ')" "1"
+expect "step0: ...and says why the hook is unaffected" \
+  "$(printf '%s' "$S0" | grep -c 'cannot see \*where\* the skill ran' | tr -d ' ')" "1"
+# GATE-B PASS-1 FINDING (required), and the sharpest one in the run. Step 0 asserted the
+# skill is still the reviewer and then added detectors for three LOUD failures (spawn
+# failure, malformed report, tree edit) while leaving the quiet one open: an agent that
+# never calls the Skill tool and returns a plausible review anyway. It has the diff, the
+# plan, TRACE.md and the prior findings -- everything needed to write one. That report is
+# not empty, not malformed, not truncated, and edits nothing, so NO rung fired and the
+# round would record `tool: "skill:auto-task-code-review"` for a review the skill never
+# performed -- the exact lie the section forbids two paragraphs earlier. Inline, the
+# orchestrator knows first-hand because the Skill call is in its own tool log; moving the
+# call site is precisely what destroys that evidence, so the move has to replace it.
+expect "step0: the report must EVIDENCE that the skill ran" \
+  "$(printf '%s' "$S0" | grep -c 'REQUIRE EVIDENCE that it ran' | tr -d ' ')" "1"
+expect "step0: ...via the skill's Phase-2 structured report" \
+  "$(printf '%s' "$S0" | grep -c 'The marker is the skill.s Phase-2 structured report, and ONLY that' | tr -d ' ')" "1"
+expect "step0: ...and a report lacking it is handled as malformed" \
+  "$(printf '%s' "$S0" | grep -c 'treat it exactly as a malformed report' | tr -d ' ')" "1"
+expect "step0: ...the malformed rung names the no-evidence case too" \
+  "$(printf '%s' "$S0" | grep -c "lacks the skill.s Phase-2 structured report" | tr -d ' ')" "1"
+# CODE-REVIEW ROUND-4 FINDING (required), and the reason the marker is ONE block rather
+# than the whole five-phase shape. The first version of this clause demanded "the skill's
+# five-phase structure ... with Phase-5's per-finding quoted evidence". That is
+# unsatisfiable by a CLEAN review: `auto-task-code-review`'s own output discipline
+# short-circuits after Phase 3 ("If after Phase 3 there are no significant findings ...
+# otherwise stop there"), so Prevent is skipped by instruction and Phase 5 has nothing to
+# quote. A correct clean subagent review would have been read as "the skill did not run",
+# discarded, retried, and forced inline -- the feature disabling itself on the success
+# path, a false positive strictly worse than the hole it closed. Pin the narrowing AND the
+# reason, so a future edit reaching for completeness reads why it must not.
+expect "step0: the marker is unconditional, and says why that matters" \
+  "$(printf '%s' "$S0" | grep -c 'the only one the skill emits unconditionally' | tr -d ' ')" "1"
+expect "step0: ...and explicitly forbids extending it to Phase 4/5 content" \
+  "$(printf '%s' "$S0" | grep -c 'Do NOT extend the check to Phase 4 or Phase 5 content' | tr -d ' ')" "1"
+expect "step0: ...naming the clean-review rejection it would cause" \
+  "$(printf '%s' "$S0" | grep -c 'would reject a \*\*correct clean review\*\*' | tr -d ' ')" "1"
+expect "step0: ...and the rung says a short clean report is a SUCCESS" \
+  "$(printf '%s' "$S0" | grep -c 'short \*because the review was clean\* is a \*\*success\*\*' | tr -d ' ')" "1"
+# REGRESSION GUARD: the retired over-broad predicate must not come back anywhere.
+expect "step0: the retired five-phase demand is gone" \
+  "$(grep -c "five-phase structure" "$GATES" | tr -d ' ')" "0"
+# HONESTY: a structural signal is not proof, and the contract must not pretend otherwise.
+expect "step0: ...and does not overclaim it as proof" \
+  "$(printf '%s' "$S0" | grep -c 'a \*structural\* signal, not proof' | tr -d ' ')" "1"
+# GATE-B PASS-2 FINDING (required). Every check on the marker so far asked whether the
+# SKILL EMITS the block. None asked whether the ORCHESTRATOR RECEIVES it -- and only the
+# agent's returned output crosses the subagent boundary, while the skill's clean-review
+# short-circuit ends the turn with a one-liner. So a faithful agent could hand back a
+# final message without the block and a correct clean review would be rejected: the same
+# self-disabling failure the narrowing was granted to remove, relocated to the transport.
+expect "step0: emitted is distinguished from RETURNED" \
+  "$(printf '%s' "$S0" | grep -c 'EMITTED IS NOT RETURNED' | tr -d ' ')" "1"
+expect "step0: ...and the prompt must require the block in the FINAL MESSAGE" \
+  "$(printf '%s' "$S0" | grep -c 'verbatim in your final message; that message is the only thing I receive' | tr -d ' ')" "1"
+expect "step0: ...the discriminator is the block, never the length" \
+  "$(printf '%s' "$S0" | grep -c 'The discriminator is the BLOCK, never the length' | tr -d ' ')" "1"
+# GATE-B PASS-2 FINDING (required): rung order. Stated as a rule, not left to the order
+# the bullets happen to sit in, because a first-match ladder with the report rung first
+# lets the correlated fabricate-and-edit agent skip detection.
+expect "step0: the tree is checked before the report" \
+  "$(printf '%s' "$S0" | grep -c 'check the TREE before judging the REPORT' | tr -d ' ')" "1"
+expect "step0: ...but only when an agent actually returned" \
+  "$(printf '%s' "$S0" | grep -c 'only when an agent actually returned' | tr -d ' ')" "1"
+expect "step0: ...a failed spawn short-circuits above the edit rung" \
+  "$(printf '%s' "$S0" | grep -c 'No agent returned at all' | tr -d ' ')" "1"
+expect "step0: ...naming the spurious disable it prevents" \
+  "$(printf '%s' "$S0" | grep -c 'did not move .because of. a reviewer' | tr -d ' ')" "1"
+# GATE-B PASS-3 FINDING: ordinals go stale the moment the order changes -- they did,
+# twice. The rungs are named now, and the contract says why.
+expect "step0: the rungs are NAMED, not numbered" \
+  "$(printf '%s' "$S0" | grep -c 'the \*\*spawn-failure\*\* case, the \*\*edit\*\* rung, and the \*\*report\*\* rung' | tr -d ' ')" "1"
+expect "step0: ...and no stale rung-1 ordinal survives" \
+  "$(printf '%s' "$S0" | grep -c "rung 1" | tr -d ' ')" "0"
+expect "step0: ...the two cross-references name the report rung" \
+  "$(printf '%s' "$S0" | grep -c 'the \*\*report rung\*\* below' | tr -d ' ')" "2"
+expect "step0: ...naming the edited-tree baseline it prevents" \
+  "$(printf '%s' "$S0" | grep -c 'already-edited tree' | tr -d ' ')" "1"
+# POSITIONAL: the edit rung must physically precede the report rung, since the ladder is
+# first-match. Prose alone would not survive a reorder.
+# Anchored on the rung NAMES, which is the point of naming them: the previous version of
+# this assertion keyed on 'The spawn failed;' and silently degraded to a comparison
+# against an empty string the moment that rung gained its name prefix.
+_edit_ln="$(printf '%s' "$S0" | grep -n '^- \*\*The EDIT rung' | head -1 | cut -d: -f1)"
+_rept_ln="$(printf '%s' "$S0" | grep -n '^- \*\*The REPORT rung' | head -1 | cut -d: -f1)"
+expect "step0: both rungs resolve to a line (anchor not degraded)" \
+  "$([ -n "$_edit_ln" ] && [ -n "$_rept_ln" ] && echo both || echo missing)" "both"
+expect "step0: edit rung physically precedes the report rung" \
+  "$([ "$_edit_ln" -lt "$_rept_ln" ] && echo yes || echo no)" "yes"
+# NEGATIVE CONTROL on the gate itself: `enforce-gates.sh` must be untouched by this
+# change. If a future edit teaches the hook about the call site, the contract's central
+# claim ("the commit gate needs no change") has silently stopped being true.
+expect "step0: enforce-gates.sh still pins only the tool literal" \
+  "$(grep -c 'review_in_subagent' "$ROOT/hooks/enforce-gates.sh" | tr -d ' ')"                    "0"
+expect "step0: ...and still requires the skill literal" \
+  "$([ "$(grep -c 'skill:auto-task-code-review' "$ROOT/hooks/enforce-gates.sh")" -ge 1 ] && echo yes || echo no)" "yes"
+# Spawn shape. Synchronous for the same reason every other spawn is; read-only for the
+# same reason the shadow pass is, and with the same absent mechanical backstop.
+expect "step0: ONE general-purpose Agent, synchronously" \
+  "$(printf '%s' "$S0" | grep -c 'ONE `general-purpose` Agent, \*\*synchronously\*\*' | tr -d ' ')" "1"
+expect "step0: the prompt must forbid edits, in those words" \
+  "$(printf '%s' "$S0" | grep -c 'prompt MUST forbid edits, in those words' | tr -d ' ')"          "1"
+expect "step0: ...and names the reviewed_diff_sha consequence" \
+  "$(printf '%s' "$S0" | grep -c 'moves `reviewed_diff_sha` and blocks the commit' | tr -d ' ')"   "1"
+expect "step0: the orchestrator applies every fix, not the reviewer" \
+  "$(printf '%s' "$S0" | grep -c 'the orchestrator applies every fix' | tr -d ' ')"                "1"
+# Inputs. A reviewer with no memory of the run re-raises settled findings, which is the
+# churn 0.29.0/0.30.0 bounded arriving through a new door.
+expect "step0: CONTEXT.md + TRACE.md per the read-before-review contract" \
+  "$(printf '%s' "$S0" | grep -c 'CONTEXT.md` and `TRACE.md` per the read-before-review contract' | tr -d ' ')" "1"
+expect "step0: prior rounds' findings passed by name" \
+  "$(printf '%s' "$S0" | grep -c 'the findings of every prior round this run' | tr -d ' ')"        "1"
+expect "step0: and says why that is load-bearing, not courteous" \
+  "$(printf '%s' "$S0" | grep -c 're-raises findings earlier rounds already considered and resolved' | tr -d ' ')" "1"
+# Delta-scoping — the cost bound, reusing Gate B Step 1's mechanism rather than a second
+# copy of it. Round 1 full, every later round the delta.
+expect "step0: round 1 full, rounds 2+ delta-scoped" \
+  "$(printf '%s' "$S0" | grep -c 'Round 1 reviews the full working-tree diff. Every later round reviews only the delta' | tr -d ' ')" "1"
+# CODE-REVIEW ROUND-1 FINDING (required). The boundary was named as `reviewed_diff_sha`
+# "the same mechanism Gate B's Step 1 already uses". Both halves were wrong, and wrong on
+# exactly the rounds delta-scoping runs on. `reviewed_diff_sha` is the COMMIT GATE's field,
+# written only when a round comes back CLEAN -- but a round 2 exists only because round 1
+# REOPENED, so the named boundary is null or stale precisely when it is first needed. The
+# two ways out are both defects: re-read the full diff (losing the cost bound that
+# justifies the step) or write the hook-read field at spawn from a pre-fix tree. Gate B is
+# no precedent either: `verified_diff_sha` is written at spawn and bound by no hook, which
+# is why IT can serve as a boundary. `rounds[n-1].diff_sha` already exists, is recorded on
+# EVERY exit including a reopen, and is the correct referent.
+expect "step0: boundary is rounds[n-1].diff_sha, not reviewed_diff_sha" \
+  "$(printf '%s' "$S0" | grep -c 'The boundary is `rounds\[n-1\].diff_sha` — NOT `reviewed_diff_sha`' | tr -d ' ')" "1"
+expect "step0: ...and says why that field is null on a reopening round" \
+  "$(printf '%s' "$S0" | grep -c 'written .only when a round comes back clean' | tr -d ' ')"       "1"
+expect "step0: ...and distinguishes Gate B's spawn-written verified_diff_sha" \
+  "$(printf '%s' "$S0" | grep -c 'is written at \*spawn\* and is bound by no hook' | tr -d ' ')"   "1"
+expect "step0: ...so it no longer claims to be the SAME mechanism" \
+  "$(printf '%s' "$S0" | grep -c 'the same mechanism Gate B.s Step 1 already uses' | tr -d ' ')"   "0"
+# NEGATIVE CONTROL on the whole class -- and it must sweep the TREE, not the slice.
+#
+# GATE-B PASS-1 FINDING. The first version of this control grepped `$S0` (the Step-0 awk
+# region) and was labelled "on the whole class". It was not: the retired boundary survived
+# verbatim in THREE other files -- `references/settings.md` and `README.md` (both the
+# `review_in_subagent` key row) and the CHANGELOG -- and `references/settings.md` is a
+# MANDATORY READ, so two contract files gave the orchestrator opposite boundaries while
+# this assertion reported clean. A control scoped to the reproducer can only ever prove
+# the reproducer was fixed. Sweep every spec + doc surface instead, excluding this file
+# (which must quote the retired phrasing to assert its absence).
+RDS_RX="delta since the previous round.s .reviewed_diff_sha"
+expect "step0: no delta boundary anywhere still points at reviewed_diff_sha" \
+  "$(grep -rniE "$RDS_RX" "$ROOT/skills" "$ROOT/hooks" "$ROOT/README.md" "$ROOT/CHANGELOG.md" 2>/dev/null \
+     | grep -vE '/gate-b-loop\.test\.sh:' | wc -l | tr -d ' ')" "0"
+# CONTROL for the control: the widened pattern must actually trip on the retired sentence.
+expect "step0: ...and the widened sweep trips on the retired phrasing" \
+  "$(printf 'only the delta since the previous round%s `reviewed_diff_sha` — that is what\n' "'s" | grep -ciE "$RDS_RX" | tr -d ' ')" "1"
+expect "step0: ...and the diff bytes are written at SPAWN time" \
+  "$(printf '%s' "$S0" | grep -c 'artifacts/review-<n>.diff` at \*\*spawn\*\* time' | tr -d ' ')"  "1"
+# The three bookkeeping clauses. Each closes a hole the edit-prohibition cannot reach,
+# because `.auto-task/` is excluded from git and therefore invisible to the sha check.
+expect "step0: reviewer writes nothing under .auto-task/" \
+  "$(printf '%s' "$S0" | grep -c 'The reviewer writes nothing under `.auto-task/`' | tr -d ' ')"   "1"
+expect "step0: ...and says the sha check cannot catch that" \
+  "$(printf '%s' "$S0" | grep -c 'never moves the diff hash' | tr -d ' ')"                         "1"
+expect "step0: agent is told it runs under /auto-task orchestration" \
+  "$(printf '%s' "$S0" | grep -c 'Tell it that it is running under `/auto-task` orchestration' | tr -d ' ')" "1"
+expect "step0: ...naming the double-write it prevents" \
+  "$(printf '%s' "$S0" | grep -c 'double-writes the log' | tr -d ' ')"                             "1"
+# The condition Step 0 relies on must actually exist in the review skill, or clause 2 is
+# aimed at nothing. Pin the skill side too, so removing it there reds this.
+expect "step0: the review skill really suppresses its trace under /auto-task" \
+  "$(grep -c 'Suppressed under orchestration' "$ROOT/skills/auto-task-code-review/SKILL.md" | tr -d ' ')" "1"
+expect "step0: agent is told it is the reviewer, not the caller" \
+  "$(printf '%s' "$S0" | grep -c 'Tell it that it is the reviewer, not the caller' | tr -d ' ')"   "1"
+expect "step0: ...and that the Caller note is addressed to the orchestrator" \
+  "$(printf '%s' "$S0" | grep -c 'addressed to the orchestrator that spawned this agent' | tr -d ' ')" "1"
+# shadow_review is superseded, and the skip is RECORDED rather than omitted -- otherwise
+# a run's telemetry cannot distinguish "measured nothing" from "did not measure".
+expect "step0: shadow_review is skipped while this is on" \
+  "$(printf '%s' "$S0" | grep -c '`shadow_review` is skipped while this is on' | tr -d ' ')"       "1"
+expect "step0: ...recorded as a status, not omitted" \
+  "$(printf '%s' "$S0" | grep -c 'note: \"review_in_subagent is on\"' | tr -d ' ')"                "1"
+# CODE-REVIEW ROUND-1 FINDING (required). The recorded skip was stated UNCONDITIONALLY,
+# which on a stock run (shadow_review false, review_in_subagent true) fired at the same
+# time as the schema's "absent on every run where the setting is off, so nothing migrates
+# and no existing run changes shape" -- two rules, opposite instructions, both true by
+# default. Writing the object on every default run is the one thing that guarantee
+# promises never happens. The skip is conditional on the user having asked for the pass.
+expect "step0: the skip record is conditional on the setting being true" \
+  "$(printf '%s' "$S0" | grep -c 'only when the user actually asked for the pass' | tr -d ' ')"    "1"
+expect "step0: ...and off keeps the object absent as before" \
+  "$(printf '%s' "$S0" | grep -c 'the object stays absent exactly as before' | tr -d ' ')"         "1"
+expect "step0: the schema states both conditions are required" \
+  "$(grep -c 'Both conditions are required' "$ROOT/skills/auto-task/references/state-schema.md" | tr -d ' ')" "1"
+expect "step0: ...and keeps its absent-by-default guarantee intact" \
+  "$(grep -c 'keeps the first sentence of this paragraph true on a stock run' "$ROOT/skills/auto-task/references/state-schema.md" | tr -d ' ')" "1"
+expect "step0: the schema documents the recorded skip" \
+  "$(grep -c 'review_in_subagent is on' "$ROOT/skills/auto-task/references/state-schema.md" | tr -d ' ')" "1"
+
+# ---- Step 0's degradation ladder, as an ORACLE not as prose ------------------
+# Asserting that the ladder is WRITTEN proves nothing about whether it is bounded --
+# "verify-by-grep is not verification". No hook drives this path (a review spawn is an
+# Agent call, and hooks.json registers PreToolUse only for Bash), so as everywhere else
+# in this suite the rule is implemented as a reference oracle and driven over the exact
+# cases the spec claims, with companion prose assertions so the two cannot drift.
+#
+# ORACLE for Step 0's ladder. Returns "<round-recorded>|<gate-touched>|<retries>|
+# <next-call>|<subagent-still-enabled>|<tool>" so every clause is observable at once.
+# STEP0_MUTATE is the control's injection point: set it to a rung name and that rung
+# returns a WRONG outcome, so the same assertion battery below can be re-run against a
+# broken ladder and required to fail. Empty (the normal case) changes nothing.
+STEP0_MUTATE="${STEP0_MUTATE:-}"
+step0_outcome(){ # $1: ok|clean-short|spawn-fail|empty|malformed|no-marker|sha-moved|sha-moved+no-marker|spawn-fail+sha-moved  $2=retry-also-failed(yes|no)
+  if [ -n "$STEP0_MUTATE" ] && [ "$STEP0_MUTATE" = "$1" ]; then
+    # The single most dangerous variant: a degraded rung that SETS the gate. It would
+    # commit a diff no review ever read.
+    printf 'discarded|YES-SET|0|inline-rerun|no|skill:auto-task-code-review'; return
+  fi
+  case "$1" in
+    ok)          printf 'yes|no|0|record-round|yes|skill:auto-task-code-review' ;;
+    # GATE-B PASS-2 CASES. `clean-short` is the SUCCESS the marker rule must not reject:
+    # a clean review returns a short report that still carries the Phase-2 block, so it
+    # records an ordinary round. `no-marker` is the failure: the block is absent however
+    # long the report is. Brevity is never the test -- these two cases are what make that
+    # discriminator executable instead of merely asserted, and their absence is why the
+    # emitted-vs-returned defect was invisible to this suite.
+    clean-short) printf 'yes|no|0|record-round|yes|skill:auto-task-code-review' ;;
+    no-marker)
+      if [ "$2" = "yes" ]; then printf 'no|no|1|inline-fallback|yes|skill:auto-task-code-review'
+      else                      printf 'no|no|1|respawn|yes|skill:auto-task-code-review'; fi ;;
+    # GATE-B PASS-3 CASE. A spawn that produced no agent cannot have had its tree edited
+    # BY a reviewer, so it must reach the retry rung even when the sha moved meanwhile
+    # (autosave, formatter, a concurrent user edit). An "unconditional" sha check would
+    # instead discard the round, set subagent_disabled for the rest of the run and write a
+    # false TRACE incident -- switching the feature off permanently on a spurious trigger.
+    'spawn-fail+sha-moved'|spawn-fail|empty|malformed)
+      # Not a round: nothing recorded, gate untouched, sha untouched. Exactly one retry,
+      # then the INLINE call -- never a further retry and never a user stop, or an
+      # unavailable subagent could hold a run hostage over a setting whose whole point
+      # is that both call sites produce the same review.
+      if [ "$2" = "yes" ]; then printf 'no|no|1|inline-fallback|yes|skill:auto-task-code-review'
+      else                      printf 'no|no|1|respawn|yes|skill:auto-task-code-review'; fi ;;
+    # ORDERING. The edit rung is checked before the report rung, so an agent that BOTH edited
+    # the tree AND returned a marker-less report gets the sha-moved handling -- findings
+    # discarded, inline re-run, subagent disabled. Under a report-first ladder this input
+    # would match the no-marker rung, skip detection entirely, and let the retry baseline
+    # its sha from the already-edited tree.
+    sha-moved|'sha-moved+no-marker')
+      # Findings describe a tree that no longer exists, so they are discarded rather than
+      # acted on; the round re-runs INLINE against the current tree; the subagent is
+      # disabled for the rest of the run so one incident cannot repeat every round; and
+      # NOTHING is auto-reverted. (The inline re-run does NOT re-pin reviewed_diff_sha --
+      # that field is written only on a CLEAN round, and the hook keeps blocking until one
+      # happens. Gate B pass 1 corrected the spec sentence that claimed otherwise.)
+      printf 'discarded|no|0|inline-rerun|no|skill:auto-task-code-review' ;;
+    *) printf 'UNSPECIFIED' ;;
+  esac; }
+f(){ printf '%s' "$1" | cut -d'|' -f"$2"; }
+
+for ev in spawn-fail empty malformed; do
+  o="$(step0_outcome "$ev" yes)"
+  expect "ladder/$ev: not recorded as a round"      "$(f "$o" 1)" "no"
+  expect "ladder/$ev: gate left untouched"          "$(f "$o" 2)" "no"
+  expect "ladder/$ev: exactly one retry"            "$(f "$o" 3)" "1"
+  expect "ladder/$ev: then falls back inline"       "$(f "$o" 4)" "inline-fallback"
+  expect "ladder/$ev: tool literal unchanged"       "$(f "$o" 6)" "skill:auto-task-code-review"
+done
+o="$(step0_outcome spawn-fail no)"
+expect "ladder: first failure respawns, not inline" "$(f "$o" 4)" "respawn"
+
+o="$(step0_outcome sha-moved)"
+expect "ladder/sha-moved: findings discarded"       "$(f "$o" 1)" "discarded"
+expect "ladder/sha-moved: gate NOT set"             "$(f "$o" 2)" "no"
+expect "ladder/sha-moved: re-runs inline"           "$(f "$o" 4)" "inline-rerun"
+expect "ladder/sha-moved: subagent disabled for the run" "$(f "$o" 5)" "no"
+expect "ladder/sha-moved: tool literal unchanged"   "$(f "$o" 6)" "skill:auto-task-code-review"
+o="$(step0_outcome ok)"
+expect "ladder/ok: an ordinary round IS recorded"   "$(f "$o" 1)" "yes"
+expect "ladder/ok: subagent stays enabled"          "$(f "$o" 5)" "yes"
+
+# GATE-B PASS-2 FINDINGS (required), and the two cases whose ABSENCE is why the first
+# defect got through. Everything about the marker rule had been pinned by grep, so the
+# suite could see that the sentence existed but never that a clean review classifies as a
+# success. These two drive the discriminator itself.
+o="$(step0_outcome clean-short)"
+expect "ladder/clean-short: a SHORT clean report is a success" "$(f "$o" 1)" "yes"
+expect "ladder/clean-short: ...it records an ordinary round"   "$(f "$o" 4)" "record-round"
+expect "ladder/clean-short: ...and does NOT disable the agent" "$(f "$o" 5)" "yes"
+o="$(step0_outcome no-marker yes)"
+expect "ladder/no-marker: a marker-less report is NOT a round" "$(f "$o" 1)" "no"
+expect "ladder/no-marker: ...gate untouched"                   "$(f "$o" 2)" "no"
+expect "ladder/no-marker: ...one retry, then inline"           "$(f "$o" 4)" "inline-fallback"
+# The pair is the whole point: identical brevity, opposite outcomes, discriminated by the
+# BLOCK and not by length. If a future edit re-conflates them these two disagree.
+expect "ladder: brevity is not the test — the two differ" \
+  "$([ "$(f "$(step0_outcome clean-short)" 1)" != "$(f "$(step0_outcome no-marker yes)" 1)" ] \
+     && echo discriminated || echo conflated)" "discriminated"
+# ORDERING (G2): an agent that edited the tree AND returned no marker must get the
+# SHA-MOVED handling, not rung 1's. A report-first ladder would skip detection entirely,
+# leave subagent_disabled unset, and let the retry baseline its sha from the edited tree.
+o="$(step0_outcome 'sha-moved+no-marker')"
+expect "ladder/edited+no-marker: sha check wins, findings discarded" "$(f "$o" 1)" "discarded"
+expect "ladder/edited+no-marker: ...subagent IS disabled"            "$(f "$o" 5)" "no"
+expect "ladder/edited+no-marker: ...and it re-runs inline"           "$(f "$o" 4)" "inline-rerun"
+expect "ladder/edited+no-marker: ...not the report rung's retry path" \
+  "$([ "$(f "$o" 3)" = "0" ] && echo no-retry-burned || echo took-report-rung)" "no-retry-burned"
+# GATE-B PASS-3 FINDING (required). The ordering rule that fixed the case above said "run
+# the sha check UNCONDITIONALLY", which over-reached: on a spawn that produced no agent,
+# a tree that moved meanwhile (autosave, formatter, concurrent user edit) is not
+# attributable to a reviewer that never existed. Unconditional would have discarded the
+# round, set subagent_disabled for the REST OF THE RUN and written a false TRACE incident
+# — switching the feature off permanently on a spurious trigger, surviving a resume. The
+# rule is now ordered: no-agent-returned short-circuits ABOVE the edit rung.
+o="$(step0_outcome 'spawn-fail+sha-moved' yes)"
+expect "ladder/spawn-fail+sha-moved: takes the RETRY path"      "$(f "$o" 4)" "inline-fallback"
+expect "ladder/spawn-fail+sha-moved: ...not the edit rung"      "$(f "$o" 1)" "no"
+expect "ladder/spawn-fail+sha-moved: ...subagent NOT disabled"  "$(f "$o" 5)" "yes"
+# The pair that makes the ordering rule executable: a moved sha means opposite things
+# depending on whether an agent returned. If a future edit re-reads the check as
+# unconditional, these two collapse to the same outcome and this trips.
+expect "ladder: a moved sha is attributed ONLY when an agent returned" \
+  "$([ "$(f "$(step0_outcome 'spawn-fail+sha-moved' yes)" 5)" != "$(f "$(step0_outcome 'sha-moved+no-marker')" 5)" ] \
+     && echo attributed-correctly || echo blames-a-nonexistent-agent)" "attributed-correctly"
+# CONTROL: the oracle must be capable of failing, and the control must DEMONSTRATE that
+# by producing a failure -- not by comparing two literals to each other.
+#
+# GATE-A FINDING (AC #14). The first version of this control defined a second function
+# returning a hardcoded mutant string and asserted that string differed from "no". It
+# passed without running a single ladder assertion, and would have kept passing verbatim
+# with every assertion above deleted -- a tautology dressed as a mutation probe, which is
+# the "verify-by-grep is not verification" failure in a new costume. The replacement
+# re-runs THE ASSERTIONS THEMSELVES against a mutated oracle in a counting sandbox and
+# requires the count of failures to be non-zero.
+battery_failures(){ # $1=an outcome string; echo how many sha-moved ladder assertions it violates
+  local o="$1" n=0
+  [ "$(f "$o" 1)" = "discarded" ]                     || n=$((n+1))
+  [ "$(f "$o" 2)" = "no" ]                            || n=$((n+1))
+  [ "$(f "$o" 4)" = "inline-rerun" ]                  || n=$((n+1))
+  [ "$(f "$o" 5)" = "no" ]                            || n=$((n+1))
+  [ "$(f "$o" 6)" = "skill:auto-task-code-review" ]   || n=$((n+1))
+  printf '%s' "$n"; }
+expect "ladder CONTROL: a gate-setting mutant makes the battery FAIL" \
+  "$([ "$(battery_failures "$(STEP0_MUTATE=sha-moved step0_outcome sha-moved)")" -gt 0 ] \
+     && echo failed-as-required || echo silently-passed)"                                          "failed-as-required"
+# ...and specifically on the gate clause, not incidentally on some other field: a control
+# that fired for the wrong reason would still be a control that proves nothing.
+expect "ladder CONTROL: ...and it is the gate clause that trips" \
+  "$(f "$(STEP0_MUTATE=sha-moved step0_outcome sha-moved)" 2)"                                     "YES-SET"
+# The un-mutated oracle must produce ZERO failures through the SAME battery, or the
+# control above would report success on an oracle that is simply always broken.
+expect "ladder CONTROL: the un-mutated oracle produces no failures" \
+  "$(battery_failures "$(step0_outcome sha-moved)")"                                               "0"
+# Companion prose assertions: the oracle mirrors the spec, so pin the spec's own wording
+# for each rung. If the ladder is reworded, one of these reds and the oracle gets re-read.
+L0="$(awk "/^#### Step 0's degradation ladder/,/^\*\*\`shadow_review\` is skipped/" "$GATES")"
+expect "ladder prose: exists"                       "$([ -n "$L0" ] && echo yes || echo no)"       "yes"
+expect "ladder prose: no failure may deadlock or pass the gate" \
+  "$(printf '%s' "$L0" | grep -c 'None of these may deadlock the run, pass the gate' | tr -d ' ')" "1"
+expect "ladder prose: a failed/empty/malformed report is NOT a round" \
+  "$(printf '%s' "$L0" | grep -c 'this is not a round' | tr -d ' ')"                               "1"
+expect "ladder prose: retry exactly once"           \
+  "$(printf '%s' "$L0" | grep -c 'Retry the spawn exactly once' | tr -d ' ')"                      "1"
+expect "ladder prose: then invoke the skill inline" \
+  "$(printf '%s' "$L0" | grep -c 'invoke the skill inline for this round' | tr -d ' ')"            "1"
+expect "ladder prose: the sha is recompared after the agent returns" \
+  "$(printf '%s' "$L0" | grep -c 'recompute it with the byte-identical pinned-flag formula' | tr -d ' ')" "1"
+expect "ladder prose: a move means the tree changed mid-review" \
+  "$(printf '%s' "$L0" | grep -c 'A move means the tree changed while the review was reading it' | tr -d ' ')" "1"
+expect "ladder prose: subagent disabled for the rest of the run" \
+  "$(printf '%s' "$L0" | grep -c 'disable the subagent for the remainder of the run' | tr -d ' ')" "1"
+# NO AUTO-REVERT is a deliberate refusal, not an omission: scripting a revert of
+# model-authored edits is destructive and can take a concurrent legitimate edit with it.
+expect "ladder prose: explicitly refuses to auto-revert" \
+  "$(printf '%s' "$L0" | grep -c 'Do NOT automatically revert' | tr -d ' ')"                       "1"
+expect "ladder prose: the detector's blind spot is stated, not implied" \
+  "$(printf '%s' "$L0" | grep -c 'It is blind to `.auto-task/`' | tr -d ' ')"                      "1"
+expect "ladder prose: tool literal holds on every degraded path" \
+  "$(printf '%s' "$L0" | grep -c 'still reads `skill:auto-task-code-review`' | tr -d ' ')"         "1"
 
 # ---- Shadow second opinion (opt-in, measurement only) ------------------------
 # The danger with this feature is not that it fails -- it is that it quietly becomes an
@@ -1065,6 +1603,18 @@ expect "shadow: the key is resolvable"             "$(bash "$ROOT/hooks/settings
 expect "shadow: it appears in the merged defaults" "$(bash "$ROOT/hooks/settings.sh" all 2>/dev/null | jq -r '.shadow_review')" "false"
 expect "shadow: runs ONCE per run, after Phase 4 goes clean" \
   "$(printf '%s' "$SR" | grep -c 'run this ONCE per run, immediately after Phase 4 sets' | tr -d ' ')" "1"
+# GATE-A ROUND-3 FINDING. This rationale's two peer copies (README + settings.md) were
+# rescoped to the `false` configuration, but the copy HERE -- the highest-authority one,
+# the spec the orchestrator actually reads -- kept the unconditional present tense
+# "Phases 2, 3 and 4 all run in the main loop", two lines below the supersession note that
+# contains but does not correct it. AC #8's method is a grep for the key plus the LIGHT
+# sweep, neither of which can see a stale independence claim, so it stayed green over a
+# live contradiction. Pin the scoping, and pin the retired absolute's absence, in the one
+# file where being wrong would mislead the model rather than a reader.
+expect "shadow: the rationale is scoped to the false configuration" \
+  "$(printf '%s' "$SR" | grep -c 'In the .review_in_subagent: false. configuration — the only one where this pass runs at all' | tr -d ' ')" "1"
+expect "shadow: ...and no longer claims Phase 4 runs in the main loop unconditionally" \
+  "$(printf '%s' "$SR" | grep -c '^\*\*What it is for.*\*\* Phases 2, 3 and 4 all run in the main loop' | tr -d ' ')" "0"
 expect "shadow: it decides nothing -- stated as its own rule" \
   "$(printf '%s' "$SR" | grep -c '\*\*It decides nothing\.\*\*' | tr -d ' ')" "1"
 expect "shadow: ...sets no gate, reopens nothing, never routes" \

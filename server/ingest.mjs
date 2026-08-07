@@ -29,7 +29,7 @@ const COLUMNS = [
   "client_id", "plugin_version", "os", "schema_version",
   "model", "claude_code_version",
   "terminal_state", "tier", "tier_initial", "difficulty", "risk", "escalations", "task_type",
-  "fix_iterations", "review_iterations", "gate_b", "followups", "requirements_count",
+  "fix_iterations", "review_iterations", "review_rounds", "gate_b", "followups", "requirements_count",
   "drift_events", "preview_verdict", "external_status",
   "duration_min", "est_duration_min", "est_tokens", "act_duration_min", "act_tokens",
   "tokens_input", "tokens_output",

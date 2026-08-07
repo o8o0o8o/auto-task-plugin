@@ -1294,14 +1294,20 @@ expect "spine: P4 non-negotiable — batch spent once" \
 # be restated at every site stating the advance, and across three gates it produced more
 # defects in its own hardening than the hole could cost — LIGHT is max(D,R)<=2, and a
 # non-reopening finding breaks no AC, is not runtime-reachable and is not a security path.
-# The gap is now an ACCEPTED, DOCUMENTED limitation, and what this pins is that the rule is
-# uniform (park at every tier) and that the limitation is stated rather than silently
-# dropped. NOTE the surviving wording: "Once spent — at any later round, not just the batch
-# round". The batch-round-scoped phrasing it replaced was a live defect (Gate A round 3),
-# and the assertion that pinned it green is why the cross-file group in
-# tests/gate-b-loop.test.sh now exists.
+# The gap was an accepted, documented limitation and is now CLOSED: `lb_gate_b_cap light`
+# moved 0 -> 1, so Gate B re-grades a parked finding at every tier. This assertion used to
+# pin the pre-closure clause verbatim, and by doing so it actively HELD a false claim in
+# the always-loaded spine for a whole release -- one of four survivors the closure's own
+# sweep missed, and the only one wearing a green assertion. What it pins now is the
+# uniform rule plus the uniform re-grade; the retired clause's ABSENCE is pinned in
+# tests/gate-b-loop.test.sh, which owns the LIGHT-closure sweep and is already excluded
+# from it, so the retired phrasing does not have to be quoted here. NOTE the surviving
+# wording: "Once spent — at any later round, not just the batch round". The
+# batch-round-scoped phrasing it replaced was a live defect (Gate A round 3), and the
+# assertion that pinned it green is why the cross-file group in gate-b-loop.test.sh now
+# exists — the same lesson this line just re-taught.
 expect "spine: P4 non-negotiable — post-batch parks at EVERY tier" \
-  "$(spine_has "$SPINE_ONLY" '**parks at every tier**. On STANDARD/HEAVY Gate B re-grades it; **on LIGHT nothing does**')" "yes"
+  "$(spine_has "$SPINE_ONLY" '**parks at every tier**, where Gate B re-grades it at every tier too')" "yes"
 expect "spine: ...and the removed LIGHT hold has not crept back" \
   "$(grep -ciE 'surfaces on LIGHT|hold the gate' "$SPINE_ONLY" | tr -d ' ')" "0"
 expect "spine: P4 non-negotiable — record every round" \
