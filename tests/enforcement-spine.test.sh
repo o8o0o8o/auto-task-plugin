@@ -1288,7 +1288,8 @@ expect "spine: P4 non-negotiable — batch spent once" \
   "$(spine_has "$SPINE_ONLY" '**The batch is spent once per run**')"                                                  "yes"
 # GATE A FINDING (residual A), and its RESOLUTION HISTORY, because the shape of the answer
 # changed twice. On STANDARD/HEAVY a post-batch non-reopening finding parks safely, since
-# Gate B re-applies the identical test. LIGHT SKIPS GATE B, so that park is final. A
+# Gate B re-applies the identical test. LIGHT now runs Gate B too (one pass), so that park
+# is re-graded at every tier and the residual this described is closed. A
 # LIGHT-only HOLD was implemented to close it, and then REMOVED at Gate B pass 3: it had to
 # be restated at every site stating the advance, and across three gates it produced more
 # defects in its own hardening than the hole could cost — LIGHT is max(D,R)<=2, and a

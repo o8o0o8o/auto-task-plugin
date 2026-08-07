@@ -48,8 +48,9 @@ echo "================ Gate B: pass caps (loop-budget helpers) ================"
 
 expect "lb_gate_b_cap standard"                 "$(lb_gate_b_cap standard)" "2"
 expect "lb_gate_b_cap heavy"                    "$(lb_gate_b_cap heavy)"    "3"
-# LIGHT skips Gate B entirely, so 0 is "no pass permitted" -- NOT "unlimited".
-expect "lb_gate_b_cap light is 0 (gate skipped)" "$(lb_gate_b_cap light)"   "0"
+# LIGHT used to yield 0 ("no pass permitted", NOT "unlimited") because it skipped the
+# gate. It now runs it at one pass, so the self-review is no longer the only review.
+expect "lb_gate_b_cap light is 1 (one independent pass)" "$(lb_gate_b_cap light)" "1"
 # Degrade exactly like lb_cap_for_tier: unknown/empty -> the STANDARD value.
 expect "lb_gate_b_cap '' degrades to standard"  "$(lb_gate_b_cap '')"       "2"
 expect "lb_gate_b_cap bogus degrades to standard" "$(lb_gate_b_cap bogus)"  "2"
@@ -569,10 +570,11 @@ expect "P4: fail-closed on the orchestrator's own uncertainty" \
 expect "P4: an unplaceable finding counts as AC-breaking" \
   "$(printf '%s' "$P4" | grep -c 'treat it as AC-breaking and reopen' | tr -d ' ')" "1"
 # GATE A round-1 finding (residual A): the batch round's own non-reopening findings park,
-# which is safe ONLY because Gate B re-applies the identical test. LIGHT skips Gate B, so
-# that park is final and the gate passes over an unre-checked blocker/required. Present
-# tense deliberately: a LIGHT hold was built for this and REMOVED at Gate B pass 3, so this
-# is the accepted, documented state — see the limitation paragraph in the reference.
+# which is safe ONLY because Gate B re-applies the identical test. That is now true at
+# EVERY tier -- LIGHT runs Gate B at one pass, so the park is re-graded rather than final,
+# and the residual this comment used to describe is closed. A LIGHT-only hold was built for
+# it once and REMOVED; the closure deletes the special case instead of restoring the hold.
+# See the closure paragraph in the reference.
 expect "P4: the rule covers every round after the batch, not just that round" \
   "$(printf '%s' "$P4" | grep -c 'ONE rule covering every round after the batch' | tr -d ' ')" "1"
 # GATE-A ROUND-2 FINDING (runtime-reachable): the LIGHT exception was scoped to a finding
@@ -1009,14 +1011,94 @@ expect "light: the removed hold has not crept back into the spine" \
   "$(grep -ciE 'hold the gate|HELD, not passed|pending its surface' "$SPINEONLY" | tr -d ' ')" "0"
 expect "light: ...nor into the flowchart" \
   "$(grep -c 'P4Hold' "$ARCH" | tr -d ' ')" "0"
-expect "light: the LIGHT limitation is stated, not silently dropped" \
-  "$(printf '%s' "$P4" | grep -c 'The LIGHT-tier limitation, stated rather than engineered around' | tr -d ' ')" "1"
-expect "light: ...and records that a hold was tried and removed" \
-  "$(printf '%s' "$P4" | grep -c 'A LIGHT-only hold was implemented and then removed' | tr -d ' ')" "1"
-expect "light: ...and is honest that the loss is the MIS-GRADE catch, not a cosmetic residue" \
+# The limitation is now CLOSED: LIGHT runs Gate B at one pass, so the residue those
+# assertions guarded no longer exists. They are replaced rather than deleted, because
+# the reasoning that justified the closure is the thing most likely to be lost -- and
+# because a stale "the limitation is stated" assertion would keep passing while the
+# prose it pins describes a gap that is gone, which is a false guarantee, not a guard.
+expect "light: the closure is recorded, not silently swapped in" \
+  "$(printf '%s' "$P4" | grep -c 'The LIGHT-tier limitation, now closed' | tr -d ' ')" "1"
+expect "light: ...and states LIGHT now runs the gate, capped at one pass" \
+  "$(printf '%s' "$P4" | grep -c 'LIGHT now runs Gate B, capped at one pass' | tr -d ' ')" "1"
+expect "light: ...and the retired 'stated rather than engineered around' framing is GONE" \
+  "$(printf '%s' "$P4" | grep -c 'stated rather than engineered around' | tr -d ' ')" "0"
+expect "light: ...and still records that a hold was tried and removed" \
+  "$(printf '%s' "$P4" | grep -c 'a LIGHT-only hold was implemented and then removed' | tr -d ' ')" "1"
+expect "light: ...and keeps the MIS-GRADE argument that justified closing it" \
   "$(printf '%s' "$P4" | grep -c 'a mis-graded finding is by construction not cosmetic' | tr -d ' ')" "1"
-expect "light: ...and does not claim Gate B unconditionally follows" \
+expect "light: ...and keeps the measurement the one-pass cap rests on" \
+  "$(printf '%s' "$P4" | grep -c 'found in one pass what six Phase-4 rounds had missed' | tr -d ' ')" "1"
+expect "light: ...and still does not claim Gate B unconditionally follows" \
   "$(printf '%s' "$P4" | grep -c 'Gate B normally follows and re-applies the identical test' | tr -d ' ')" "1"
+# The cap is the mechanical half; the prose above is the reason. Pin both directions so
+# a future edit cannot quietly restore the skip through either one.
+# Sweep the WHOLE spec + test tree, not just the three files the closure edited. The
+# narrow version of this assertion passed while two stale claims survived -- a comment in
+# enforcement-spine.test.sh and a "skipped — tier=light" example in the handover report
+# template. Both were found by hand in review, which is the wrong mechanism. Excludes the
+# CHANGELOG (historical entries describe old behaviour and must keep saying so) and this
+# file (it names the retired phrases to assert their absence).
+expect "light: nothing outside the CHANGELOG still claims LIGHT skips Gate B" \
+  "$(grep -rniE 'LIGHT skips Gate B|skipped \(Gate A only\)|skipped at LIGHT|skipped for .tier=light|LIGHT SKIPS GATE B' \
+       "$ROOT/skills" "$ROOT/hooks" "$ROOT/tests" "$ROOT/README.md" 2>/dev/null \
+     | grep -vE '/(gate-b-loop\.test\.sh|spec-inventory\.sh):' | wc -l | tr -d ' ')" "0"
+# Both exclusions are load-bearing, not convenience: this file names the retired phrases in
+# order to assert their absence, and spec-inventory.sh must quote the retired base line
+# verbatim as its RETIRED_PREFIXES key. Excluding anything else would hide a real survivor.
+# `skipped_reason` itself is NOT dead -- user descope and park_non_blocking still write it.
+# Only the literal value `tier=light` is unwritable now, so pin that distinction: the field
+# survives, the tier-specific value does not.
+expect "light: skipped_reason survives as a field (descope path)" \
+  "$(grep -c 'skipped_reason' "$GATES" | tr -d ' ' | awk '{print ($1>0)?"yes":"no"}')"      "yes"
+expect "light: ...but no spec tells the model to write tier=light" \
+  "$(grep -rn 'tier=light' "$ROOT/skills" 2>/dev/null | wc -l | tr -d ' ')"                  "0"
+
+# ---- Shadow second opinion (opt-in, measurement only) ------------------------
+# The danger with this feature is not that it fails -- it is that it quietly becomes an
+# authority. Every assertion below pins the "decides nothing" half, because that is the
+# property that keeps it from reintroducing the review churn 0.29.0/0.30.0 bounded.
+SR="$(awk '/^### Shadow second opinion/,/^\*\*The per-round record is also/' "$GATES")"
+expect "shadow: the contract exists in the phase-4 reference" \
+  "$([ -n "$SR" ] && echo yes || echo no)"                                                       "yes"
+expect "shadow: default is OFF"                    "$(bash "$ROOT/hooks/settings.sh" get shadow_review 2>/dev/null)" "false"
+expect "shadow: the key is resolvable"             "$(bash "$ROOT/hooks/settings.sh" keys 2>/dev/null | grep -c '^shadow_review$' | tr -d ' ')" "1"
+expect "shadow: it appears in the merged defaults" "$(bash "$ROOT/hooks/settings.sh" all 2>/dev/null | jq -r '.shadow_review')" "false"
+expect "shadow: runs ONCE per run, after Phase 4 goes clean" \
+  "$(printf '%s' "$SR" | grep -c 'run this ONCE per run, immediately after Phase 4 sets' | tr -d ' ')" "1"
+expect "shadow: it decides nothing -- stated as its own rule" \
+  "$(printf '%s' "$SR" | grep -c '\*\*It decides nothing\.\*\*' | tr -d ' ')" "1"
+expect "shadow: ...sets no gate, reopens nothing, never routes" \
+  "$(printf '%s' "$SR" | grep -c 'sets no gate flag, reopens no round, blocks no commit' | tr -d ' ')" "1"
+expect "shadow: it MUST invoke the review skill, not a hand-rolled prompt" \
+  "$(printf '%s' "$SR" | grep -c 'invoke the `auto-task-code-review` skill' | tr -d ' ')" "1"
+expect "shadow: ...and the hand-rolled fallback is explicitly forbidden" \
+  "$(printf '%s' "$SR" | grep -c 'Do NOT hand it a hand-rolled review prompt' | tr -d ' ')" "1"
+expect "shadow: an unavailable skill records status, never a hand review" \
+  "$(printf '%s' "$SR" | grep -c 'record `status: \"unavailable\"`' | tr -d ' ')" "1"
+expect "shadow: spawned synchronously like every other Agent" \
+  "$(printf '%s' "$SR" | grep -c 'synchronously, per the synchronous-spawn rule at Gate A' | tr -d ' ')" "1"
+# READ-ONLY is load-bearing and has no mechanical backstop: general-purpose carries Edit and
+# Write, unlike task-execution-verifier's declared tool list. An edit here would move
+# reviewed_diff_sha after Phase 4 went clean and block the commit -- a measurement pass must
+# not be able to touch the artifact it measures.
+expect "shadow: the prompt must forbid edits" \
+  "$(printf '%s' "$SR" | grep -c 'prompt MUST forbid edits, in those words' | tr -d ' ')"    "1"
+expect "shadow: ...and says why the tool set makes it necessary" \
+  "$(printf '%s' "$SR" | grep -c 'carries the full tool set including `Edit`/`Write`' | tr -d ' ')" "1"
+expect "shadow: ...and names the reviewed_diff_sha consequence" \
+  "$(printf '%s' "$SR" | grep -c 'moves `gates.code_review.reviewed_diff_sha`' | tr -d ' ')" "1"
+expect "shadow: missed[] is graded by Phase 4's Step-A test BY REFERENCE" \
+  "$(printf '%s' "$SR" | grep -c 'taken by reference so the two cannot drift' | tr -d ' ')" "1"
+expect "shadow: it must never block the advance to Gate B" \
+  "$(printf '%s' "$SR" | grep -c 'never block the advance to Gate B' | tr -d ' ')" "1"
+expect "shadow: bounded to one pass with no loop" \
+  "$(printf '%s' "$SR" | grep -c 'one pass, one run, no loop' | tr -d ' ')" "1"
+# NEGATIVE CONTROL: no hook may read the object. If one ever does, the measurement has
+# become control flow and this assertion is the tripwire.
+expect "shadow: NO hook reads state.shadow_review" \
+  "$(grep -rl 'shadow_review' "$ROOT/hooks" 2>/dev/null | grep -v 'settings.sh' | wc -l | tr -d ' ')" "0"
+expect "shadow: the schema records that no hook reads it" \
+  "$(grep -c 'read by \*\*no hook at all\*\*' "$ROOT/skills/auto-task/references/state-schema.md" | tr -d ' ')" "1"
 
 # GATE-B PASS-2 REQUIRED (finding 3), and this block is SHORTER than what it replaces.
 # Pass 1 said Step C's comparand ("the previous round") fires on every batch round, since

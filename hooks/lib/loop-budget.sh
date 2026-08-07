@@ -165,17 +165,23 @@ lb_next_budget() {
 #   the next pass's findings. The fix-loop cap could not bound that, because it is
 #   only read by `git commit` and the loop never commits.
 #
-#   LIGHT yields 0 because LIGHT SKIPS GATE B ENTIRELY (the Effort-tiers table sets
-#   gate_b.skipped_reason='tier=light'). 0 here means "no pass is permitted", which
-#   is the honest encoding of "this tier does not run this gate" — a caller must not
-#   read it as "unlimited". An unrecognized or empty tier yields the STANDARD cap,
+#   LIGHT yields 1. It used to yield 0, encoding "this tier does not run this gate",
+#   and that is the line this change reverses: on LIGHT the Phase-4 self-review was
+#   the ONLY review the code ever got, because the orchestrator that wrote the diff
+#   also graded it and nothing independent followed. The argument for one pass is on
+#   the record in `references/phase-3-gates.md` and was measured, not assumed — the
+#   parking rule's own limitation note reported that "Gate B's first pass found in
+#   one pass what six Phase-4 rounds had missed". One rather than two because LIGHT
+#   is max(D,R)<=2 and the point is a single independent look, not a loop: the tier
+#   exists to be the fast path and a second pass would buy far less than the first.
+#   An unrecognized or empty tier yields the STANDARD cap,
 #   matching lb_cap_for_tier's default and the gate hook's `.effort.tier //
 #   "standard"`; the same caveat applies, namely that "unrecognized tier" and
 #   "absent effort object" are indistinguishable here, so a caller that must not
 #   enforce on a legacy run has to probe for absence itself.
 lb_gate_b_cap() {
   case "${1:-}" in
-    light)    printf '0' ;;
+    light)    printf '1' ;;
     heavy)    printf '3' ;;
     standard) printf '2' ;;
     *)        printf '2' ;;

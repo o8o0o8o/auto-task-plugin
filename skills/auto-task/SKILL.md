@@ -83,7 +83,7 @@ Define-phase scoring (see Phase 1 rubric) produces Difficulty (D) and Risk (R), 
 
 | Tier     | Range | `/auto-task-verify` scope                                  | Fix-loop cap | Gate B                          |
 |----------|-------|--------------------------------------------------|--------------|---------------------------------|
-| LIGHT    | 0-2   | types + unit                                     | 2            | skipped (Gate A only)           |
+| LIGHT    | 0-2   | types + unit                                     | 2            | run, max 1 pass                 |
 | STANDARD | 3-5   | types + unit + lint                              | 4            | run, max 2 passes               |
 | HEAVY    | 6-8   | types + unit + lint + build (+ e2e if touched)   | 6            | run, max 3 passes, cross-check  |
 
@@ -622,7 +622,7 @@ After the skill returns, append a TRACE.md entry: `operation: auto-task:phase-4-
 - Before STOPPING on Loop-rule "no progress": forced re-score. If the tier escalates, grant ONE more iteration at the new tier (expanded `/auto-task-verify`, larger fix-loop budget, Gate B reinstated if previously skipped). If that iteration also makes no progress, STOP. This one-iteration grant is a *no-progress* concession; the loop-budget ack is a *volume* concession granted by the user. They are independent, and a run can be subject to both.
 
 Exit conditions for this phase (the first bullet is **the advance condition** the contract above defers to):
-- **Zero reopening findings and an empty (or spent) `deferred[]`** → set `gates.code_review = { passed: true, tool: "skill:auto-task-code-review", clean_pass_after_last_fix: true, reviewed_diff_sha: "<sha>", at: <ISO>, evidence: "<summary; 0 reopening + deferred/parked>" }` → advance to Gate B (skipped at LIGHT — set `gates.gate_b.skipped_reason = "tier=light"`, go to Phase 5). The `tool` field MUST be that literal string. **`reviewed_diff_sha`** pins the round's diff — formula in `references/state-schema.md`, recomputed verbatim by `enforce-gates.sh`. Never copy a stale value forward.
+- **Zero reopening findings and an empty (or spent) `deferred[]`** → set `gates.code_review = { passed: true, tool: "skill:auto-task-code-review", clean_pass_after_last_fix: true, reviewed_diff_sha: "<sha>", at: <ISO>, evidence: "<summary; 0 reopening + deferred/parked>" }` → advance to Gate B, **at every tier** — LIGHT included, where it is the one independent look the code gets. The `tool` field MUST be that literal string. **`reviewed_diff_sha`** pins the round's diff — formula in `references/state-schema.md`, recomputed verbatim by `enforce-gates.sh`. Never copy a stale value forward.
 - Loop rule triggers (no progress / out-of-scope / blocker / flakiness), or **a fired convergence test** (`reopened` did not decrease) → STOP and surface (do NOT set `gates.code_review.passed`).
 
 ### Gate B — Adversarial verifier (auto, NO COMMIT)

@@ -46,9 +46,7 @@ flowchart TD
     P4Batch --> P4
     P4Cls -- zero reopening, deferred empty OR batch spent --> P4OK[park follow-ups in state<br/>post-batch non-reopening blocker/required parks at every tier<br/>set gates.code_review.passed=true<br/>tool='skill:auto-task-code-review'<br/>clean_pass_after_last_fix=true]
 
-    P4OK --> Tier{tier?}
-    Tier -- LIGHT --> SkipB[gates.gate_b.skipped_reason='tier=light']
-    Tier -- STANDARD/HEAVY --> GateBCap{passes for this scope<br/>&lt; lb_gate_b_cap?<br/>budget OK?}
+    P4OK --> GateBCap{passes for this scope<br/>&lt; lb_gate_b_cap?<br/>budget OK?}
     GateBCap -- at cap --> GateBSurface([SURFACE — per-pass severity table<br/>grant: +1 pass / park_non_blocking / descope<br/>expected_next_action=user-approval])
     GateBSurface -- "+1 pass" --> GateBCap
     GateBSurface -- park / descope --> GateBOK
@@ -60,7 +58,6 @@ flowchart TD
     GateBCls -- "no — park whatever the label" --> GateBOK[gates.gate_b.passed=true]
     GateBCls -- "2nd self_inflicted pass,<br/>or CONVERGED (count stopped falling)" --> GateBSurface
 
-    SkipB --> P5
     GateBOK --> P5[Phase 5 — Handover<br/>SINGLE COMMIT phase]
 
     P5 --> P5Verify{verify gates:<br/>code_review.passed AND<br/>(gate_b.passed OR skipped_reason)}
@@ -139,7 +136,7 @@ Difficulty (D) and Risk (R) each scored 0–8 in Phase 1. Tier = `max(D, R)`.
 
 | Tier | Range | `/auto-task-verify` scope | Fix-loop cap | Gate B |
 |---|---|---|---|---|
-| LIGHT | 0–2 | types + unit | 2 | skipped (`gate_b.skipped_reason='tier=light'`) |
+| LIGHT | 0–2 | types + unit | 2 | run, max 1 pass |
 | STANDARD | 3–5 | types + unit + lint | 4 | run, max 2 passes |
 | HEAVY | 6–8 | types + unit + lint + build (+ e2e if touched) | 6 | run, max 3 passes, cross-check |
 

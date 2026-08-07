@@ -354,7 +354,26 @@ RETIRED_PREFIXES = {
   # Effort-tiers table: the STANDARD and HEAVY rows' `Gate B` cell said only "run"
   # / "run, with cross-check pass" and named no pass bound. Both now carry the
   # per-tier pass cap (2 / 3), documenting `lb_gate_b_cap` in `loop-budget.sh`
-  # rather than duplicating it. LIGHT is unchanged -- it skips Gate B entirely.
+  # rather than duplicating it.
+  #
+  # LIGHT's row retires too, and for a behavioural reason rather than a wording one: the
+  # tier no longer skips Gate B. It ran Phase-4 self-review as the ONLY review the code
+  # ever got -- the orchestrator that wrote the diff also graded it, with nothing
+  # independent following. It now runs Gate B at one pass (`lb_gate_b_cap light` -> 1).
+  # The replacement states a real bound where the retired line stated an absence, so it
+  # can only ever subject a LIGHT run to MORE scrutiny, never less. The parking rule's
+  # documented LIGHT limitation is closed by the same change and rewritten in place, with
+  # its mis-grade reasoning and its measurement kept -- `tests/gate-b-loop.test.sh` pins
+  # the closure in both directions, including that no spec file still claims the skip.
+  '| LIGHT    | 0-2   | types + unit                                     | 2            | skipped (Gate A only)': 1,
+  # Two consequence lines of the same closure, in the re-gate references. Both asserted
+  # "LIGHT skips Gate B by design" as a standing fact and both are now false; the handover
+  # report template additionally offered `skipped — tier=light` as an example skip reason,
+  # a value nothing can write any more. `skipped_reason` the FIELD is untouched and still
+  # written by user descope and park_non_blocking -- only the tier-specific value retires,
+  # and `tests/gate-b-loop.test.sh` pins exactly that distinction in both directions.
+  '**Exception 2 — Phase 6 bot-fix commits (opt-in).** When `bot_review_autofix` is on, Phase 6': 1,
+  '   - **Gate B** (adversarial verifier): <gates.gate_b.evidence; or "skipped — tier=light"': 1,
   '| STANDARD | 3-5   | types + unit + lint                              | 4            | run  ': 1,
   '| HEAVY    | 6-8   | types + unit + lint + build (+ e2e if touched)   | 6            | run, w': 1,
   # State schema: `gates.gate_b` gained the pass-accounting fields (`passes[]`,
