@@ -489,6 +489,46 @@ RETIRED_PREFIXES = {
   # where the other install-time mechanics live; conservation still finds the line, and
   # `restated` stays 0 because it is no longer in both files. It paid for the new table
   # row. Nothing was paraphrased away.
+  #
+  # --- The PR body's `## Summary` bullets became an unheaded ≤300-char lede, and a
+  # --- new `## Review this first` section was added above the change diagram -------
+  #
+  # The two heading lines below are retired because the section itself is repealed,
+  # not reworded. Its job — "what does this PR do" in a form you read first — is now
+  # done by the lede, and the DETAIL its bullets carried is carried better by
+  # `## Task breakdown — planned vs. done`, which states intent vs. reality per
+  # requirement with the AC evidence that proves each row. That table already existed
+  # and already subsumed the bullets; keeping both meant a reviewer read the same
+  # content twice, which is what trained them to skip both. So this is a genuine
+  # repeal of a duplicate surface, not a contract that moved.
+  '   ## Summary': 1,
+  '   <2-4 bullets from the approved plan>': 1,
+  #
+  # The external-changes banner line retires for ONE word: it said the banner sits
+  # "directly under Summary", and the section it named no longer exists. The banner's
+  # contract is unchanged and its position is unchanged — it is still the element
+  # directly beneath the body's opening, which is now the lede. Purely a referent fix.
+  '   <ONLY when the run has declared external actions AND they are not yet `applied-verified` (else omit this heading entirely). Placed directly under Summary': 1,
+  #
+  # The voice sentence retires to re-point its list of free-prose surfaces. Every
+  # clause it carried still holds — free prose takes the voice, machine-structured
+  # content does not — but two of the named surfaces changed: the `## Summary`
+  # bullets are gone, and two new free-prose surfaces exist (the lede, and the
+  # "what to look at" half of each `## Review this first` line). The replacement
+  # also states MORE than the retired line: it names the lede's 300-char cap as a
+  # hard constraint outranking voice, which the retired line did not cover because
+  # the surface did not exist.
+  "   Write the PR's **free-prose** parts — the title, the `## Summary` bullets, and `## Run notes`": 1,
+  #
+  # Same edit, mirrored in the comment-voice reference: the VOICE.md application
+  # bullet retires to name the lede and the highlight lines instead of the retired
+  # bullets. The rule is identical; only the enumeration of surfaces moved.
+  "- **Found a non-empty VOICE.md** → treat it as the tone/phrasing guide for the comment's **free prose**": 1,
+  #
+  # The per-surface length-limit bullet retires to ADD the lede's 300-char cap
+  # alongside the ticket comment's brevity rule and the PR title's 70-char cap.
+  # Strictly additive — every limit the retired line bound is still bound.
+  '- the **per-surface length/brevity limits** — the ticket comment\'s "keep it short / tightly phrased" rule': 1,
 }
 
 bc = collections.Counter(l for l in base if l.strip())

@@ -25,7 +25,7 @@ Fall-through, not first-*present*: if the project-local file is **absent, empty,
 
 **Apply the resolved voice:**
 
-- **Found a non-empty VOICE.md** → treat it as the tone/phrasing guide for the comment's **free prose**: the ticket-comment question wording, the PR `## Summary` bullets and `## Run notes`, the PR title, and the preview verdict sentence. Match its voice; do not quote or mention the file.
+- **Found a non-empty VOICE.md** → treat it as the tone/phrasing guide for the comment's **free prose**: the ticket-comment question wording, the PR body's opening **lede** and `## Run notes`, the "what to look at" half of each `## Review this first` line, the PR title, and the preview verdict sentence. Match its voice; do not quote or mention the file.
 - **Found none** → use the built-in default style contract already specified at each surface (this is the pre-VOICE behavior, unchanged).
 
 **Hard constraints always outrank voice.** VOICE.md shapes *how the prose reads*, never *what may appear*. It does **not** override, relax, or reinterpret:
@@ -33,7 +33,7 @@ Fall-through, not first-*present*: if the project-local file is **absent, empty,
 - the **no-AI-attribution** rule (no `Co-Authored-By: Claude`, no "🤖 Generated with…", no AI-authorship marker) on any commit message, PR title, PR body, **or PR comment** — including the Phase-7 preview verdict comment;
 - the **ticket-comment structural contract** (no names, no greetings/salutation, strictly-business functional questions only);
 - the **PR body's machine-structured content** — the required section headings, the task-breakdown/AC tables, the AC checklist, the Mermaid change diagram, and the `## Visual changes` before/after table stay verbatim and structural. Voice touches narrative prose, not tables, checklists, headings, diagrams, or embedded images;
-- the **per-surface length/brevity limits** — the ticket comment's "keep it short / tightly phrased" rule and the PR title's "under 70 chars" cap. A verbose or essayistic voice does not license a bloated ticket comment or an over-length PR title; trim to fit the limit while keeping the voice.
+- the **per-surface length/brevity limits** — the ticket comment's "keep it short / tightly phrased" rule, the PR title's "under 70 chars" cap, and the PR body lede's **300-char** cap. A verbose or essayistic voice does not license a bloated ticket comment, an over-length PR title, or a lede that runs past 300 characters; trim to fit the limit while keeping the voice.
 
 If the resolved voice would push a comment to violate any of the above, the constraint wins and the voice yields.
 

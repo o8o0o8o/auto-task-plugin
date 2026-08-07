@@ -111,6 +111,24 @@ This is the **only phase that commits**. By the time you reach it, the working t
 
    **Persist the source.** Save the chosen diagram (or the skip line, or — for a pure visual change — the line `Visual change — before/after embedded under ## Visual changes, no Mermaid.`) to `.auto-task/<branch>/recon/change-diagram.mmd` so it can be regenerated on resume. Log a `state.history` entry: `{ phase: "handover-diagram", type: "<flowchart|sequenceDiagram|stateDiagram-v2|erDiagram|visual|skipped>", reason: "<one line>", at: "ISO-8601" }`.
 
+2b. **Collect `## Review this first` candidates.** Assemble the small set of places a reviewer should look at BEFORE reading the rest of the diff. Four detectors feed it, from two sources.
+
+   **Diff-side (three detectors) — `hooks/review-highlights.sh`.** Locate it with the three-probe pattern (`CLAUDE_PLUGIN_ROOT` is empty in the Bash-tool env), then `bash "$rh" --repo "$(git rev-parse --show-toplevel)" --base "<state.base>"`. It emits `weakened-check` (a guard/validation/assertion removed, a test file deleted, a skip marker added, an error swallowed by an empty handler), `contract` (a migration/schema/IDL file, an exported declaration's signature line, a `package.json` entry point), and `untested` (a logic file changed with no co-changed test naming it).
+
+   **Two output shapes, and they are NOT the same fact.** `{"candidates":[...]}` — possibly an empty array — means the helper ran; `{}` means it could not. Probe with `jq -e 'has("candidates")'` **first**: `jq '.candidates|length'` *errors* on `{}`, so a length check cannot tell them apart. An empty array means the diff is clean. A `{}` means the helper failed, so log `{ phase: "handover-highlights", result: "helper-unavailable", at }` — the absence is then attributable rather than mistaken for a clean diff. Fail-open either way: this step never blocks a commit.
+
+   **Neither shape decides whether the section renders.** Both describe only the **diff-side** contribution. The state-side detector below is independent and runs regardless — it reads STATE.json, not the helper — so an empty or failed helper means *"the three diff-side detectors contributed nothing"*, never *"omit the section"*. Getting this backwards would discard the one detector no generic tool can produce, and it would do so precisely when the helper is unavailable and the state-side signal is all that is left. **The section's emission is decided once, at the end of this step: it renders when at least one candidate survives ranking, from either source, and is omitted otherwise.**
+
+   **State-side (the fourth detector) — "the run fought here."** Read it from STATE.json; no helper is involved. A path qualifies when it appears in **≥2** of: a `gates.code_review.rounds[].files` entry, a `gates.gate_b.passes[].fixed_lines[].path` entry, or a `gates.code_review.deferred[].location`. **Absent `files` is tolerated, never an error** — a legacy or resumed run whose rounds predate that key simply contributes no Phase-4 paths, and the detector falls back to the Gate-B and deferred sources (same absent-tolerance `references/state-schema.md` already specifies for `rounds[]` itself). This detector is the one no generic tool can produce: it says where *this run* struggled.
+
+   **Rendering a candidate — how the JSON becomes the line.** A diff-side candidate is `{detector, path, line, evidence}`: `path:line` becomes the coordinate, and `evidence` becomes the parenthetical reason; you write the "what to look at" half yourself, in the resolved Comment voice. Two coordinate rules:
+   - **A `weakened-check` on a REMOVED line cites a PRE-IMAGE coordinate** — the line no longer exists in the new file. Its `evidence` ends `(removed)`; carry that marker into the rendered parenthetical so the reviewer knows the number refers to the old file, e.g. `src/auth.ts:88 — the null guard here is gone (guard removed)`. Never silently present a pre-image number as if it were a current line.
+   - **A `line` of `null` means "no coordinate exists" — render `path — …`, dropping the `:line` half, and never invent one.** This covers two cases. **(i)** Diff-side *whole-file* candidates: a deleted test, a migration/schema file. The finding is about the FILE, so the helper emits `line: null` rather than pinning it to line 1. **(ii)** The state-side detector, whose three sources are path-only (`rounds[].files` and `fixed_lines[].path` are plain paths; `deferred[].location` is free-form and may carry no line at all). If a `deferred[].location` happens to carry a usable `file:line`, you MAY use it; otherwise omit. A fabricated coordinate is worse than none: it sends the reviewer somewhere arbitrary, which is the same failure the pre-image rule above exists to prevent.
+
+   **Dedup, then rank, then cap.** **One line per path** — a path that fires several detectors (a migration that was also revisited across rounds; a logic file both untested and fought-over) renders **once**, under its highest-precedence detector, with the others named inside the parenthetical (`… (public surface; also revisited across 3 fix rounds)`). Without this, one path eats two of the few slots and pushes a distinct finding out. Precedence, highest first: `weakened-check` → `contract` → run-fought → `untested`; break ties by path. Then keep **at most 5**.
+
+   Write the surviving lines into the PR body's `## Review this first` section (step 10). If nothing survives, omit that heading entirely. Log `{ phase: "handover-highlights", candidates: <n>, rendered: <n>, at: "ISO-8601" }`.
+
 3. **Collect verification artifacts.** Before writing CONTEXT.md, gather the proofs of completion that confirm the fix/feature actually works, and save them under `.auto-task/<branch>/artifacts/`. These are gitignored — they exist for local review, future `/auto-task-code-review` sessions, and your own audit trail. Examples per task shape:
    - **Tests added/touched.** Save `<test-runner> <changed-test-paths> 2>&1` output as `artifacts/tests.txt`. Include exit code on the last line.
    - **Type / lint / build.** Save the final passing run as `artifacts/typecheck.txt`, `artifacts/lint.txt`, `artifacts/build.txt` (only the runs whose ACs reference them).
@@ -298,16 +316,28 @@ This is the **only phase that commits**. By the time you reach it, the working t
 10. Create the PR with `gh pr create`. Title from the plan summary (under 70 chars). Body:
 
    ```
-   ## Summary
-   <2-4 bullets from the approved plan>
+   <THE LEDE — the first thing in the body, and deliberately NOT a heading. One paragraph of plain prose, hard cap **300 characters** (target 150-250), answering what changed and why. It is **unheaded** on purpose: a heading above the first line defeats "read this before deciding whether to read on".
+
+   Form is fixed: **no heading, no bullets, no code fences, no bold**. One paragraph, nothing else. The 300-character cap is HARD — trim to fit rather than running over, exactly as the PR title's 70-char cap works. There is no separate summary section any more: the detail that used to live in its bullets is carried, better, by `## Task breakdown — planned vs. done` below. Do NOT reintroduce a bulleted summary section alongside this lede — the duplication is exactly what the lede replaced, and a reviewer who reads the same content twice learns to skip both.>
 
    ## ⚠ External changes required — TASK NOT DONE UNTIL APPLIED
-   <ONLY when the run has declared external actions AND they are not yet `applied-verified` (else omit this heading entirely). Placed directly under Summary so it is impossible to miss. Content:
+   <ONLY when the run has declared external actions AND they are not yet `applied-verified` (else omit this heading entirely). Placed directly under the lede so it is impossible to miss. Content:
    - A bold line: "**⚠ This task is NOT complete until the external change(s) below are applied to the live system.** Shipping this code alone does not finish the task."
    - A row per external action: target system, what it changes, the apply method (command/steps), and how it's verified.
    - A **Rollback / recovery** subsection: per action, its rollback steps, or "IRREVERSIBLE — cannot be undone".
    - The current status (`declared` / `awaiting-external`) and how it gets applied (auto in Phase 8, or via this runbook + `/auto-task` resume).
    On `applied-verified`, Phase 8 REPLACES this section with a "✅ External changes applied and verified" confirmation (see Phase 8 step 5). This section is structural — never voice-shaped, never dropped while unapplied.>
+
+   ## Review this first
+   <ONLY when at least one candidate survives ranking (else **omit this heading entirely**, exactly as `## Visual changes` does). The candidates come from step 2b. Content: **at most 5** items — three to five is the working range — one line each, in the form
+
+   `path:line — <what to look at> (<why it was flagged>)`
+
+   (The `:line` half is omitted for a candidate that has no coordinate — see step 2b's rendering rules.)
+
+   Every line MUST read as a review instruction, not a badge. "`src/auth.ts:88 — the null guard added in a1b2c3 for #412 is gone (guard removed)`" tells a reviewer what to do; "`src/auth.ts — hot file`" does not. Write the "what to look at" half in the resolved Comment voice; the `path:line` coordinate and the parenthetical reason stay structural.
+
+   This section exists to spend the reader's first attention well, so it is bounded on purpose: a block that fires on every PR is one nobody reads by the third one. Do NOT restate what another section already carries — drift belongs to `## Task breakdown` (its `⚠️ changed` / `➕ added` rows), the assumptions ledger has its own surface, and an unresolved INCONCLUSIVE AC cannot reach Phase 5 at all.>
 
    ## Change diagram
    ```mermaid
@@ -346,7 +376,7 @@ This is the **only phase that commits**. By the time you reach it, the working t
    <items from state.followups, if any>
    ```
 
-   Write the PR's **free-prose** parts — the title, the `## Summary` bullets, and `## Run notes` — in the resolved **Comment voice** (see the `## Comment voice` section). The machine-structured parts (every `##` heading, the task-breakdown / AC tables, the AC checklist, the Mermaid diagram, the `## Visual changes` before/after table) stay verbatim and structural — voice does not touch them.
+   Write the PR's **free-prose** parts — the title, the **lede**, the "what to look at" half of each `## Review this first` line, and `## Run notes` — in the resolved **Comment voice** (see the `## Comment voice` section). The machine-structured parts (every `##` heading, the task-breakdown / AC tables, the AC checklist, the Mermaid diagram, the `## Visual changes` before/after table, and each `## Review this first` line's `path:line` coordinate and parenthetical reason) stay verbatim and structural — voice does not touch them. **The lede's 300-character cap is a hard constraint that outranks voice**, on the same terms as the PR title's 70-char cap.
 
    Per the global rule in `~/.claude/CLAUDE.md`: do NOT add a `Co-Authored-By: Claude` trailer, a `🤖 Generated with [Claude Code]` line, or any other AI-attribution marker to the PR body or title. This is a hard constraint that outranks any `VOICE.md`.
 
