@@ -59,7 +59,7 @@ When all tasks are checked:
 ## Rules
 
 - Implement tasks in the order specified. Do not skip or reorder.
-- If a task is unclear, use AskUserQuestion to clarify before proceeding.
+- If a task is unclear, use AskUserQuestion to clarify before proceeding. Ask in plain language — say what you're stuck on and what changes depending on the answer, without internal vocabulary; offer concrete options rather than an open-ended question.
 - If a task fails or cannot be completed, add a note under the task in PLAN.md and ask the user how to proceed. Do not mark it as complete.
 - Always update the checkbox in PLAN.md immediately after completing each task. This is critical for session resumption.
 - Do not modify the plan structure -- only update checkboxes and add notes under tasks if needed.

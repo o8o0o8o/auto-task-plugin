@@ -531,7 +531,7 @@ A live, approved, non-`done` run whose newest history entry is older than the st
 
 The telemetry above is **local only** — nothing leaves your machine. If you want to send the same quality/performance signals to a central endpoint (to build a cross-user dashboard later), there is a **separate, explicit, off-by-default** remote path. It is independent of the local `outcomes.jsonl` opt-in.
 
-**You are asked once per repo.** The first time you run `/auto-task` in a repo with no telemetry decision recorded, Phase 1 asks a single consent question — *"Share anonymous auto-task telemetry from this repo?"* — with **Enable** / **No thanks (don't ask again)**. Your answer is saved to that project's settings (`telemetry_enabled: true` or `false`), so you're never asked again for that repo. Declining is remembered as a decision. It's off until you answer; a headless run with no prompt available just stays off.
+**You are asked once per repo.** The first time you run `/auto-task` in a repo with no telemetry decision recorded, Phase 1 asks a single consent question — *"Send anonymous usage stats for this repo?"* — with **No thanks** / **Yes, send anonymous stats**. Your answer is saved to that project's settings (`telemetry_enabled: true` or `false`), so you're never asked again for that repo. Declining is remembered as a decision. It's off until you answer; a headless run with no prompt available just stays off.
 
 **Or set it yourself** with a single key in the [project or global settings](#project-settings-opt-in):
 
@@ -564,7 +564,7 @@ That's all a user needs — the **destination is pre-wired**. `telemetry_endpoin
 | `cleanup` | Dead-code or file removal |
 | `other` | Anything that doesn't fit the labels above |
 
-**Satisfaction prompt.** When telemetry is on, the single existing Phase-5 push prompt gains one extra question — *"Did this run produce a correct, satisfactory result?"* (`yes`/`mostly`/`no`/`skip`) — plus an **optional free-text comment**. So no new interruption point is introduced. Set `telemetry_satisfaction_prompt: false` to collect metrics without the prompt. The comment is the one field that isn't auto-anonymized — it is **whatever you type**, sent verbatim (capped 500 chars) to your endpoint, so leave it blank if you don't want free text to leave the machine.
+**Satisfaction prompt.** When telemetry is on, the single existing Phase-5 push prompt gains one extra question — *"Did this run give you what you wanted?"* (Yes / Mostly / No / Rather not say) — plus an **optional free-text comment**. So no new interruption point is introduced. Set `telemetry_satisfaction_prompt: false` to collect metrics without the prompt. The comment is the one field that isn't auto-anonymized — it is **whatever you type**, sent verbatim (capped 500 chars) to your endpoint, so leave it blank if you don't want free text to leave the machine.
 
 **Reset or opt out.**
 - Opt out: set `telemetry_enabled: false` (or remove the endpoint). Data stops immediately.

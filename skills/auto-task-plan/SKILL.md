@@ -20,7 +20,7 @@ Create a structured implementation plan from requirements. Produces `.auto-task/
 ### 1. Gather context
 
 - Read `CLAUDE.md` in the project root (if it exists) for project conventions, tech stack, commands, and structure.
-- Ask the user for requirements if not already provided. Use AskUserQuestion to clarify ambiguity before planning.
+- Ask the user for requirements if not already provided. Use AskUserQuestion to clarify ambiguity before planning. Write those questions in plain language: no internal vocabulary, one decision per question, options phrased as the answer the user is choosing ("Keep the old URLs working", not "backward-compat mode"), and lead with the option you'd pick yourself, marked `(Recommended)`.
 
 ### 2. Explore the codebase
 

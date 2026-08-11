@@ -559,6 +559,78 @@ RETIRED_PREFIXES = {
   # alongside the ticket comment's brevity rule and the PR title's 70-char cap.
   # Strictly additive — every limit the retired line bound is still bound.
   '- the **per-surface length/brevity limits** — the ticket comment\'s "keep it short / tightly phrased" rule': 1,
+
+  # --- PLAIN-LANGUAGE REWRITE of every string a HUMAN reads --------------------
+  # Each line below is reworded, in this same commit, by the `user-facing-voice`
+  # rule now recorded in `references/phase-1-preamble.md` (and pointed at from the
+  # spine's `## Comment voice` section). The rule governs WORDING ONLY: it forbids
+  # bare plugin jargon in a prompt, demands the consequence before the mechanism,
+  # one decision per question, options phrased as answers, and the recommendation
+  # first. Rule 9 makes the direction one-way -- "never lose a constraint to
+  # brevity": what leaves the machine, what becomes public, and what cannot be
+  # undone must still appear, in ordinary words. So each replacement states the
+  # SAME contract as the line it retires, and several state MORE of it than the
+  # retired line did (the screenshots prompt now says the images are publicly
+  # viewable; the Phase-8 prompt now says which actions cannot be undone in the
+  # option description as well as the list). No control flow, gate, yield,
+  # `expected_next_action`, or recorded-state write changed at any of these sites.
+  #
+  # Model-facing text is deliberately NOT in this set: hook stderr, spec prose,
+  # agent instructions and `state.history`/TRACE entries stay precise, because
+  # simplifying them would weaken guarantees rather than clarify a decision.
+  #
+  # ONE ENTRY BELOW IS NOT A VOICE REWRITE -- recorded separately so this comment
+  # stays honest. The `## Comment voice` opening line was tightened to PAY FOR the
+  # new plain-language pointer in the same section: the spine sits close under its
+  # 120 KB cap, so the pointer could only land if the paragraph shrank by at least
+  # as much. (This change was authored against 0.32.0, where the headroom was 29 B,
+  # and rebased onto 0.34.0, where it is 298 B. The trim is kept either way: it is
+  # what makes the pointer free, and the spine stays byte-identical to its base.) Comment voice governs prose OTHER people read on a ticket or PR, which
+  # the new rule explicitly does not cover, so no voice rule applies to it at all.
+  # The trim dropped three things, none load-bearing, each checked: "paste-ready"
+  # (the Phase-1 step still renders a "paste-ready ticket comment" verbatim);
+  # "on a ticket or a PR" (the surviving "someone else reads" carries the only
+  # distinction that matters -- other people, not the user at the terminal); and
+  # the sentence "This section is the single source of truth for that; the three
+  # comment surfaces reference it rather than re-specifying it." That last one was
+  # a RESTATEMENT, not the mechanism: all three surfaces still point back on their
+  # own (`phase-5-handover.md` "in the resolved **Comment voice** (see the
+  # `## Comment voice` section)", `phase-6-8-post-pr.md` the same), so the
+  # single-source behaviour is enforced by the referring sites, not by this line.
+  # All THREE comment surfaces carry their own pointer -- verified individually:
+  # phase-1-preamble.md "Draft the question wording in the resolved **Comment
+  # voice** (see the `## Comment voice` section above)" for the ticket comment,
+  # phase-5-handover.md for the PR title/body, phase-6-8-post-pr.md for the
+  # Phase-7 preview verdict comment.
+  'Every user-facing **comment** this pipeline drafts — the Phase-1 paste-ready **ticket comment**, the': 1,
+  '3. **Decide:** if `$out` is **non-empty** (a newer version exists), ask ONCE via `AskUserQuestion`:': 1,
+  '3. **Ask exactly once** via a single `AskUserQuestion` (part of the Phase-1 human surface; `approved': 1,
+  '4. **Ask exactly once** via a single `AskUserQuestion` (Phase-1 surface; set `expected_next_action:': 1,
+  '   **Step 4a — routing question (ALWAYS FIRST, MANDATORY).** This step runs only when the Asked buck': 1,
+  '   - **`Answer them here`** — the user answers inline now.': 1,
+  '   - **`Give me a comment to forward`** — render a paste-ready ticket comment the user drops into th': 1,
+  '   - Set `expected_next_action: "user-approval"` (a legitimate Phase-1 pause while `approved:false`': 1,
+  '   - **Close call OR high-stakes choice** — when no candidate clearly dominates, OR the choice touch': 1,
+  '      - `ask` → **degrade to `always`, without yielding, when the run cannot legitimately stop**: `s': 1,
+  '   - **If required:** set `gates.merge = { required: true, acked: false, reason: "<autonomous-direct': 1,
+  '8. **Yield-point: push / PR prompt (+ optional satisfaction).** In `supervised` mode (or `autonomous': 1,
+  '   **Satisfaction piggyback (only when telemetry is on).** Read the merged settings (`settings.sh ge': 1,
+  '   - **`ask` (default):** one `AskUserQuestion` for permission + credentials (set `expected_next_act': 1,
+  #
+  # SURFACING PROTOCOL step 3, retired by the SAME plain-language rule but in the
+  # spine rather than a reference (code review found the spine had been reverted
+  # during the byte-budget rework and never re-fixed, so its loop-rule status
+  # message still told the model to name the clause). Each replacement keeps the
+  # required CONTENT and adds a wording constraint on top: "why stopped" still
+  # demands the clause + evidence and now also demands ordinary words; "next move"
+  # still demands a concrete move and now caps it at one recommendation rather
+  # than "one or two", which is strictly narrower, per the dont-menu-the-user rule.
+  # The lead-in gains "in plain language". Paid for byte-for-byte by tightening the
+  # `## Comment voice` pointer in the same commit -- the spine is byte-identical.
+  '3. Write a short status to the user including:': 1,
+  '   - **Why stopped** — which loop-rule clause triggered, with evidence.': 1,
+  '   - **Suggested next move** — one or two concrete options for the user.': 1,
+  '   - `ask` → **degrade to `always`, without yielding, when the run cannot legitimately stop**: `stat': 1,
 }
 
 bc = collections.Counter(l for l in base if l.strip())
@@ -610,6 +682,31 @@ for f in refs:
         if len(t) >= 40 and t in spine_sub:
             restated.append((os.path.basename(f), t))
 
+# 4. DANGLING REFERENCE PATH — every `references/<name>.md` a spec file names must
+#    resolve to a file that exists. Found the hard way: the plain-language pass
+#    drafted its rule as `references/user-facing-voice.md`, then folded the content
+#    into `phase-1-preamble.md` to fit the spine's byte cap and deleted the file --
+#    leaving three MANDATORY-READ-style directives pointing at nothing. Nothing in
+#    the suite noticed, because every other guard greps for PHRASES and the phrase
+#    was still there. A model following one of those directives finds no file and
+#    silently falls back to its own judgment, so the rule stops binding exactly
+#    where it was most explicitly invoked. This check is the counterweight, and it
+#    belongs here rather than in enforcement-spine.test.sh because that file's
+#    assertion count is pinned to a published CHANGELOG figure.
+SKILLS = os.path.dirname(os.path.dirname(refdir))   # <root>/skills
+ROOT   = os.path.dirname(SKILLS)
+ref_names = set(os.path.basename(f) for f in refs)
+dangling = []
+# dict.fromkeys, not a set: the spine is BOTH spine_p and a `skills/*/SKILL.md`
+# glob hit, and a plain concatenation reported a spine-side dangling ref twice.
+scan_set = list(dict.fromkeys(
+    [spine_p] + sorted(refs) + sorted(glob.glob(os.path.join(SKILLS, '*', 'SKILL.md')))))
+for f in scan_set:
+    for i, l in enumerate(lines_of(f), 1):
+        for m in re.findall(r'references/([A-Za-z0-9._-]+\.md)', l):
+            if m not in ref_names:
+                dangling.append((os.path.relpath(f, ROOT), i, m))
+
 print("missing=%d retired=%d duplicated=%d restated=%d base_lines=%d spec_files=%d"
       % (len(missing), len(RETIRED), len(duplicated), len(restated), sum(bc.values()), 1 + len(refs)))
 bad = False
@@ -629,6 +726,10 @@ for l in stale_retired:
 for pref, n in bad_prefixes:
     print("  BAD RETIRED PREFIX (matched %d distinct base lines, want exactly 1): %s"
           % (n, pref[:100]), file=sys.stderr)
+    bad = True
+for f, i, m in dangling:
+    print("  DANGLING REFERENCE (%s:%d points at references/%s, which does not exist)"
+          % (f, i, m), file=sys.stderr)
     bad = True
 sys.exit(1 if bad else 0)
 PYEOF

@@ -382,9 +382,11 @@ The gate that fires is a function of `autonomy` × `landing_model`:
 
 ## Comment voice
 
-Every user-facing **comment** this pipeline drafts — the Phase-1 paste-ready **ticket comment**, the Phase-5 **PR title + body**, and the Phase-7 **preview verdict** PR comment — is prose someone else reads on a ticket or a PR. When the user has a house writing voice, those comments should sound like it. This section is the single source of truth for that; the three comment surfaces reference it rather than re-specifying it.
+Every user-facing **comment** this pipeline drafts — the Phase-1 **ticket comment**, the Phase-5 **PR title + body**, the Phase-7 **preview verdict** comment — is prose someone else reads. When the user has a house voice, they should sound like it.
 
-**MANDATORY READ:** read `references/phase-1-preamble.md` before acting here. This summary is an index, NOT the contract. It carries the `VOICE.md` resolution order, the per-surface application, and the full hard-constraint list.
+**Plain language binds every string a human reads** — questions, labels, prompts, pause/surfacing messages. Model-facing text is exempt.
+
+**MANDATORY READ:** read `references/phase-1-preamble.md` before acting here. This summary is an index, NOT the contract. It carries the `VOICE.md` resolution order, the per-surface application, the hard-constraint list, and the plain-language rules.
 
 **Hard constraints always outrank voice**, which shapes *how prose reads*, never *what may appear*: **no AI attribution** (no `Co-Authored-By: Claude`, no "🤖 Generated with…") on any commit message, PR title, PR body or PR comment; the **ticket-comment contract** (no names, no greetings, functional questions only); the PR body's **machine-structured content** stays verbatim; and the **per-surface length limits** hold.
 
@@ -805,10 +807,10 @@ When the workflow stops mid-pipeline:
 
 1. Save current state to `.auto-task/<branch>/STATE.json`, setting `expected_next_action: "user-approval"` — surfacing is a legitimate yield and the Stop hook will allow it. Without this write, the Stop hook will block your status message from being delivered because `expected_next_action` is still `"auto-continue"` from the previous transition.
 2. Append a TRACE.md entry: `operation: auto-task:surfaced`, `outcome: surfaced`, summary covers the loop-rule clause + the evidence (e.g., "Iteration 4 of review loop produced the same 2 findings as iteration 3 — no progress"), and links to any artifacts that show the failure (e.g., `artifacts/test-fail.txt`).
-3. Write a short status to the user including:
-   - **Why stopped** — which loop-rule clause triggered, with evidence.
+3. Write a short status to the user, in plain language:
+   - **Why stopped** — which loop-rule clause triggered, in plain words, with the evidence.
    - **Current state** — what's done, what's pending, what's failing.
-   - **Suggested next move** — one or two concrete options for the user.
+   - **Suggested next move** — one recommendation, not a menu.
 4. Do not auto-resume. Wait for the user. When the user resumes, write `expected_next_action: "auto-continue"` before making the next tool call.
 
 ## Rules
