@@ -2,6 +2,38 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.35.0]
+
+<!-- release-notes: Every prompt auto-task asks you is now written in plain language. Two of them also said less than the truth: the telemetry ask claimed only metrics left your machine, and the push prompt offered "hold" alongside "nothing leaves your machine" while the satisfaction question in the same dialog transmits either way. Both are corrected, not just reworded. -->
+
+### Changed
+
+- **Every string a human reads is now written in plain language, and `user-facing-voice` is the binding rule that keeps it that way.** The prompts a user actually has to answer were written in the spec's own vocabulary. The telemetry ask led with *"Quality/performance metrics only"*; the screenshot ask explained an *"unsigned preset"* before it explained that the images become public; the satisfaction question asked whether the run *"produced a correct, satisfactory result"*. Each is accurate, and each asks someone interrupted mid-task to decode it before they can answer.
+
+  **The rule, not just a sweep.** `references/phase-1-preamble.md` gains a `user-facing-voice` section: consequence before mechanism, no bare plugin jargon (Gate B, blast radius, AC, tier, INCONCLUSIVE, fail-open), one decision per question, sentences under 25 words, options phrased as answers rather than categories, recommendation first, headers as ≤12-char chips. **Rule 9 makes it one-way** — what leaves the machine, what becomes public, what cannot be undone must still appear, in ordinary words. Brevity never buys a dropped constraint; cutting one is a bug, not a simplification.
+
+  **Rewritten against it:** the version-update offer, telemetry consent, screenshot consent, the clarify router and its forwarded-comment pause, the approach choice (option labels are now the approach in plain words, not internal handles like `inline-guard`), the docs-update ask, the push prompt, the satisfaction question, the merge gate, the release ask, the Phase-8 external-actions ask (which now names irreversible steps in those words, in the option description as well as the list), and the resume picker (which labels a run by its title and says where it stopped, rather than printing a state name). A new `plan-approval-presentation` section governs the plan the user approves, and the loop-rule surfacing message now says what went wrong instead of naming the clause that fired.
+
+  **Model-facing text is exempt by design.** Hook stderr, spec prose, agent instructions and `state.history`/TRACE entries stay precise and directive — simplifying them would weaken the guarantees they enforce rather than clarify a decision. The rule says so explicitly, so the exemption cannot be read as an oversight.
+
+### Fixed
+
+- **Two consent prompts claimed more than the code delivers.** These are corrections, not rewordings.
+
+  **Telemetry.** The old ask said *"no code, task text, branch, paths, or identifiers leave your machine"*. The payload has always carried a random, resettable install id, the OS, three version strings (Claude, Claude Code, this plugin) and — when the user types one at the Phase-5 prompt — a note sent **word for word**. `README.md` documented all of it; the prompt did not. It now does, in six sentences, none over 25 words.
+
+  **Push.** The "hold" option described itself as *"nothing leaves your machine"*. When telemetry is on, the satisfaction question rides in the **same** `AskUserQuestion` call and its answer is sent regardless of the push/hold choice — so the reassurance was false at the moment it was read. The option now says only that nothing is pushed, and the spec carries an explicit prohibition on the old phrasing, with the reason, so it cannot creep back.
+
+### Added
+
+- **`tests/spec-inventory.sh` now fails on a dangling `references/*.md` pointer.** Every such path named by the spine, by a reference file, or by a sibling skill must resolve to a file that exists.
+
+  **This release introduced exactly that defect.** The plain-language rule was drafted as `references/user-facing-voice.md`, then folded into `phase-1-preamble.md` to fit the spine's 120 KB cap and the file deleted — leaving three directives pointing at nothing. A model following one of them finds no file and silently falls back to its own judgment, so the rule stops binding precisely where it was most explicitly invoked. **Nothing in the suite noticed**, because every other guard greps for *phrases* and the phrase was still there.
+
+  Verified load-bearing in both arms (a reference file and a sibling `SKILL.md`) by re-introducing the bug and confirming each trips, and de-duplicated so a spine-side dangling pointer reports once rather than twice — the spine is both `spine_p` and a `skills/*/SKILL.md` glob hit.
+
+  **Spec accounting.** The always-loaded spine is **122,582 B** — byte-identical to `0.34.0`, so the **298 B** of headroom against the 122,880 B cap is unchanged. The new prose lives in `references/`; the surfacing-protocol rewrite is paid for in place by tightening the `## Comment voice` pointer in the same section. `tests/spec-inventory.sh` reports `retired=83` with conservation at `missing=0 duplicated=0 restated=0`.
+
 ## [0.34.0]
 
 <!-- release-notes: PR bodies now open with a short plain-prose lede instead of a Summary bullet list, and may carry a "Review this first" section pointing at the few places worth reading before the rest of the diff — a removed guard, a migration, logic that gained no test, or the files the run itself kept returning to. -->
