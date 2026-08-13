@@ -533,8 +533,95 @@ MOD
 O_R10="$(runs "$PR9")"
 has "a live state WITH rounds[] is measured (heavy, 3)" "$O_R10" 'heavy +1 +1 +2 +3'
 
+# --- INDEPENDENT rounds: the same null-exclusion burden, one column further right ------
+# `review_rounds` cannot distinguish a run that self-reviewed 5 of 6 rounds from a fully
+# independent one, which is why the independence count exists. It inherits the exact
+# hazard the block above guards: EVERY row written before the field existed carries no
+# value, so a `// 0` would report "zero independent rounds" across the whole history and
+# manufacture the regression a reader is looking for. The ledger is append-only, so such a
+# row could never be repaired.
+has "by-tier table has an indep column"        "$O_R7" 'indep'
+# $PR7's rows carry review_rounds but NOT the independence field -> all-legacy for it.
+has "indep: legacy-only rows print '-'"        "$O_R7" 'standard +6 +1 +2 +8 +-'
+hasnt "indep: ...never a fabricated 0"         "$O_R7" 'standard +6 +1 +2 +8 +0 '
+# Numeric case: rows that DO carry the field are measured, and the median is over them.
+mkindep(){ local f="$1" i
+  for i in 1 2 3; do
+    printf '{"at":"2026-05-01T10:00:00Z","branch":"feat/i%d","base":"I%d","plugin_version":"0.36.0","terminal_state":"done","tier":"standard","tier_initial":"standard","escalations":0,"fix_iterations":1,"review_iterations":2,"review_rounds":8,"review_rounds_independent":5,"gate_b":"passed","followups":0,"duration_min":40,"defects_early":0,"defects_late":0,"flaky":false,"tests_added":true,"diff_loc":10,"checks_run":1,"checks_failed":0,"pr_url":null}\n' "$i" "$i"
+  done
+  for i in 4 5 6; do
+    printf '{"at":"2026-05-01T10:00:00Z","branch":"feat/i%d","base":"I%d","plugin_version":"0.32.0","terminal_state":"done","tier":"standard","tier_initial":"standard","escalations":0,"fix_iterations":1,"review_iterations":2,"review_rounds":8,"gate_b":"passed","followups":0,"duration_min":40,"defects_early":0,"defects_late":0,"flaky":false,"tests_added":true,"diff_loc":10,"checks_run":1,"checks_failed":0,"pr_url":null}\n' "$i" "$i"
+  done
+} >"$1"
+PR11="$(mkproj)"; mkindep "$PR11/.auto-task/outcomes.jsonl"
+O_R11="$(runs "$PR11")"
+# 5, not 2 (a `// 0` median over all six would be 2 and a mean 2.5).
+has "indep: median is over numeric rows only (5)" "$O_R11" 'standard +6 +1 +2 +8 +5'
+# The DERIVE path needs its own guard, exactly as review_rounds did: a live STATE.json is
+# where `via` actually lives, and the ledger fixtures above cannot reach that code.
+PR12="$(mkproj)"
+: > "$PR12/.auto-task/outcomes.jsonl"
+mkdir -p "$PR12/.auto-task/feat/mixedvia"
+cat > "$PR12/.auto-task/feat/mixedvia/STATE.json" <<'MIX'
+{"phase":"done","approved":true,"branch":"feat/mixedvia","base":"MIX1","plugin_version":"0.36.0",
+ "description":"three rounds: two independent, one inline",
+ "effort":{"tier":"standard","history":[]},"iteration":{"review":2,"fix":1},
+ "history":[{"phase":"handover","result":"done","at":"2026-04-03T10:00:00Z"}],
+ "gates":{"gate_b":{"passed":true},"code_review":{"rounds":[{"n":1,"via":"subagent"},{"n":2,"via":"inline"},{"n":3,"via":"subagent"}]}},
+ "followups":[]}
+MIX
+O_R12="$(runs "$PR12")"
+has "indep: DERIVE path counts only subagent rows (3 rounds, 2 indep)" "$O_R12" 'standard +1 +1 +2 +3 +2'
+# A live state whose rows carry NO via is a real measured 0 here, not null: the `rounds`
+# key exists, so the run IS measurable — it simply ran nothing independently. That is the
+# distinction between "no data" and "zero", and it must survive on the DERIVE path too.
+mkdir -p "$PR12/.auto-task/feat/novia"
+cat > "$PR12/.auto-task/feat/novia/STATE.json" <<'NOVIA'
+{"phase":"done","approved":true,"branch":"feat/novia","base":"NOVIA1","plugin_version":"0.33.0",
+ "description":"rounds recorded before via was written on every row",
+ "effort":{"tier":"heavy","history":[]},"iteration":{"review":1,"fix":1},
+ "history":[{"phase":"handover","result":"done","at":"2026-04-04T10:00:00Z"}],
+ "gates":{"gate_b":{"passed":true},"code_review":{"rounds":[{"n":1},{"n":2}]}},
+ "followups":[]}
+NOVIA
+O_R13="$(runs "$PR12")"
+has "indep: rows without via -> a measured 0, not null" "$O_R13" 'heavy +1 +1 +1 +2 +0'
+
+# --- MISMATCHED DENOMINATORS MUST BE VISIBLE (Gate B pass 1, finding 2) ----------------
+# med_rounds and med_indep are medians over DIFFERENT row populations: every row written
+# before the independence field existed carries review_rounds but not the new field, and
+# nulls are excluded rather than coalesced (correct, and exactly why the denominators
+# diverge). Left unsaid that yields an arithmetically IMPOSSIBLE reading -- independent
+# rounds are a subset of rounds, so indep > med rounds cannot happen for one run, yet it
+# happens routinely across a mixed ledger. The renderer must therefore print the sample
+# size whenever the populations differ. Fixture is Gate B's exact reproduction.
+PR14="$(mkproj)"
+{ for i in 1 2 3; do
+    printf '{"at":"2026-05-01T10:00:00Z","branch":"feat/l%d","base":"L%d","plugin_version":"0.35.0","terminal_state":"done","tier":"standard","tier_initial":"standard","escalations":0,"fix_iterations":1,"review_iterations":1,"review_rounds":1,"gate_b":"passed","followups":0,"duration_min":40,"defects_early":0,"defects_late":0,"flaky":false,"tests_added":true,"diff_loc":10,"checks_run":1,"checks_failed":0,"pr_url":null}\n' "$i" "$i"
+  done
+  for i in 1 2 3; do
+    printf '{"at":"2026-05-01T10:00:00Z","branch":"feat/n%d","base":"N%d","plugin_version":"0.36.0","terminal_state":"done","tier":"standard","tier_initial":"standard","escalations":0,"fix_iterations":1,"review_iterations":1,"review_rounds":6,"review_rounds_independent":6,"gate_b":"passed","followups":0,"duration_min":40,"defects_early":0,"defects_late":0,"flaky":false,"tests_added":true,"diff_loc":10,"checks_run":1,"checks_failed":0,"pr_url":null}\n' "$i" "$i"
+  done
+} > "$PR14/.auto-task/outcomes.jsonl"
+O_R14="$(runs "$PR14")"
+# med_rounds = median([1,1,1,6,6,6]) = 1; med_indep = median([6,6,6]) = 6 over only 3 rows.
+has "indep: mismatched populations print the sample size" "$O_R14" 'standard +6 +1 +1 +1 +6 \(n=3\)'
+hasnt "indep: ...never a bare 6 that reads as a subset of 1" "$O_R14" 'standard +6 +1 +1 +1 +6 +[0-9]+%'
+# CONTROL: when the populations MATCH, no suffix is printed -- otherwise the fix would just
+# add noise to every row and the signal would stop meaning anything.
+PR15="$(mkproj)"
+for i in 1 2 3; do
+  printf '{"at":"2026-05-01T10:00:00Z","branch":"feat/m%d","base":"M%d","plugin_version":"0.36.0","terminal_state":"done","tier":"standard","tier_initial":"standard","escalations":0,"fix_iterations":1,"review_iterations":1,"review_rounds":6,"review_rounds_independent":4,"gate_b":"passed","followups":0,"duration_min":40,"defects_early":0,"defects_late":0,"flaky":false,"tests_added":true,"diff_loc":10,"checks_run":1,"checks_failed":0,"pr_url":null}\n' "$i" "$i"
+done > "$PR15/.auto-task/outcomes.jsonl"
+O_R15="$(runs "$PR15")"
+has "indep: equal populations print a bare number"        "$O_R15" 'standard +3 +1 +1 +6 +4 +0%'
+# Scoped to the by-tier ROW: a bare `(n=3)` also appears in the quality section's Wilson
+# confidence intervals, so an unscoped pattern would fail for an unrelated reason.
+hasnt "indep: ...and no spurious (n=) suffix on the row"  "$O_R15" 'standard +3 +1 +1 +6 +4 \(n='
+rm -rf "$PR14" "$PR15"
+
 # cleanup
-rm -rf "$PCK" "$P1" "$P0" "$PA" "$PB" "$PC" "$PD" "$PX" "$PL" "$PM" "$PN" "$PO" "$PV" "$PW" "$PY2" "$PZ" "$PR7" "$PR8" "$PR9"
+rm -rf "$PCK" "$P1" "$P0" "$PA" "$PB" "$PC" "$PD" "$PX" "$PL" "$PM" "$PN" "$PO" "$PV" "$PW" "$PY2" "$PZ" "$PR7" "$PR8" "$PR9" "$PR11" "$PR12"
 
 echo ""
 echo "================ SUMMARY: $PASS passed, $FAIL failed ================"

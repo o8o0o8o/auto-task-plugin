@@ -1278,8 +1278,18 @@ expect "spine: P4 non-negotiable — reachability test" \
 # the deferral path was unreachable: the contract was inert. It now says the orchestrator
 # grades from PLAN.md's AC table and the diff, and fails closed on ITS OWN uncertainty.
 # Both halves are pinned, because dropping either restores the inert reading.
+# RE-AIMED: the reviewer now STATES `ac:`/`reachable:`, so pinning "emits no such field"
+# would freeze a false claim in the always-loaded spine. The property being guarded is
+# unchanged and is what the two halves still assert together: the ORCHESTRATOR grades, and
+# a reviewer-supplied field is an input rather than the verdict. The hazard inverted (a
+# rule waiting for an absent field → a rule obeying a present one), so the assertion
+# follows it rather than the old wording.
 expect "spine: P4 non-negotiable — the orchestrator grades" \
-  "$(spine_has "$SPINE_ONLY" '**YOU grade it** — `auto-task-code-review` emits no `ac:`/`reachable:` field')"           "yes"
+  "$(spine_has "$SPINE_ONLY" '**YOU grade it** — `auto-task-code-review` now states `ac:`/`reachable:` per finding, but those are INPUTS')" "yes"
+expect "spine: P4 non-negotiable — a supplied field never decides" \
+  "$(spine_has "$SPINE_ONLY" 'neither does a reviewer-supplied field')"                                                 "yes"
+expect "spine: P4 non-negotiable — the retired 'emits no' claim is gone" \
+  "$(grep -c 'emits no `ac:`' "$SPINE_ONLY" | tr -d ' ')"                                                               "0"
 expect "spine: P4 non-negotiable — fail closed on uncertainty" \
   "$(spine_has "$SPINE_ONLY" '**fail closed on your own uncertainty:** a finding you cannot place counts as AC-breaking')" "yes"
 expect "spine: P4 non-negotiable — deferred batch" \

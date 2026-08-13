@@ -16,8 +16,9 @@ If this branch has an auto-task history folder, read it before forming any findi
 1. `git branch --show-current` → `$BRANCH`; look for `.auto-task/$BRANCH/`. If it doesn't exist, this branch isn't auto-task-tracked — skip to Phase 1 and review normally.
 2. **`.auto-task/$BRANCH/CONTEXT.md`** (if present) — the run's curated summary. Never raise a finding about a decision recorded under **Human choices**, or a risk the user acknowledged at the Phase 1 disclaimer; those are settled (raise a follow-up only if the implementation made the risk materially worse than the plan anticipated).
 3. **`.auto-task/$BRANCH/TRACE.md`** (if present) — the append-only log of prior passes. If a finding overlaps an earlier entry, cite that entry and say what's new; don't repeat a resolved issue as if fresh.
-4. **`.auto-task/$BRANCH/STATE.json`** (if you need detail) — gates, effort tier, parked follow-ups.
-5. **On completion, append a TRACE.md entry** (operation slug `code-review:standalone`) in the block format defined in the auto-task orchestrator SKILL.md → "Persistent history & trace contract" → "TRACE.md format". **Suppressed under orchestration:** when invoked from `/auto-task` (see the Caller note), the orchestrator appends the review's trace entry itself — reading still applies, but do NOT append your own or you double-write the log.
+4. **`.auto-task/$BRANCH/PLAN.md`** (if present) — read the `## Acceptance Criteria` table. It is the **only** place the numbered rows exist (`STATE.json` carries `requirements[]`, not the numbered criteria), and the `ac:` field on every finding cites them — so without this read that field can only ever say `none`, which is a substantive claim rather than a blank. See "Two required fields on EVERY finding" in Phase 3. Also read `## Clarifications` — decisions already settled with a cite are not yours to re-litigate — and the risk disclaimer if one was assembled.
+5. **`.auto-task/$BRANCH/STATE.json`** (if you need detail) — gates, effort tier, parked follow-ups.
+6. **On completion, append a TRACE.md entry** (operation slug `code-review:standalone`) in the block format defined in the auto-task orchestrator SKILL.md → "Persistent history & trace contract" → "TRACE.md format". **Suppressed under orchestration:** when invoked from `/auto-task` (see the Caller note), the orchestrator appends the review's trace entry itself — reading still applies, but do NOT append your own or you double-write the log.
 
 ## Hard rules
 
@@ -74,7 +75,23 @@ Print the report so the user can see the framing, then proceed directly to Phase
 
 Goal: perform the review across the agreed dimensions. Read-only.
 
-For each dimension, examine the code and record findings. Each finding has: `file:line`, one-line problem, one-line why-it-matters. **Findings must be about in-scope code** (see the "Don't blow the scope" hard rule). A finding about how an in-scope change interacts with a specific caller, consumer, or type is in scope; a finding about untouched neighboring code is not.
+For each dimension, examine the code and record findings. Each finding has: `file:line`, one-line problem, one-line why-it-matters, **plus the two required fields below**. **Findings must be about in-scope code** (see the "Don't blow the scope" hard rule). A finding about how an in-scope change interacts with a specific caller, consumer, or type is in scope; a finding about untouched neighboring code is not.
+
+### Two required fields on EVERY finding — `ac:` and `reachable:`
+
+State both on every finding, including one you rate a blocker:
+
+- **`ac:`** — the number of the Acceptance Criterion this finding breaks, or **`none`**. **Where the numbers come from:** under a task pipeline the caller hands you the Acceptance Criteria table (it lives in `.auto-task/<branch>/PLAN.md`; read it there if you have the path and it was not pasted into your prompt). Cite the row number from that table. `none` is correct and expected when a review runs outside a task pipeline, where there are no criteria to break. **But `none` is a claim, not a shrug** — it asserts "this breaks no criterion", which a caller weighs *against* acting on the finding. So if criteria exist and you have not read them, say so in the finding rather than defaulting to `none`; a stated "criteria not available to me" is honest, while a fabricated `none` quietly argues for parking a real breach.
+- **`reachable:`** — exactly one of:
+  - **`runtime`** — a real input or sequence reaches the failure when the code runs.
+  - **`spec-only`** — it is a contradiction or a gap in specification text.
+  - **`docs-only`** — it is prose, a comment, a changelog or a README claim.
+
+**These two are facts for the orchestrator to act on, not your severity judgment.** They sit alongside your Blockers / Required / Follow-ups label; they do not replace it, and they are not a second way to say "this one is serious." Report them even when you rate the finding a blocker.
+
+**Why they are required, so the fields are filled in with care rather than pattern-matched:** a caller that has to re-derive reachability from your prose will sometimes get it wrong, and the cost of that lands on the user as a finding labelled `required` that nobody ever fixes. You are the reader who just looked at the code — you are the cheapest and most accurate place to state these two facts.
+
+**The vocabulary above is Gate B's, reproduced here because you are a fresh-context reviewer** who cannot follow a cross-file pointer at the moment you fill the fields in. **What is NOT reproduced here is the test that decides what happens next** — how a caller weighs these fields to reopen, defer, or park a finding lives in `skills/auto-task/references/phase-3-gates.md` (Gate B Step 2, applied by reference at Phase-4 Step A) and is deliberately single-sourced there. Do not restate, infer, or act on that test: your job ends at reporting the two facts.
 
 **Correctness**
 - Does the logic match its stated intent?
@@ -127,7 +144,7 @@ Goal: prove each finding is real, with quoted evidence from the code.
 
 - Phase 1 output: blast radius + risk + conventions, in under ~10 lines.
 - Phase 2 output: the structured report above, then continue immediately to Phase 3.
-- Phase 3 output: findings grouped by dimension, each as `file:line — problem — why it matters`. Empty dimensions get one line: "No findings."
+- Phase 3 output: findings grouped by dimension, each as `file:line — problem — why it matters — ac: <n|none> — reachable: <runtime|spec-only|docs-only>`. Both fields are REQUIRED on every finding (see "Two required fields on EVERY finding" in Phase 3); they are facts, not severity. Empty dimensions get one line: "No findings."
 - Phase 4 output: tag per finding + sibling-search results when run (`file:line` list, used as evidence that an in-scope finding is systemic — not as new findings), or a one-line "scoped local — no sibling search" note + optional guardrail recommendations.
 - Phase 5 output: per-finding quoted evidence + subagent review summary, or a one-line note that the subagent was skipped (with reason: low risk / tight-scope hint).
 - **Out-of-scope observations (optional, ≤3 lines).** If you noticed something concerning outside the review scope, list it here as a note — not a finding. Skip the section if nothing applies.

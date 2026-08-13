@@ -2,6 +2,38 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.36.0]
+
+<!-- release-notes: Code review now tells you two things per finding: which acceptance criterion it breaks, and whether it is reachable when the code actually runs. The pipeline used to work those out for itself and then quietly park findings the reviewer had marked required — 49 of them across three runs, never fixed. Run stats also gained an "indep" column showing how many review rounds ran in a genuinely fresh reviewer. -->
+
+### Changed
+
+- **The reviewer now grades its own findings at source: every finding carries `ac:` and `reachable:`.** These are the same two facts Gate B's verifier prompt has always mandated. `auto-task-code-review` emitted only `file:line` plus a self-assigned severity label, so the orchestrator re-derived reachability itself and then parked findings the reviewer had called `blocker`/`required`. **Measured across the three runs in this clone that carry round records: ~90 findings, 34 fixed, 49 parked and never fixed (~55%).** That gap between the reviewer's label and the pipeline's grade is what made review output untrustworthy — a reviewer whose findings you ignore half the time is not one you can act on.
+
+  **The grade did not move, and that boundary is the whole design.** The orchestrator still decides, still fails closed on its own uncertainty, and a supplied field is an **input it verifies** rather than a verdict it adopts. A reviewer that mislabels `reachable: docs-only` on a live regression must not be able to defer it by saying so. The reachability *test* stays single-sourced in `references/phase-3-gates.md`; only the *vocabulary* is restated in the reviewer, because a fresh-context agent cannot follow a cross-file pointer at the moment it fills the field in.
+
+  **Three separate wordings of the now-false claim were retired**, not one — the spine's "emits no `ac:`/`reachable:` field", and two in `phase-3-gates.md` ("no such fields" and "has no `ac:` to read"). The first-round fix caught only one of the three; a widened check found the rest.
+
+### Added
+
+- **`/auto-task-stats` gained an `indep` column: how many review rounds actually ran in a fresh-context reviewer.** `via` has recorded that per round since 0.32.0 and **nothing read it** — measured, it was absent on 4 of 5 runs in this clone, so "was this round independent?" could not be answered from the record for any completed run. `review_rounds` counts rows and cannot tell a run that self-reviewed five of six rounds from a fully independent one.
+
+  `record-outcome.sh` and `auto-task-stats.sh` now derive `review_rounds_independent` with a **byte-identical expression** — the two run on different inputs (an archived ledger row vs a live `STATE.json`), so the same run reaches the aggregator twice and a drift would split the classification. This repo has been bitten by exactly that divergence twice before (`est_tokens_scale`, then `duration_min`), and the fix is the same one: a test compares the expressions rather than trusting them to match.
+
+  **Two unknowns resolve differently, on purpose.** A **row** without `via` is not counted as independent (an absent `via` reads as unknown, never as `subagent`). A **state** with no `rounds` key at all yields `null`, never `0`, and readers exclude nulls instead of coalescing them — every row predating the field carries no value, so coalescing would report "zero independent rounds" across the whole history and manufacture exactly the regression someone would be reading the report to find. The ledger is **append-only**, so a fabricated `0` written today could never be repaired.
+
+  **Local-only by deliberate choice.** The telemetry payload, `server/schema.sql`, `server/ingest.mjs` and `SCHEMA_VERSION` are byte-unchanged: carrying the count remotely would need a hosted-schema column plus a migration applied to a live database, and stats ingest would fail for every run in the window before it was applied. So the remote row is, for the first time, **not** a superset of the local one — `references/settings.md` now says so explicitly.
+
+### Fixed
+
+- **A negative control was re-aimed rather than flipped.** `tests/gate-b-loop.test.sh` asserted that *no* hook derivation reads the `via` field — a guard added precisely because an earlier version of the prose had claimed a wiring that did not exist. Two hooks now read it on purpose, so the old form failed by design. Deleting or relaxing it would have silently ended its protection; instead it now guards the boundary that is still load-bearing (`send-telemetry.sh` must never read `via`), paired with a positive assertion that the two local derivations do. Four other guards and two comment blocks that asserted the retired claims were re-aimed the same way.
+
+- **An apostrophe in a jq comment silently disabled the entire outcomes ledger.** The jq program in `record-outcome.sh` is a single-quoted shell string; a possessive (`each row's via`) in an added comment closed it early, and the hook wrote no row at all. Caught immediately by `tests/record-outcome.test.sh` going from 317 passing to failing at the first assertion. Recorded as a patch note, because the *failure mode* is the hard part: a hook that writes nothing looks like a logic bug rather than a quoting bug.
+
+  **Spec accounting.** The always-loaded spine is a **122,659 B spine**, leaving **221 B of headroom** against the 122,880 B cap. `tests/spec-inventory.sh` reports `retired=83` — unchanged from `0.35.0`, because the three reworded lines were already named in `RETIRED_PREFIXES` — with conservation at `missing=0 duplicated=0 restated=0`.
+
+  **Guards.** **`tests/enforcement-spine.test.sh`** (156 assertions of spine-only guards, plus the behavioural block) re-aims the Phase-4 non-negotiable pin at the corrected sentence and adds a zero-count assertion that the retired "emits no `ac:`" wording cannot come back. `tests/gate-b-loop.test.sh` grows to **455 assertions** — the reviewer's required-fields block is pinned *block-scoped* rather than by substring presence anywhere in the file, since a bare `grep -c 'ac:'` cannot tell a binding output contract from a prose aside. `tests/record-outcome.test.sh` reaches **331** (expression parity plus the two unknowns as behaviour, not just as prose) and `tests/stats-reshape.test.sh` **108** (the `indep` column on both the ledger and the live-DERIVE path).
+
 ## [0.35.0]
 
 <!-- release-notes: Every prompt auto-task asks you is now written in plain language. Two of them also said less than the truth: the telemetry ask claimed only metrics left your machine, and the push prompt offered "hold" alongside "nothing leaves your machine" while the satisfaction question in the same dialog transmits either way. Both are corrected, not just reworded. -->

@@ -53,7 +53,7 @@ cat > "$SD/STATE.json" <<'EOF'
  "history":[{"phase":"execute","result":"ok","at":"2026-03-01T10:00:00Z"},
             {"phase":"handover","result":"done","at":"2026-03-01T12:00:00Z"}],
  "gates":{"gate_b":{"passed":true},
-          "code_review":{"rounds":[{"n":1},{"n":2},{"n":3},{"n":4},{"n":5},{"n":6}]}},"followups":[]}
+          "code_review":{"rounds":[{"n":1,"via":"subagent"},{"n":2,"via":"subagent"},{"n":3,"via":"inline"},{"n":4,"via":"inline-fallback"},{"n":5},{"n":6,"via":"subagent"}]}},"followups":[]}
 EOF
 : > "$T/.auto-task/outcomes.jsonl"   # opt in
 
@@ -69,6 +69,13 @@ expect "row.act_duration_min"  "$(printf '%s' "$ROW" | jq -r '.act_duration_min'
 # fixture on purpose, so a review_rounds sourced from `.iteration.review` reads 1 and
 # fails here rather than looking plausible.
 expect "row.review_rounds"     "$(printf '%s' "$ROW" | jq -r '.review_rounds')"      "6"
+# ...and the independence count on the SAME row, end-to-end. The unit suite covers this
+# field with seven fixtures, but this is the only place the WHOLE row is pinned at once,
+# so a field silently dropped from the row builder would show up here with the rest of the
+# row in view. The fixture's six rounds are deliberately mixed -- 3 subagent, 1 inline,
+# 1 inline-fallback, 1 with no `via` at all -- so a derivation that counted rows, or
+# treated a missing `via` as independent, reads 6 or 4 here instead of 3.
+expect "row.review_rounds_independent" "$(printf '%s' "$ROW" | jq -r '.review_rounds_independent')" "3"
 expect "row.review_iterations" "$(printf '%s' "$ROW" | jq -r '.review_iterations')"  "1"
 expect "row.defects_early"     "$(printf '%s' "$ROW" | jq -r '.defects_early')"      "1"
 expect "row.defects_late"      "$(printf '%s' "$ROW" | jq -r '.defects_late')"       "2"

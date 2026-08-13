@@ -174,6 +174,48 @@ jq '.gates.code_review.rounds = [] | .base="EMPTYROUNDS"' \
 : > "$TE/.auto-task/outcomes.jsonl"; rm -f "$SDE/.outcome-recorded"; rec "$TE" >/dev/null
 expect "empty rounds[] -> 0, a real measurement" \
   "$(head -1 "$TE/.auto-task/outcomes.jsonl" | jq -r '.review_rounds')" "0"
+
+# --- review_rounds_independent: two different unknowns, resolved differently ----------
+# Independence is derived from each row's `via`. The whole reason the field exists is that
+# `review_rounds` cannot tell a run that self-reviewed 5 of 6 rounds from a fully
+# independent one. Two unknowns have to behave differently and this block pins both:
+#   * a ROW without `via` -> not independent (the spec: absent via reads as unknown,
+#     NEVER as subagent), so it is excluded from the count but the count is still real;
+#   * a STATE without the `rounds` key -> null, because nothing is measurable.
+# Ordering note: these fixtures mutate the SAME state file the block above left behind, so
+# each case sets its own `rounds` explicitly rather than inheriting.
+jq '.gates.code_review.rounds = [{"n":1,"via":"subagent"},{"n":2,"via":"inline"},{"n":3,"via":"subagent"}] | .base="MIXEDVIA"' \
+  "$SDE/STATE.json" > "$SDE/STATE.json.tmp" && mv "$SDE/STATE.json.tmp" "$SDE/STATE.json"
+: > "$TE/.auto-task/outcomes.jsonl"; rm -f "$SDE/.outcome-recorded"; rec "$TE" >/dev/null
+expect "indep: 2 subagent + 1 inline -> 2" \
+  "$(head -1 "$TE/.auto-task/outcomes.jsonl" | jq -r '.review_rounds_independent')" "2"
+expect "indep: ...while review_rounds still counts all 3 rows" \
+  "$(head -1 "$TE/.auto-task/outcomes.jsonl" | jq -r '.review_rounds')" "3"
+# A row that OMITS via is not independent — the AC-10 case. Same three rows, but the
+# middle one has no via key at all rather than an explicit `inline`.
+jq '.gates.code_review.rounds = [{"n":1,"via":"subagent"},{"n":2},{"n":3,"via":"subagent"}] | .base="MISSINGVIA"' \
+  "$SDE/STATE.json" > "$SDE/STATE.json.tmp" && mv "$SDE/STATE.json.tmp" "$SDE/STATE.json"
+: > "$TE/.auto-task/outcomes.jsonl"; rm -f "$SDE/.outcome-recorded"; rec "$TE" >/dev/null
+expect "indep: a row with NO via is not counted (2, never 3)" \
+  "$(head -1 "$TE/.auto-task/outcomes.jsonl" | jq -r '.review_rounds_independent')" "2"
+# inline-fallback is not independent either — it is the degraded path by definition.
+jq '.gates.code_review.rounds = [{"n":1,"via":"inline-fallback"},{"n":2,"via":"inline"}] | .base="NOINDEP"' \
+  "$SDE/STATE.json" > "$SDE/STATE.json.tmp" && mv "$SDE/STATE.json.tmp" "$SDE/STATE.json"
+: > "$TE/.auto-task/outcomes.jsonl"; rm -f "$SDE/.outcome-recorded"; rec "$TE" >/dev/null
+expect "indep: inline + inline-fallback -> 0, a real measured zero" \
+  "$(head -1 "$TE/.auto-task/outcomes.jsonl" | jq -r '.review_rounds_independent')" "0"
+# ...and the OTHER unknown: no `rounds` key at all is null, not 0. This is the append-only
+# hazard — a fabricated 0 here could never be repaired in a written row.
+jq '.gates.code_review = {"passed":true,"tool":"skill:auto-task-code-review"} | .base="NOROUNDSKEY"' \
+  "$SDE/STATE.json" > "$SDE/STATE.json.tmp" && mv "$SDE/STATE.json.tmp" "$SDE/STATE.json"
+: > "$TE/.auto-task/outcomes.jsonl"; rm -f "$SDE/.outcome-recorded"; rec "$TE" >/dev/null
+expect "indep: no rounds key -> null, NOT a fabricated 0" \
+  "$(head -1 "$TE/.auto-task/outcomes.jsonl" | jq -r '.review_rounds_independent')" "null"
+expect "indep: the key is always present, even when null" \
+  "$(head -1 "$TE/.auto-task/outcomes.jsonl" | jq -r 'has("review_rounds_independent")')" "true"
+# The two fields must not be confused for one another: same state, different answers.
+expect "indep: null while review_rounds is also null (same discriminator)" \
+  "$(head -1 "$TE/.auto-task/outcomes.jsonl" | jq -r '.review_rounds')" "null"
 rm -rf "$TE"
 
 echo ""
@@ -1722,7 +1764,7 @@ echo "================ Lockstep: metric fields present in BOTH DERIVE blocks ===
 REC_SH="$HOOKS/record-outcome.sh"; STATS_SH="$HOOKS/auto-task-stats.sh"
 for k in duration_min est_duration_min est_tokens est_tokens_scale act_duration_min act_tokens act_tokens_output \
          defects_early defects_late flaky tests_added diff_loc first_pass_ac \
-         checks_run checks_failed plugin_version; do
+         checks_run checks_failed plugin_version review_rounds_independent; do
   ir="$(grep -c "${k}:" "$REC_SH" 2>/dev/null || echo 0)"
   is="$(grep -c "${k}:" "$STATS_SH" 2>/dev/null || echo 0)"
   if [ "$ir" -ge 1 ] && [ "$is" -ge 1 ]; then
@@ -1750,6 +1792,29 @@ expect "lockstep: est_tokens_scale expression is non-empty" \
 # comparing truncated text and cannot see a drift past the cut.
 expect "lockstep: extraction reaches the closing end)," \
   "$(scale_expr "$REC_SH" | grep -c 'end),')" "1"
+
+# review_rounds_independent carries the identical burden, for the identical reason: it is
+# derived twice (archiver + live reader) and classifies the same run through two code
+# paths. Name parity above is not sufficient — a drift in the DISCRIMINATOR (say one
+# builder dropping the `has("rounds")` guard for a `// []`) would keep the names matching
+# while turning every pre-field run from `null` into a fabricated `0`, in an APPEND-ONLY
+# ledger where that cannot be undone.
+indep_expr(){ awk '/review_rounds_independent:/,/else null end\),/' "$1" | tr -d ' \n'; }
+expect "lockstep: review_rounds_independent EXPRESSION identical" \
+  "$([ "$(indep_expr "$REC_SH")" = "$(indep_expr "$STATS_SH")" ] && echo yes || echo no)" "yes"
+expect "lockstep: review_rounds_independent expression is non-empty" \
+  "$([ -n "$(indep_expr "$REC_SH")" ] && echo yes || echo no)" "yes"
+expect "lockstep: indep extraction reaches its terminator" \
+  "$(indep_expr "$REC_SH" | grep -c 'elsenullend),')" "1"
+# The discriminator itself is pinned, not just the sameness: both must gate on the
+# `rounds` KEY (not `// []`) so an absent key yields null, and both must count only
+# `subagent`.
+expect "lockstep: indep keeps the has(rounds) discriminator" \
+  "$(indep_expr "$REC_SH" | grep -c 'has("rounds")')" "1"
+expect "lockstep: indep counts only via==subagent" \
+  "$(indep_expr "$REC_SH" | grep -c 'select((.via?//"")=="subagent")')" "1"
+expect "lockstep: indep never uses a bare // [] fallback" \
+  "$(indep_expr "$REC_SH" | grep -c 'rounds//\[\]')" "0"
 
 # The duration selection carries the same "both must classify identically" burden
 # as est_tokens_scale, and a sharper one: it is the expression that keeps a

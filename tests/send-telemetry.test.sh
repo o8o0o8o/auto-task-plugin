@@ -221,7 +221,18 @@ if [ -f "$RO" ]; then
   # discriminator for pooling pre- and post-recalibration rows in one ledger. The
   # payload has no need of it because `schema_version` already tells a consumer
   # which scale `est_tokens` is on, which is exactly what the 4->5 bump is for.
-  expected="$( { printf '%s\n' "$ro_keys" | grep -vE '^(task|branch|base|at|pr_url|act_tokens_output|est_tokens_scale)$'
+  #
+  # `review_rounds_independent` is excluded for a THIRD reason, and it is the first
+  # entry here that is genuinely absent from the payload rather than renamed or
+  # redundant: the independence count is LOCAL-ONLY by decision. Sending it would
+  # need a new column in the hosted schema plus a migration applied to a live
+  # database, and stats ingest would fail for every run in the window before that
+  # migration landed -- so the count stays in the local ledger and
+  # `references/settings.md` now records that the remote row is, for this one field,
+  # NOT a superset of the local one. A negative control in tests/gate-b-loop.test.sh
+  # keeps send-telemetry.sh from reading `via` at all, so this exclusion cannot be
+  # satisfied by accident: if the sender ever starts deriving it, that control fails.
+  expected="$( { printf '%s\n' "$ro_keys" | grep -vE '^(task|branch|base|at|pr_url|act_tokens_output|est_tokens_scale|review_rounds_independent)$'
                  printf '%s\n' client_id plugin_version os schema_version \
                    satisfaction correctness comment \
                    difficulty risk task_type requirements_count drift_events \

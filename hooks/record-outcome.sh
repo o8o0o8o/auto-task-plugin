@@ -277,6 +277,42 @@ row="$(jq -c \
                          and (.gates.code_review | has("rounds"))
                       then ((.gates.code_review.rounds // []) | length | num0)
                       else null end),
+      # INDEPENDENT rounds -- how many of those rounds a fresh-context reviewer ran,
+      # counted from the `via` on each row. This is the derived count the spec names as
+      # remedy when review INDEPENDENCE (not just volume) needs to be legible:
+      # `review_rounds` counts rows and cannot distinguish a run that reviewed itself
+      # inline for five of six rounds from a fully independent one. Only `via ==
+      # "subagent"` counts as independent; `inline` and `inline-fallback` do not, and
+      # neither does a row that omits the field.
+      #
+      # AN ABSENT `via` IS NOT INDEPENDENT, AND AN ABSENT `rounds` KEY IS NOT ZERO.
+      # Those are two different unknowns and they resolve differently on purpose:
+      #   * a ROW without `via` reads as "not known to be independent" and simply is
+      #     not counted -- the spec is explicit that an absent `via` reads as unknown,
+      #     never as `subagent`, so counting it would invent independence that was
+      #     never recorded;
+      #   * a STATE without the `rounds` key at all yields `null`, exactly as
+      #     `review_rounds` above does, because nothing about that run is measurable.
+      # The difference matters here more than anywhere else in this file: this ledger
+      # is APPEND-ONLY (see the note further down -- rows already written cannot be
+      # fixed retroactively), so a hard `0` where the honest answer is "unmeasurable"
+      # is a fabricated number that survives forever. Readers EXCLUDE nulls; they must
+      # never coalesce them.
+      #
+      # The discriminator and guards below are byte-identical to the copy in
+      # auto-task-stats.sh, which derives rows LIVE from STATE.json files still on
+      # disk. That parity is the point: an in-flight run and its archived row must
+      # classify identically, or the two paths disagree about the same run. This repo
+      # has been bitten by exactly that divergence twice (est_tokens_scale, then
+      # duration_min), so the expressions are kept literally the same rather than
+      # merely equivalent, and a test compares them.
+      review_rounds_independent: (if (.gates.code_review | type) == "object"
+                                     and (.gates.code_review | has("rounds"))
+                                     and ((.gates.code_review.rounds | type) == "array")
+                                  then ((.gates.code_review.rounds
+                                          | map(select((.via? // "") == "subagent"))
+                                          | length) | num0)
+                                  else null end),
       gate_b: (if (.gates.gate_b.passed // false) then "passed"
                else ((.gates.gate_b.skipped_reason | str0) | .[0:120]) end),
       followups: ((.followups // []) | length),

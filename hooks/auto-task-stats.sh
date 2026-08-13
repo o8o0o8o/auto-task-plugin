@@ -254,6 +254,19 @@ DERIVE='
                          and (.gates.code_review | has("rounds"))
                       then ((.gates.code_review.rounds // []) | length | num0)
                       else null end),
+      # Byte-identical to the copy in record-outcome.sh -- see the long note there for
+      # why only `via == "subagent"` counts, why an absent `via` is not independent,
+      # and why an absent `rounds` key is null rather than 0. THIS path is why the
+      # parity is enforced by a test rather than trusted: it derives rows LIVE from
+      # STATE.json files on disk, so the same run reaches the aggregator through two
+      # code paths and they must agree.
+      review_rounds_independent: (if (.gates.code_review | type) == "object"
+                                     and (.gates.code_review | has("rounds"))
+                                     and ((.gates.code_review.rounds | type) == "array")
+                                  then ((.gates.code_review.rounds
+                                          | map(select((.via? // "") == "subagent"))
+                                          | length) | num0)
+                                  else null end),
       gate_b: (if (.gates.gate_b.passed // false) then "passed" else ((.gates.gate_b.skipped_reason | str0) | .[0:120]) end),
       followups: ((.followups // []) | length),
       duration_min: $dur,
@@ -733,6 +746,31 @@ agg="$(jq -s \
         # how a reader tells "no data" from "a real 0".
         med_rounds: (map(.review_rounds | select(type == "number")) | median),
         n_rounds: (map(.review_rounds | select(type == "number")) | length),
+        # Independent-round median, carrying the SAME null-exclusion idiom as the two
+        # lines above rather than a `// 0`. The exposure here is larger, not smaller:
+        # every row written before this field existed carries no value at all, so
+        # coalescing would report "0 independent rounds" for the entire history and
+        # manufacture exactly the regression a reader would be looking for. `n_indep`
+        # is what separates "no data" from a real 0, and the renderer prints "-" when
+        # it is 0 for that reason.
+        med_indep: (map(.review_rounds_independent | select(type == "number")) | median),
+        n_indep: (map(.review_rounds_independent | select(type == "number")) | length),
+        # THE TWO MEDIANS RUN OVER DIFFERENT ROW POPULATIONS, and the renderer must say so.
+        # `med_rounds` is taken over rows carrying `review_rounds`; `med_indep` over the
+        # (usually smaller) set carrying `review_rounds_independent`, because every row
+        # written before that field existed lacks it. Nulls are excluded rather than
+        # coalesced -- correct, and the reason the two denominators diverge.
+        #
+        # Left unsaid, that produces an arithmetically IMPOSSIBLE reading: independent
+        # rounds are a subset of rounds, so `indep > med rounds` cannot happen for any
+        # single run, yet it happens routinely across a mixed ledger (three legacy rows at
+        # rounds=1 and three new rows at rounds=6/indep=6 give med_rounds=1, med_indep=6).
+        # A reader comparing the columns then sees a self-contradiction presented as fact --
+        # the "blank table into a WRONG table presented as right" failure this file already
+        # warns about a few lines below. So the renderer prints the sample size whenever the
+        # populations differ, and this flag is what tells it to.
+        indep_pop_differs: ((map(.review_rounds_independent | select(type == "number")) | length)
+                            != (map(.review_rounds | select(type == "number")) | length)),
         pct_escalated: (if length==0 then 0 else ((map(select(.escalations | pos)) | length) * 100 / length | floor) end)
       })),
     sh_total: (map(select(.tier=="standard" or .tier=="heavy")) | length),
@@ -890,14 +928,14 @@ fi
 echo ""
 
 echo "By tier"
-printf '  %-10s %5s %11s %14s %14s %11s\n' "tier" "#done" "med fix" "med review" "med rounds" "escalated"
+printf '  %-10s %5s %11s %14s %14s %12s %11s\n' "tier" "#done" "med fix" "med review" "med rounds" "indep" "escalated"
 # Columns are \037-delimited and read with IFS=\037, NOT whitespace-split. A tier value
 # containing a space — a `tostring`ed array like ["a b"], or simply a string tier with a
 # space — otherwise spills into the #done column and shifts every later one, turning a
 # blank table into a WRONG table presented as right. \037 is not whitespace, so the field
 # boundaries survive whatever the value contains.
-printf '%s' "$agg" | jq -r '.tiers[]? | "\(.tier | if type == "string" then .[0:10] else (tostring | .[0:10]) end)\(.n)\(.med_fix)\(.med_review)\(if .n_rounds > 0 then (.med_rounds|tostring) else "-" end)\(.pct_escalated)"' 2>/dev/null \
-  | while IFS="$(printf '\037')" read -r t n mf mr mrd pe; do printf '  %-10s %5s %11s %14s %14s %10s%%\n' "$t" "$n" "$mf" "$mr" "$mrd" "$pe"; done
+printf '%s' "$agg" | jq -r '.tiers[]? | "\(.tier | if type == "string" then .[0:10] else (tostring | .[0:10]) end)\(.n)\(.med_fix)\(.med_review)\(if .n_rounds > 0 then (.med_rounds|tostring) else "-" end)\(if .n_indep > 0 then ((.med_indep|tostring) + (if .indep_pop_differs then (" (n=" + (.n_indep|tostring) + ")") else "" end)) else "-" end)\(.pct_escalated)"' 2>/dev/null \
+  | while IFS="$(printf '\037')" read -r t n mf mr mrd mi pe; do printf '  %-10s %5s %11s %14s %14s %12s %10s%%\n' "$t" "$n" "$mf" "$mr" "$mrd" "$mi" "$pe"; done
 [ "$done_count" -eq 0 ] && echo "  (no completed runs yet)"
 echo ""
 

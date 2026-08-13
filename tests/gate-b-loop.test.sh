@@ -568,15 +568,46 @@ expect "P4: reopen clause (b) runtime-reachable" \
 expect "P4: reopen clause (c) security/data-loss" \
   "$(printf '%s' "$P4" | grep -c 'security or data-loss path' | tr -d ' ')" "1"
 # GATE A round-1 finding (residual B): the fail-closed rule keyed on a literal `ac:`
-# field copied from Gate B, where the VERIFIER PROMPT mandates it. auto-task-code-review
-# emits no such field, so read literally EVERY Phase-4 finding failed closed, reopened
-# the loop, and the deferral path was unreachable -- the contract was inert. Both halves
-# of the correction are pinned: the orchestrator grades, and it fails closed on its own
-# uncertainty. Dropping either one restores the inert reading.
+# field copied from Gate B, where the VERIFIER PROMPT mandates it. Back then
+# auto-task-code-review emitted no such field, so read literally EVERY Phase-4 finding
+# failed closed, reopened the loop, and the deferral path was unreachable -- the contract
+# was inert. Both halves of the correction are pinned: the orchestrator grades, and it
+# fails closed on its own uncertainty. Dropping either one restores the inert reading.
+#
+# RE-AIMED when the reviewer STARTED emitting the two fields. The original reason -- "the
+# skill hands you no classification" -- is no longer true, so pinning it would have frozen
+# a false statement into the suite. The DANGER IT GUARDED AGAINST INVERTED rather than
+# disappeared: previously the risk was a rule waiting for a field that never arrived; now
+# it is an orchestrator adopting a reviewer-supplied field as the verdict. So these two
+# assertions now pin the same two properties against the new hazard -- the grade is still
+# the orchestrator's, and a supplied field is an input it verifies rather than obeys.
 expect "P4: the orchestrator grades, not the review skill" \
-  "$(printf '%s' "$P4" | grep -c 'the review skill does not hand you a classification' | tr -d ' ')" "1"
-expect "P4: names the missing ac:/reachable: fields as the reason" \
-  "$(printf '%s' "$P4" | grep -c 'emits .file:line. plus a severity label and \*\*no such fields\*\*' | tr -d ' ')" "1"
+  "$(printf '%s' "$P4" | grep -c 'a reviewer-supplied field is an input, never a classification you may adopt unchecked' | tr -d ' ')" "1"
+expect "P4: the supplied fields do not move the decision" \
+  "$(printf '%s' "$P4" | grep -c 'It does NOT move the decision' | tr -d ' ')" "1"
+# ...and the specific failure mode is named, not just the principle: a mislabelled
+# `reachable:` must not become a free deferral.
+expect "P4: names the mislabelled-reachable hazard" \
+  "$(printf '%s' "$P4" | grep -c 'must not be able to defer it by saying so' | tr -d ' ')" "1"
+# The absent-field path must survive too -- a legacy or degraded report still grades the
+# old way. Losing this would make the new rule depend on a field always being present.
+expect "P4: an absent field is still graded, failing closed" \
+  "$(printf '%s' "$P4" | grep -c "The field's absence is still handled" | tr -d ' ')" "1"
+# ZERO-COUNT RETIREMENT GUARDS for the two wordings that lived in THIS file's subject.
+# Gate B found the asymmetry: the spine's wording got a permanent zero-count guard
+# (enforcement-spine.test.sh), but the two phase-3-gates wordings had their positive pins
+# deleted and replaced with pins on the NEW text, leaving nothing to stop the old claims
+# being re-introduced. PLAN.md's AC-5 note names this exact hazard, and AC 5 is a one-shot
+# grep at verify time rather than a suite guard, so nothing carried it forward. These two do.
+expect "P4: the retired 'no such fields' wording cannot come back" \
+  "$(printf '%s' "$P4" | grep -c 'no such fields' | tr -d ' ')"                                    "0"
+expect "P4: the retired 'has no ac: to read' wording cannot come back" \
+  "$(printf '%s' "$P4" | grep -cE 'has no .ac:. to read' | tr -d ' ')"                             "0"
+# CONTROLS: both patterns must match their target text, or the zero-counts are vacuous.
+expect "P4: ...'no such fields' pattern is real" \
+  "$(printf 'emits `file:line` plus a severity label and **no such fields** — so\n' | grep -c 'no such fields' | tr -d ' ')" "1"
+expect "P4: ...'has no ac: to read' pattern is real" \
+  "$(printf 'so a Phase-4 finding has no `ac:` to read, and a rule waiting\n' | grep -cE 'has no .ac:. to read' | tr -d ' ')" "1"
 expect "P4: grades from the AC table and the diff" \
   "$(printf '%s' "$P4" | grep -c "PLAN.md's Acceptance Criteria table" | tr -d ' ')" "1"
 expect "P4: fail-closed on the orchestrator's own uncertainty" \
@@ -682,28 +713,108 @@ expect "P4: the schema mirrors the totality claim" \
   "$(grep -c 'The three values are \*\*total\*\*' "$ROOT/skills/auto-task/references/state-schema.md" | tr -d ' ')" "1"
 # GATE-B PASS-1 FINDING (required). The justification added alongside the `via` fix
 # claimed that omitting the field "silently contaminates the review_rounds telemetry".
-# False in both directions: review_rounds is `rounds[] | length`, and no derivation reads
-# `via` at all -- `grep -n '\bvia\b'` over the three hooks returns nothing. Pin the
-# CORRECTED claim plus the real limit it replaced the false one with, and pin the
-# negative control on the hooks so the prose cannot drift back into asserting a wiring
-# that does not exist. This is the repo's own "verify prose against code" lesson: the
-# suite pinned the sentence's wording without ever checking its truth.
-expect "P4: via is scoped to STATE.json, and says so" \
-  "$(printf '%s' "$P4" | grep -c 'It lives in `STATE.json` and \*\*nowhere else\*\*' | tr -d ' ')" "1"
-expect "P4: ...and the retired false telemetry claim is gone" \
+# Originally this pinned "via lives in STATE.json and nowhere else" plus the limitation
+# that followed from it ("a run that self-reviewed rounds 2-6 reports the same
+# review_rounds: 6"). Both were true when no derivation read the field, and the guard
+# existed because an EARLIER version of the prose had claimed a wiring that did not exist
+# -- the repo's "verify prose against code" lesson, where the suite pinned a sentence's
+# wording without ever checking its truth.
+#
+# RE-AIMED because the wiring now exists on purpose. Two derivations read `via`, so
+# "nowhere else" is false and the limitation it implied is RESOLVED rather than restated:
+# independence is now legible from the ledger. Pinning either old sentence would freeze a
+# false claim into the suite -- the exact defect this guard was created to catch, just
+# pointing the other way. What is pinned instead is the boundary that IS still
+# load-bearing (send-telemetry.sh stays out, enforced by the negative control below) and
+# the two properties a reader can be misled by if the prose drifts: review_rounds is
+# untouched, and null is not zero.
+expect "P4: the three-way reach is stated exactly, not as 'nowhere else'" \
+  "$(printf '%s' "$P4" | grep -c 'does NOT read it, and must not' | tr -d ' ')" "1"
+# Matched BOLD-INSENSITIVELY. Gate A flagged the first version of this assertion as keying on
+# the bolded form, which would miss the same claim re-asserted without the `**` markers -- and
+# an unbolded copy legitimately survives inside the "What this replaced" quotation further down,
+# so the pattern must distinguish the historical quotation from a live re-assertion.
+# COUNTED, not filtered -- and this is the FOURTH form of this guard, because the first three
+# were each permeable and each was caught by mutation rather than by reading:
+#   v1 excluded the BOLDED form only, so an unbolded re-assertion anywhere passed.
+#   v2 excluded a skip WINDOW from `**What this replaced` to the next `**`, so a
+#      plain-paragraph re-assertion inside the window passed (round-1 review).
+#   v3 excluded that single line, on the stated grounds that "a single-line exclusion has no
+#      interior to hide in" -- false: the line is a 675-char markdown paragraph, and Gate B
+#      mutation-proved that appending the claim onto that same line still passed.
+# Every filtering form shares one flaw: whatever it excludes becomes a place to hide. So stop
+# excluding. The retired phrase legitimately occurs EXACTLY ONCE in this section -- inside the
+# historical quotation -- so assert the count is exactly 1 AND that the one occurrence is on
+# the quotation line. Appending a re-assertion to that line makes the count 2 and trips; writing
+# one anywhere else makes it 2 and trips; deleting the quotation makes it 0 and trips.
+expect "P4: the retired 'nowhere else' claim survives ONLY as the historical quotation" \
+  "$(printf '%s' "$P4" | grep -oE 'It lives in .STATE.json. and (\*\*)?nowhere else' | wc -l | tr -d ' ')" "1"
+expect "P4: ...and that one occurrence is on the quotation line" \
+  "$(printf '%s' "$P4" | grep -E '^\*\*What this replaced' | grep -oE 'It lives in .STATE.json. and (\*\*)?nowhere else' | wc -l | tr -d ' ')" "1"
+# CONTROL: the pattern must match the UNBOLDED form, or both assertions above could be
+# satisfied by a regex that simply never matches a re-assertion.
+expect "P4: ...and that pattern matches the UNBOLDED form too" \
+  "$(printf 'It lives in `STATE.json` and nowhere else: no derivation reads it.\n' | grep -cE 'It lives in .STATE.json. and (\*\*)?nowhere else' | tr -d ' ')" "1"
+# ...and the count-based form must be able to see a SECOND occurrence, including one appended
+# to the quotation line itself -- the exact bypass Gate B proved against v3.
+expect "P4: ...and a second occurrence on that same line would trip it" \
+  "$(printf '%s\n' '**What this replaced.** previously read: "It lives in `STATE.json` and **nowhere else**" It lives in `STATE.json` and nowhere else now.' | grep -oE 'It lives in .STATE.json. and (\*\*)?nowhere else' | wc -l | tr -d ' ')" "2"
+expect "P4: ...and the retired false telemetry claim is still gone" \
   "$(printf '%s' "$P4" | grep -c 'silently contaminates the .review_rounds. telemetry' | tr -d ' ')" "0"
-expect "P4: ...replaced by the real limit (same count either way)" \
-  "$(printf '%s' "$P4" | grep -c 'reports the same `review_rounds: 6` as a fully independent run' | tr -d ' ')" "1"
+expect "P4: review_rounds is unchanged by the new field" \
+  "$(printf '%s' "$P4" | grep -c 'review_rounds` is unchanged by all of this' | tr -d ' ')" "1"
+expect "P4: an absent rounds key is null, never a hard zero" \
+  "$(printf '%s' "$P4" | grep -c 'yields `null` (nothing about that run is measurable)' | tr -d ' ')" "1"
+expect "P4: a row without via is not counted as independent" \
+  "$(printf '%s' "$P4" | grep -c 'is \*not counted as independent\*' | tr -d ' ')" "1"
+# The append-only consequence must stay stated: it is why a fabricated 0 is unrecoverable.
+expect "P4: names the append-only reason nulls must not be coalesced" \
+  "$(printf '%s' "$P4" | grep -c 'append-only\*\*, so a fabricated `0` written today cannot be repaired' | tr -d ' ')" "1"
 # Match a FIELD ACCESS (`.via`, `"via"`, `via:`), never the English preposition -- all
 # three hooks use "via" in prose comments, so a bare word match reports 10 and proves
-# nothing. If a derivation ever starts reading the field, this trips and the prose above
-# has to be rewritten to match the wiring rather than the other way round.
-expect "P4: NEGATIVE CONTROL — no hook derivation reads the via FIELD" \
-  "$(grep -hoE '\.via\b|"via"|(^|[[:space:]])via:' "$ROOT/hooks/record-outcome.sh" "$ROOT/hooks/send-telemetry.sh" \
-      "$ROOT/hooks/auto-task-stats.sh" 2>/dev/null | wc -l | tr -d ' ')" "0"
+# nothing.
+#
+# RE-AIMED, NOT RETIRED. This control once covered all three hooks and asserted 0. Two of
+# them now read the field on purpose: `record-outcome.sh` and `auto-task-stats.sh` derive
+# `review_rounds_independent` from it, so the old form would fail by design. The wrong fix
+# would have been to delete the control or relax it to a range -- a negative control that
+# gets flipped instead of re-aimed silently stops protecting anything. Instead it now
+# guards the boundary that IS still load-bearing: the local independence count was a
+# deliberate LOCAL-ONLY decision, so `send-telemetry.sh` must never read `via`. Adding it
+# to the payload would need a hosted-schema column and a live migration, which is exactly
+# the scope that decision excluded. The positive assertion below is the other half.
+expect "P4: NEGATIVE CONTROL — send-telemetry.sh never reads the via FIELD (local-only)" \
+  "$(grep -hoE '\.via\b|"via"|(^|[[:space:]])via:' "$ROOT/hooks/send-telemetry.sh" 2>/dev/null | wc -l | tr -d ' ')" "0"
 # CONTROL for that control: the pattern must actually match a real field read.
 expect "P4: ...and that pattern does match a real field read" \
   "$(printf '      review_via: (.gates.code_review.rounds[0].via),\n' | grep -coE '\.via\b|"via"|(^|[[:space:]])via:' | tr -d ' ')" "1"
+# POSITIVE half: the two LOCAL derivations must each actually read the field. Without
+# this, re-aiming the control above would leave the whole wiring unasserted -- the
+# negative control would pass just as happily if both derivations were deleted.
+expect "P4: record-outcome.sh DOES read the via field" \
+  "$([ "$(grep -cE '\.via\b|"via"|(^|[[:space:]])via:' "$ROOT/hooks/record-outcome.sh")" -ge 1 ] && echo yes || echo no)"   "yes"
+expect "P4: auto-task-stats.sh DOES read the via field" \
+  "$([ "$(grep -cE '\.via\b|"via"|(^|[[:space:]])via:' "$ROOT/hooks/auto-task-stats.sh")" -ge 1 ] && echo yes || echo no)"  "yes"
+# EXPRESSION PARITY (AC 17). The two derivations run on different inputs -- an archived
+# ledger row vs a live STATE.json still on disk -- so the same run reaches the aggregator
+# through two code paths. This repo has been bitten by that divergence twice already
+# (est_tokens_scale, then duration_min), each time answered by comparing the expressions
+# rather than trusting them to stay equal. Compare the normalized derivation text.
+p4_indep_expr() { sed -n '/review_rounds_independent:/,/else null end)/p' "$1" | tr -s '[:space:]' ' '; }
+expect "P4: the independence derivation is byte-identical in both hooks" \
+  "$([ "$(p4_indep_expr "$ROOT/hooks/record-outcome.sh")" = "$(p4_indep_expr "$ROOT/hooks/auto-task-stats.sh")" ] && echo same || echo DIFFERENT)" "same"
+# NON-EMPTY guard, without which the assertion above passes VACUOUSLY when the derivation is
+# absent from both hooks ([ "" = "" ] is `same`). Round-1 review confirmed that by deleting it
+# from both and watching this block stay green. The sibling copy in record-outcome.test.sh
+# already carried this guard; the same invariant was being enforced at two different
+# strengths in two files, and this closes the weaker one.
+expect "P4: ...and the extraction is non-empty (not vacuously equal)" \
+  "$([ -n "$(p4_indep_expr "$ROOT/hooks/record-outcome.sh")" ] && echo yes || echo no)"  "yes"
+expect "P4: ...in the live-reader hook too" \
+  "$([ -n "$(p4_indep_expr "$ROOT/hooks/auto-task-stats.sh")" ] && echo yes || echo no)" "yes"
+# ...and that comparison must be able to fail: a control for the parity control.
+expect "P4: ...and the parity comparison detects a real difference" \
+  "$([ "$(printf 'review_rounds_independent: (if a then 1 else null end)')" = "$(printf 'review_rounds_independent: (if b then 2 else null end)')" ] && echo same || echo DIFFERENT)" "DIFFERENT"
 # GATE-B PASS-1 FINDING (follow-up, fixed in the same pass because it is the same
 # paragraph). The sha-moved rung asserted the inline re-review "re-pins
 # reviewed_diff_sha" -- false whenever that re-review reopens, since the field is written
@@ -1696,6 +1807,95 @@ expect "yield: the Phase-4 row is not wired to auto-continue" \
 # The inline non-negotiable must name the field too, not just the duty -- naming only
 # "surfaces on LIGHT" is what let the table's default win for a reader who skipped the
 # MANDATORY READ.
+
+# ===========================================================================
+# THE REVIEWER'S PER-FINDING CONTRACT — ac: and reachable: stated AT SOURCE
+#
+# Measured motivation: across the three runs in this clone that carry round records, ~90
+# findings produced 34 fixes and 49 findings parked and never fixed (~55%), several of them
+# labelled `required`. The reviewer assigned severity under its own definition while the
+# orchestrator graded reachability separately, and the gap between those two judgments is
+# what made the review untrustworthy. The reviewer is the reader who just looked at the
+# code, so it is the cheapest and most accurate place to state the two facts.
+#
+# Asserted BLOCK-SCOPED, not by loose substring presence anywhere in the file. A bare
+# `grep -c 'ac:'` over the whole skill cannot tell a binding output contract from a prose
+# aside, which is this repo's own verify-by-grep lesson.
+# ---------------------------------------------------------------------------
+RSKILL="$ROOT/skills/auto-task-code-review/SKILL.md"
+# The block runs from its heading to the first review DIMENSION heading that follows it.
+rfmt(){ awk '/^### Two required fields on EVERY finding/,/^\*\*Correctness\*\*/' "$RSKILL"; }
+expect "reviewer-fmt: the required-fields block exists" \
+  "$([ -n "$(rfmt)" ] && echo yes || echo no)"                                        "yes"
+expect "reviewer-fmt: ac: is mandated inside the block" \
+  "$(rfmt | grep -c '\*\*`ac:`\*\*' | tr -d ' ')"                                      "1"
+expect "reviewer-fmt: reachable: is mandated inside the block" \
+  "$(rfmt | grep -c '\*\*`reachable:`\*\*' | tr -d ' ')"                               "1"
+# `none` must be documented, or a standalone review with no criteria has no legal answer.
+expect "reviewer-fmt: none is documented as ac:'s no-criterion value" \
+  "$([ "$(rfmt | grep -c '`none`')" -ge 1 ] && echo yes || echo no)"                   "yes"
+# Exactly Gate B's three values, each inside the block.
+for v in runtime spec-only docs-only; do
+  expect "reviewer-fmt: reachable value \`$v\` is defined" \
+    "$([ "$(rfmt | grep -c "\`$v\`")" -ge 1 ] && echo yes || echo no)"                 "yes"
+done
+# The vocabulary is Gate B's and the block must say so, so a future edit cannot fork it.
+expect "reviewer-fmt: names Gate B as the source of the vocabulary" \
+  "$([ "$(rfmt | grep -c "Gate B")" -ge 1 ] && echo yes || echo no)"                   "yes"
+# FACTS, NOT SEVERITY — the property that keeps the two fields from becoming a second,
+# competing severity channel alongside Blockers / Required / Follow-ups.
+expect "reviewer-fmt: declared facts rather than severity" \
+  "$(rfmt | grep -c 'facts for the orchestrator to act on, not your severity judgment' | tr -d ' ')" "1"
+expect "reviewer-fmt: required even on a blocker" \
+  "$([ "$(rfmt | grep -c 'even when you rate the finding a blocker')" -ge 1 ] && echo yes || echo no)" "yes"
+# THE TEST STAYS SINGLE-SOURCED. The values are restated here on purpose (a fresh-context
+# reviewer cannot follow a cross-file pointer while filling the field in), but the rule
+# that decides reopen/defer/park must NOT be duplicated into the reviewer, or the two
+# copies drift and the reviewer starts acting on a decision that is not its to make.
+expect "reviewer-fmt: points at the single-sourced test instead of restating it" \
+  "$([ "$(rfmt | grep -c 'phase-3-gates.md')" -ge 1 ] && echo yes || echo no)"         "yes"
+expect "reviewer-fmt: forbids the reviewer acting on that test" \
+  "$([ "$(rfmt | grep -c 'your job ends at reporting the two facts')" -ge 1 ] && echo yes || echo no)" "yes"
+expect "reviewer-fmt: does NOT restate the reopen clauses" \
+  "$(rfmt | grep -cE 'breaks an approved AC|costs a round' | tr -d ' ')"               "0"
+# The one-line output shape must carry both fields too — the block can be right while the
+# line a reviewer actually copies stays stale.
+expect "reviewer-fmt: the Output-discipline line carries both fields" \
+  "$(grep -c 'ac: <n|none> — reachable: <runtime|spec-only|docs-only>' "$RSKILL" | tr -d ' ')" "1"
+# CONTROL: the extractor must really be scoped, not accidentally the whole file.
+expect "reviewer-fmt: the block excludes later dimensions (extractor is scoped)" \
+  "$(rfmt | grep -c 'Resource leaks' | tr -d ' ')"                                     "0"
+
+# --- THE REVIEWER'S *INPUT* CONTRACT: it must be handed the criteria it must cite -------
+# Round 3 caught this as the round's only unguarded fix, and the omission is the more
+# dangerous half of the pair: the block above pins the reviewer's OUTPUT contract (state
+# `ac:`), while nothing pinned the INPUT that makes the field answerable. Gate B found the
+# original defect -- Step 0 handed CONTEXT/TRACE but not PLAN.md, and STATE.json carries no
+# numbered criteria, so `ac:` was `none` by construction on the default path, which reads
+# downstream as the positive claim "breaks no criterion" and argues for parking. The
+# reference files are actively trimmed against a spine budget, so an untested bullet can be
+# dropped and restore that state with a fully green suite.
+#
+# BOTH spawn sites are pinned, because fixing one and not the other is exactly what round 3
+# found: the Phase-4 reviewer spawn AND the shadow-review spawn each instruct an agent to
+# invoke the same skill, whose contract mandates `ac:`.
+expect "reviewer-input: Step 0's spawn hands over the AC table" \
+  "$(printf '%s' "$P4" | grep -c "Hand it \`PLAN.md\`'s Acceptance Criteria table" | tr -d ' ')"        "1"
+expect "reviewer-input: ...and says why \`none\`-by-construction is the hazard" \
+  "$(printf '%s' "$P4" | grep -c 'answerable exactly one way' | tr -d ' ')"                            "1"
+expect "reviewer-input: the shadow-review spawn hands it over too" \
+  "$(grep -c "and \`PLAN.md\`'s Acceptance Criteria table\*\* per the read-before-review contract" "$GATES" | tr -d ' ')" "1"
+expect "reviewer-input: the review skill reads PLAN.md's AC table" \
+  "$(grep -c 'read the `## Acceptance Criteria` table' "$RSKILL" | tr -d ' ')"                         "1"
+# CONTROLS: each pattern must match real text, or these four zero/one-counts are vacuous.
+expect "reviewer-input: ...Step-0 pattern is real" \
+  "$(printf "%s\n" "- **Hand it \`PLAN.md\`'s Acceptance Criteria table, and this bullet is not optional.**" | grep -c "Hand it \`PLAN.md\`'s Acceptance Criteria table" | tr -d ' ')" "1"
+expect "reviewer-input: ...read-contract pattern is real" \
+  "$(printf '%s\n' 'read the `## Acceptance Criteria` table. It is the **only** place' | grep -c 'read the `## Acceptance Criteria` table' | tr -d ' ')" "1"
+# ...and the two spawn sites are the COMPLETE set that instructs an agent to invoke the
+# review skill. If a third appears, this count trips and it must be given the AC table too.
+expect "reviewer-input: exactly two spawn sites invoke the review skill" \
+  "$(grep -cF 'invoke the `auto-task-code-review` skill' "$GATES" | tr -d ' ')"                        "2"
 
 echo
 printf 'gate-b-loop: PASS=%s FAIL=%s\n' "$PASS" "$FAIL"
