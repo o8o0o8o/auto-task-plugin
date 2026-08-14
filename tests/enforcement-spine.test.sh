@@ -1533,6 +1533,13 @@ expect "spine: CHANGELOG spec-helper count is current" \
 expect "spine: CHANGELOG spine-guard count is current" \
   "$(grep -oE 'enforcement-spine\.test\.sh`\*\* \(([0-9]+) assertions' "$HOOKS/../CHANGELOG.md" | grep -oE '[0-9]+' | head -1)" \
   "$(grep -cE '^expect "spine: ' "$HOOKS/../tests/enforcement-spine.test.sh" | tr -d ' ')"
+# CODE-REVIEW ROUND 2: the sibling gate-b-loop figure on that same CHANGELOG line was the
+# only count NOT pinned, and it promptly rotted (463 stated, 465 actual) when a later fix
+# added two assertions after the figures had been synced. The comment above says these
+# counts rot and must be pinned; this is the one that was missed.
+expect "spine: CHANGELOG gate-b-loop count is current" \
+  "$(grep -oE 'gate-b-loop\.test\.sh` grows to \*\*([0-9]+) assertions' "$HOOKS/../CHANGELOG.md" | grep -oE '[0-9]+' | head -1)" \
+  "$(bash "$HOOKS/../tests/gate-b-loop.test.sh" </dev/null 2>&1 | grep -oE 'PASS=[0-9]+' | head -1 | grep -oE '[0-9]+')"
 
 # GATE-B ROUND-4 FINDING: README carried its own size claim and its own "no behavior
 # change" assertion, and neither was pinned — the CHANGELOG's equivalent number had already
@@ -1843,12 +1850,109 @@ expect "spine: gate-b at-cap surface restated inline" \
 # prose that actually sets the field. Same shape as the yield-table finding above:
 # a location guard must key on text unique to the contract, never on half a row.
 expect "spine: yield-table row for the over-cap surface" \
-  "$(spine_has "$SPINE_ONLY" '| Gate B at its cap, a second `self_inflicted` pass, or a fired convergence test | `"user-approval"` |')" "yes"
+  "$(spine_has "$SPINE_ONLY" '| Gate B at its cap with no pass run, or on a reopening pass: at its cap, a second `self_inflicted` pass, or a fired convergence test | `"user-approval"` |')" "yes"
+# CODE-REVIEW FINDING (Required): the reopening precondition was stated absolutely at
+# the four SUMMARY sites, so the PRE-SPAWN arrival -- Step 0 item 5, where the scope is
+# already at its cap and NO pass is spawned -- had no row here at all. With the table's
+# default being auto-continue and `| Gate B pass | "auto-continue" |` the only other
+# Gate-B row, a model resolving spine-vs-reference in favour of the always-loaded spine
+# could auto-continue or self-grant on the one path the cap exists to bound. Reachable:
+# grant "one more pass" at the cap, that pass reopens, Phase 4, re-enter Gate B on a
+# spent allowance -> pre-spawn arrival, no pass to be "reopening". Pin BOTH arrivals.
+expect "gate-b: the yield row covers the pre-spawn (no pass run) arrival" \
+  "$(grep -c '^| Gate B .*no pass run.*`"user-approval"` |' "$SPINE_ONLY" | tr -d ' ')"              "1"
 expect "gate-b: the over-cap surface sets user-approval (not auto-continue)" \
   "$(spine_has "$GATESREF" 'Set `expected_next_action: "user-approval"` and show the **per-pass severity table**')" "yes"
 # And the inverse must be absent: no Gate-B surface may be wired to auto-continue.
+# GATE-A FINDING (this run): the pattern keyed on the row's OLD prefix
+# (`| Gate B at its cap`). Renaming the row left this grep matching nothing, so it read
+# 0 — and kept reading 0 with the row's value flipped to `"auto-continue"`. A guard that
+# cannot match the row it guards is vacuous, which is the exact shape of the finding that
+# created it. It then went vacuous a SECOND time when the row was reworded again to cover
+# the pre-spawn arrival, so it is now keyed on `convergence test` — a phrase in the row's
+# TAIL, unique to the surface row, and untouched by any prefix rewording. Keeping it
+# narrower than `^| Gate B ` still matters: `| Gate B pass | "auto-continue" |` (:306) is
+# a legitimate auto-continue yield.
 expect "gate-b: over-cap row is not wired to auto-continue" \
-  "$(grep -c '| Gate B at its cap.*auto-continue' "$SPINE_ONLY" | tr -d ' ')"                        "0"
+  "$(grep -c '^| Gate B .*convergence test.*auto-continue' "$SPINE_ONLY" | tr -d ' ')"              "0"
+
+# ---- Gate B clean-exit precedence: a zero-reopening pass never reaches Step 4 ----
+# A measured run surfaced on a pass that recorded reopened:0 -- it was at the cap and
+# the 2nd self_inflicted -- and then, one pass later, DECLINED to surface in the same
+# situation, reasoning in its own record that the gate had already passed at Step 2.
+# The rule was right and unwritten, so the pipeline improvised it inconsistently.
+# These pins put it at every site that states the trigger set. Each is ANCHORED to a
+# landmark on the same line: a bare presence grep would be satisfied by the phrase
+# turning up at some other site in the same file, which is how one edit can green a
+# criterion that names a different site.
+# CODE-REVIEW ROUND 2: this stopped before the pre-spawn clause, so the guard for the
+# round-1 Required finding did not cover the clause that finding added. Extended past
+# the semicolon at all three summary sites (here, ARCHITECTURE and README below).
+expect "spine: gate-b bullet carries the clean-exit precedence" \
+  "$(grep -c 'At the cap, SURFACE.*never a zero-reopening pass.*pre-spawn at-cap arrival always surfaces' "$SPINE_ONLY" | tr -d ' ')" "1"
+expect "gate-b: Step 4 evaluates triggers only on a reopening pass" \
+  "$(grep -c 'Three triggers reach this surface.*only on a pass that reopened something' "$GATESREF" | tr -d ' ')" "1"
+expect "gate-b: Step 3 carries the same precedence" \
+  "$(grep -c 'not necessarily consecutive.*zero-reopening pass takes Step 2' "$GATESREF" | tr -d ' ')" "1"
+# Step 4 has TWO arrivals. Naming only the post-pass one would leave an at-cap scope
+# with a live finding reading as having no surface at all -- it arrives pre-spawn,
+# where no pass ran and there is no count to read, and it must still surface.
+# These three are checked against Step 4's EXTRACTED BODY rather than by a same-line
+# grep. GATE-A ROUND-2 FINDING: anchoring to `Step 4 has two arrivals` looked
+# site-scoped but was not -- that phrase is part of the very sentence being checked,
+# so the pattern was still whole-file, and a probe that RELOCATED the paragraph into
+# Step 1 left every assertion green. An anchor is only real when it is a PRE-EXISTING
+# line at the site (as the sibling pins below use) or when the section is extracted.
+gb_step4() { awk '/^### Step 4 /{f=1;next} /^##+ /{f=0} f' "$GATESREF"; }
+# CODE-REVIEW ROUND 2: these pinned the arrival NAMES, both of which sit inside the
+# sentence stating the rule — so inverting "That arrival **always surfaces**" to "takes
+# the clean exit too" kept them green. Pin each arrival's RULE, not its label.
+expect "gate-b: Step 4 names the pre-spawn arrival" \
+  "$(gb_step4 | grep -c 'pre-spawn arrival.*always surfaces' | tr -d ' ')"                           "1"
+expect "gate-b: Step 4 names the post-pass arrival" \
+  "$(gb_step4 | grep -c 'post-pass arrival.*only arrival the reopening precondition governs' | tr -d ' ')" "1"
+# FAIL CLOSED, against the local convention. Both sites, because a reader who takes
+# "an absent X counts as 0" from the neighbouring prose disarms all three triggers
+# on every legacy row.
+# CODE-REVIEW ROUND 2: `absent .reopened.*counts as reopening` also matches a statement
+# of the OPPOSITE rule — the `.*` bridges "counts as zero and never" into "counts as
+# reopening" — so the guard for the one drift this spec explicitly warns about could not
+# see that drift happen. Pin the full clause, direction included.
+expect "gate-b: absent reopened counts as reopening (gates ref)" \
+  "$(gb_step4 | grep -c 'absent .reopened.*counts as reopening, never as zero' | tr -d ' ')"         "1"
+expect "gate-b: absent reopened counts as reopening (state schema)" \
+  "$(grep -c '\*\*`self_inflicted`\*\*.*absent .reopened.*counts as reopening, never as zero' "$SCHEMAREF" | tr -d ' ')" "1"
+expect "gate-b: state-schema self_inflicted doc carries the precedence" \
+  "$(grep -c '\*\*`self_inflicted`\*\*.*a zero-reopening pass has already passed the gate' "$SCHEMAREF" | tr -d ' ')" "1"
+# ARCHITECTURE's two sites counted SEPARATELY -- that table is the one-screen summary
+# a reader consults INSTEAD of the reference, so a stale copy there is how a retired
+# claim survives.
+expect "gate-b: ARCHITECTURE mermaid edge carries the precedence" \
+  "$(grep -c '^ *GateBCls .*reopening pass takes the clean exit' "$LBARCH" | tr -d ' ')"             "1"
+expect "gate-b: ARCHITECTURE Gate B row carries the precedence" \
+  "$(grep -c '^| Gate B |.*reopening pass takes the clean exit.*pre-spawn at-cap arrival' "$LBARCH" | tr -d ' ')" "1"
+expect "gate-b: README states it in user-facing prose" \
+  "$(grep -c '^- \*\*Gate B\*\*.*a pass that finds nothing to reopen just passes.*before a pass even runs still surfaces' "$LBRDME" | tr -d ' ')" "1"
+# MUST NOT CHANGE. The precedence narrows one thing only; these four are the clauses
+# most likely to be collateral, and the yield row's VALUE is read by
+# prevent-mid-protocol-stall.sh.
+expect "gate-b: Step 0's pre-spawn cap check is untouched" \
+  "$(grep -c 'If this scope is already at its cap, do NOT spawn the agent' "$GATESREF" | tr -d ' ')" "1"
+expect "gate-b: park_non_blocking's carve-out is untouched" \
+  "$(grep -c 'by parking every finding that is neither literally' "$GATESREF" | tr -d ' ')"          "1"
+# CODE-REVIEW FINDING (Minor): this was labelled `gate-b:` and commented as "the rule and
+# its restatement in the rationale para" — both wrong. The two occurrences are in DIFFERENT
+# contracts: Gate B's Step 3, and the Phase-4 loop's Step C. A reword of Phase 4's sentence
+# would redden an assertion named for Gate B and send the fixer to the wrong line. Scope
+# each to its own section instead, so the two cannot mask or blame each other.
+gb_step3() { awk '/^### Step 3 /{f=1;next} /^##+ /{f=0} f' "$GATESREF"; }
+p4_stepc() { awk '/^### Step C /{f=1;next} /^##+ /{f=0} f' "$GATESREF"; }
+expect "gate-b: Step 3's convergence test is untouched" \
+  "$(gb_step3 | grep -c 'If it did not DECREASE, the loop has converged' | tr -d ' ')"              "1"
+expect "phase-4: Step C's convergence test is untouched" \
+  "$(p4_stepc | grep -c 'If it did not DECREASE, the loop has converged' | tr -d ' ')"              "1"
+expect "gate-b: the yield row still resolves to user-approval" \
+  "$(grep -c '^| Gate B .*`\"user-approval\"` |' "$SPINE_ONLY" | tr -d ' ')"                         "1"
 expect "spine: tier table carries the per-tier pass cap" \
   "$(spine_has "$SPINE_ONLY" 'run, max 2 passes')"                                                  "yes"
 expect "spine: HEAVY tier pass cap"                "$(spine_has "$SPINE_ONLY" 'run, max 3 passes, cross-check')" "yes"

@@ -306,6 +306,66 @@ expect "one self_inflicted pass alone does not surface"      "$(surface_at "true
 expect "  non-consecutive case is within the HEAVY cap" \
   "$([ "$(surface_at "true false true")" -le "$(lb_gate_b_cap heavy)" ] && echo yes || echo no)" "yes"
 
+# ORACLE for Step 4's precedence: a pass that reopened NOTHING took Step 2's clean
+# exit and never reaches the triggers -- whichever of the three would have fired.
+# This models the DECISION, not a label count. surface_at above is deliberately
+# untouched: it models how the self_inflicted tally is COUNTED, which is still
+# correct -- the tally keeps advancing on every pass, clean ones included, and only
+# its READING is deferred. The two functions answer different questions.
+#
+# It reconciles with the ":a 0 in the sequence" guard above rather than colliding
+# with it: that guard is about converge_at's inputs, which by construction never
+# contain a 0 precisely BECAUSE a zero-reopening pass was already resolved here.
+resolve_pass(){ # $1=reopened (may be empty) $2=scope $3=pass_n $4=self_inflicted_count $5=tier $6=allowance
+  local reopened_or_closed scope n si tier cap allowance
+  reopened_or_closed="$1"
+  # Fail closed: an ABSENT reopened count means reopening, never zero. The opposite
+  # of the "an absent passes[] counts as 0" convention, and deliberately so -- this
+  # precondition narrows when the pipeline may stop for the user, so it may only
+  # fire on a fact that was actually recorded.
+  [ -z "$reopened_or_closed" ] && reopened_or_closed=1
+  scope="$2"; n="$3"; si="$4"; tier="${5:-standard}"; allowance="${6:-0}"
+  [ "$reopened_or_closed" -eq 0 ] && { echo clean-exit; return; }
+  # The cap is scope-dependent; the PRECEDENCE is not.
+  case "$scope" in
+    main) cap="$(lb_gate_b_cap "$tier")" ;;
+    *)    cap="$(lb_gate_b_regate_cap)" ;;
+  esac
+  # CODE-REVIEW FINDING (Minor): the cap term omitted the granted allowance, so this
+  # returned `surface` for the very pass a grant had just bought -- re-surfacing the
+  # check-in the grant was given to end. Step 0 item 3 is explicit that an allowance
+  # RAISES THE CAP and never adds to the spent count.
+  cap=$((cap + allowance))
+  { [ "$n" -ge "$cap" ] || [ "$si" -ge 2 ]; } && { echo surface; return; }
+  echo continue; }
+
+# (1)-(2) A clean pass short-circuits BOTH triggers, in every scope.
+expect "clean pass at the cap AND 2nd self_inflicted -> clean exit" \
+  "$(resolve_pass 0 main 3 2 heavy)"              "clean-exit"
+expect "clean pass in a regate scope -> clean exit too" \
+  "$(resolve_pass 0 regate:docs 2 2 heavy)"       "clean-exit"
+# (3)-(5) A DIRTY pass still surfaces on each trigger, and still continues otherwise.
+expect "dirty pass at the cap -> surface" \
+  "$(resolve_pass 2 main 3 0 heavy)"              "surface"
+expect "dirty pass, 2nd self_inflicted -> surface" \
+  "$(resolve_pass 2 main 1 2 heavy)"              "surface"
+expect "dirty pass, no trigger -> continue" \
+  "$(resolve_pass 2 main 1 0 heavy)"              "continue"
+# (6) FAIL CLOSED: an absent count is reopening, so the triggers still apply.
+expect "absent reopened count fails closed -> surface" \
+  "$(resolve_pass "" main 1 2 heavy)"             "surface"
+# (7)-(8) Scope is load-bearing for the CAP: a regate scope caps at 2, so pass 2 is
+# at its cap even on HEAVY, where the main loop would still have a third pass.
+expect "regate scope reaches its own cap at pass 2 -> surface" \
+  "$(resolve_pass 1 regate:release 2 0 heavy)"    "surface"
+expect "regate scope below its cap -> continue" \
+  "$(resolve_pass 1 regate:release 1 0 heavy)"    "continue"
+# (9)-(10) A granted allowance RAISES the cap; the pass it bought must not re-surface.
+expect "granted allowance buys a pass that does not re-surface" \
+  "$(resolve_pass 2 main 3 0 heavy 1)"            "continue"
+expect "  ...and the pass after that is at the raised cap" \
+  "$(resolve_pass 2 main 4 0 heavy 1)"            "surface"
+
 echo "================ Gate B: AC-gated reopen decision ================"
 
 # ORACLE for Step 2: reopen iff (a) breaks an approved AC, (b) reachable:runtime

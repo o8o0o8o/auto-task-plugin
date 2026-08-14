@@ -304,7 +304,7 @@ The Stop hook reads `STATE.json` on every Stop event:
 | Phase 4 code-review skill returns | `"auto-continue"` (the report is INPUT) |
 | Phase 4 fix applied | `"auto-continue"` |
 | Gate B pass | `"auto-continue"` |
-| Gate B at its cap, a second `self_inflicted` pass, or a fired convergence test | `"user-approval"` |
+| Gate B at its cap with no pass run, or on a reopening pass: at its cap, a second `self_inflicted` pass, or a fired convergence test | `"user-approval"` |
 | Phase 4 fired convergence test | `"user-approval"` |
 | Phase 5 steps 1, 1b, 2–4 (gates verify, docs update, diagram, artifacts, CONTEXT.md) — except the step-1b `ask` prompt below | `"auto-continue"` |
 | Phase 5 step 5–7 (stage, commit, verify, push prep) | `"auto-continue"` |
@@ -637,7 +637,7 @@ A second `task-execution-verifier` pass with an **adversarial** stance — flip 
 - **This gate is BOUNDED — it does not converge on its own.** Seven measured runs went 4-11 passes with required counts that never decayed, because each pass's fixes fed the next. So: count passes in `gates.gate_b.passes[]` per `scope`, cap them from `lb_gate_b_cap` / `lb_gate_b_regate_cap` (**never hardcode**), check the fix-loop budget at **entry** (this loop never commits, so the commit block cannot bound it), and delta-scope each later pass via `gates.gate_b.verified_diff_sha`.
 - **A finding reopens Phase 4 only if it (a) breaks an approved AC, (b) is a runtime-reachable regression/bypass, or (c) is a security/data-loss path** — otherwise **park it whatever its label**, `blocker`/`required` included; in the measured runs a self-assigned `required` on README wording reopened the loop. **Fail closed:** a missing or unparseable `ac:` counts as AC-breaking. On a reopen: bump `iteration.review`, leave `gate_b.passed` unset, reset `code_review.passed`.
 - **Only follow-ups → park** in `state.followups` and set the gate. `No adversarial findings.` → set the gate. No finding meeting (a)/(b)/(c) → set the gate too.
-- **At the cap, SURFACE — never auto-continue and never self-grant.** Show the per-pass severity table; the user grants exactly one of one more pass (`gate_b.allowance_acked`), park-and-advance (`loop_budget.park_non_blocking`), or a recorded descope (`gate_b.skipped_reason`). A resumed run acts on the recorded grant. Same trigger on a second `self_inflicted` pass and on a fired convergence test. **Nothing meeting (a)/(b)/(c) leaves this gate without a fix or a grant naming it** — `park_non_blocking` carves out (a)/(b)/(c), mandatorily.
+- **At the cap, SURFACE — never auto-continue and never self-grant.** Show the per-pass severity table; the user grants exactly one of one more pass (`gate_b.allowance_acked`), park-and-advance (`loop_budget.park_non_blocking`), or a recorded descope (`gate_b.skipped_reason`). A resumed run acts on the recorded grant. Same trigger on a second `self_inflicted` pass and on a fired convergence test. Post-pass all three are read only on a reopening pass, never a zero-reopening pass; the pre-spawn at-cap arrival always surfaces. **Nothing meeting (a)/(b)/(c) leaves this gate without a fix or a grant naming it** — `park_non_blocking` carves out (a)/(b)/(c), mandatorily.
 - **The bar is "you tried and failed", not "you didn't try."**
 - Trip-wire before ending the turn: did you write the gate-b resolution to state AND make the next tool call (a Phase-4 fix edit if blockers, the Phase-5 staging command if clean)? If not, you are about to stall.
 
