@@ -273,7 +273,10 @@ expect_eq "marketplace: exactly one stamp file, not one per version" \
 # ONE global file; a previous revision keyed it by plugin root, which broke the
 # marketplace path, and the README kept saying "per install" after the revert. Pin
 # both directions so the wording cannot drift from the behaviour again.
-README_FILE="$HERE/../README.md"
+# The user-facing docs are README.md + docs/*.md since the docs split, so search the
+# union — an assertion here pins WORDING, never which page carries it.
+SPEC_ROOT="$HERE/.." . "$HERE/lib/spec.sh"
+docs_concat_into README_FILE
 HOOK_FILE="$HERE/../hooks/release-notes.sh"
 # Two legitimate mentions: the Release-notes section and the hook inventory. Assert
 # presence, not an exact count, so adding a doc reference cannot red the suite.
@@ -510,7 +513,7 @@ elide_phrase="$(printf '%s\n' "$elide_render" | grep -oE '\(\+[0-9]+ earlier rel
 expect_eq "the renderer's elision line has the scoping qualifier" \
   "$([ -n "$elide_phrase" ] && printf '%s' "$elide_phrase" | grep -qF 'in these notes' && echo yes || echo no)" "yes"
 expect_eq "the README quotes that exact phrase" \
-  "$([ -n "$elide_phrase" ] && grep -qF "$elide_phrase" "$HERE/../README.md" && echo yes || echo no)" "yes"
+  "$([ -n "$elide_phrase" ] && grep -qF "$elide_phrase" "$README_FILE" && echo yes || echo no)" "yes"
 
 # --- bounded in SIZE too, not just item count -------------------------------
 # Surface B renders a notes file fetched over the NETWORK, so the generator's

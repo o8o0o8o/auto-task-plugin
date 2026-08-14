@@ -1011,7 +1011,7 @@ spec_concat_into LBSKILL
 SPINE_ONLY="$HOOKS/../skills/auto-task/SKILL.md"   # for spine-only assertions
 
 LBARCH="$HOOKS/../skills/auto-task/ARCHITECTURE.md"
-LBRDME="$HOOKS/../README.md"
+docs_concat_into LBRDME   # README.md + docs/*.md (see tests/lib/spec.sh)
 # Clause 5's test changed from "two consecutive rounds with zero blockers and zero
 # required" to a single NON-DECREASE, because the old form could not fire where the
 # churn is: Gate B exits on the first clean pass, so a second consecutive clean
@@ -1545,10 +1545,10 @@ expect "spine: CHANGELOG gate-b-loop count is current" \
 # change" assertion, and neither was pinned — the CHANGELOG's equivalent number had already
 # rotted twice. README is the marketplace-published doc, so pin its number too.
 expect "spine: README size claim matches the actual spine" \
-  "$(grep -oE '\*\*[0-9,]+ B to [0-9,]+ B' "$HOOKS/../README.md" | head -1 | sed 's/.* to //' | tr -d ', B')" \
+  "$(grep -oE '\*\*[0-9,]+ B to [0-9,]+ B' "$LBRDME" | head -1 | sed 's/.* to //' | tr -d ', B')" \
   "$(wc -c < "$SPINE_ONLY" | tr -d ' ')"
 expect "spine: README does not claim a pure no-behavior-change move" \
-  "$(grep -c 'with no behavior change: the content is relocated' "$HOOKS/../README.md")" "0"
+  "$(grep -c 'with no behavior change: the content is relocated' "$LBRDME")" "0"
 
 expect "spine: CHANGELOG size claim matches the actual spine" \
   "$(grep -oE '\*\*[0-9,]+ B spine\*\*' "$HOOKS/../CHANGELOG.md" | head -1 | tr -d '*, B spine' )" \
@@ -1932,7 +1932,7 @@ expect "gate-b: ARCHITECTURE mermaid edge carries the precedence" \
 expect "gate-b: ARCHITECTURE Gate B row carries the precedence" \
   "$(grep -c '^| Gate B |.*reopening pass takes the clean exit.*pre-spawn at-cap arrival' "$LBARCH" | tr -d ' ')" "1"
 expect "gate-b: README states it in user-facing prose" \
-  "$(grep -c '^- \*\*Gate B\*\*.*a pass that finds nothing to reopen just passes.*before a pass even runs still surfaces' "$LBRDME" | tr -d ' ')" "1"
+  "$(grep -cE '^(- \*\*Gate B\*\*|\| \*\*Gate B\*\* \|).*a pass that finds nothing to reopen just passes.*before a pass even runs still surfaces' "$LBRDME" | tr -d ' ')" "1"
 # MUST NOT CHANGE. The precedence narrows one thing only; these four are the clauses
 # most likely to be collateral, and the yield row's VALUE is read by
 # prevent-mid-protocol-stall.sh.

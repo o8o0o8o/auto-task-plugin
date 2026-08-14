@@ -28,7 +28,7 @@ ARCH="$ROOT/skills/auto-task/ARCHITECTURE.md"
 DOCS="$ROOT/skills/auto-task-docs/SKILL.md"
 SETTINGS="$ROOT/hooks/settings.sh"
 INSTALL="$ROOT/install.sh"
-README="$ROOT/README.md"
+docs_concat_into README   # README.md + docs/*.md (see tests/lib/spec.sh)
 
 PASS=0; FAIL=0
 expect(){ if [ "$2" = "$3" ]; then PASS=$((PASS+1)); printf '  PASS  %-56s (%s)\n' "$1" "$2"
@@ -380,7 +380,7 @@ expect "arch: own non-yielding rule reconciled"     "$(has "$ARCH" 'the Phase 5 
 expect "install.sh SKILLS includes it"       "$(grep -c 'auto-task-fix auto-task-docs' "$INSTALL")"        "1"
 expect "install.sh syntax clean"             "$(bash -n "$INSTALL" 2>/dev/null && echo 0 || echo 1)"       "0"
 expect "README: settings-table row"          "$(grep -c '^| `docs_update_mode` |' "$README")"              "1"
-expect "README: feature section"             "$(grep -c '^### Docs update at handover' "$README")"         "1"
+expect "README: feature section"             "$(grep -cE '^#+ Docs update at handover' "$README")"         "1"
 expect "README: sibling count is current"    "$(grep -c 'Eight namespaced sibling skills' "$README")"      "1"
 expect "README: no stale count/banner"       "$(grep -cE 'Six namespaced sibling skills|the six bundled sibling|four questions|upgrading to 0.22' "$README")" "0"
 expect "README: five-question setup"         "$(has "$README" 'five questions: telemetry, autonomy, landing style, unattended-external, docs update')" "yes"

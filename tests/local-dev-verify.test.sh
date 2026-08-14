@@ -27,7 +27,7 @@ spec_concat_into SKILL
 SPINE_ONLY="$ROOT/skills/auto-task/SKILL.md"   # for spine-only assertions
 
 SETTINGS="$ROOT/hooks/settings.sh"
-README="$ROOT/README.md"
+docs_concat_into README   # README.md + docs/*.md (see tests/lib/spec.sh)
 
 PASS=0; FAIL=0
 

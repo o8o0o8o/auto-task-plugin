@@ -376,7 +376,8 @@ echo "== docs contract: the release checklist that prevents drift =="
 # also matches the end pattern ("^## "), closing the range immediately and
 # yielding a useless 1-line slice. Scoping to the slice matters — a match
 # anywhere else in the README must not satisfy this.
-README="$REPO/README.md"
+SPEC_ROOT="$REPO"; . "$REPO/tests/lib/spec.sh"
+docs_concat_into README   # README.md + docs/*.md (see tests/lib/spec.sh)
 readme_slice(){ awk '/^## Releasing \(maintainers\)/{f=1;next} f&&/^## /{exit} f' "$README"; }
 SLICE="$(readme_slice)"
 
@@ -448,7 +449,10 @@ expect_eq "no stale skill count survives in README" \
 missing_bullets=""
 for h in $all_hooks; do
   case " $GATED_HOOKS " in *" $h "*) continue ;; esac
-  grep -q "^  - .$h." "$README" || missing_bullets="$missing_bullets $h"
+  # Accept the nested-bullet form OR the docs-table row form (`| `hook.sh` | ... |`).
+  # Both are a DEDICATED entry for that hook, so the guard stays real: a passing mention
+  # in prose still fails it.
+  grep -qE "^(  - .$h.|\| .$h. \|)" "$README" || missing_bullets="$missing_bullets $h"
 done
 expect_eq "every always-on hook has a README bullet" "${missing_bullets:-none}" "none"
 

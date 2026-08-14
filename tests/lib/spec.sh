@@ -280,6 +280,119 @@ spec_before() {
 }
 
 # ---------------------------------------------------------------------------
+# USER-FACING DOCS UNION — the same carve, one level up.
+#
+# `README.md` used to be the whole of the user-facing docs, so tests grepped it
+# directly (`README="$ROOT/README.md"`). It is now a short front page plus `docs/*.md`.
+# These helpers search README AND docs/ so a documentation assertion keeps resolving
+# wherever its prose ended up — the identical reasoning, and identical semantics, as
+# the spine/references split above:
+#
+#  * SUMMED, not per-file, so an assertion survives relocation between doc pages.
+#  * Union scope is CORRECT (and strictly stronger) for `assert_absent`: "this stale
+#    phrasing is gone" must hold for ALL the user-facing docs, not just the front page.
+#
+# Deliberately NOT provided: a README-only helper. Nothing in the user-facing docs is
+# required to live on the front page specifically — unlike the spec, where the
+# always-loaded spine is a real constraint that enforcement-spine.test.sh pins directly.
+DOCS_README="${DOCS_README:-$SPEC_ROOT/README.md}"
+DOCS_DIR="${DOCS_DIR:-$SPEC_ROOT/docs}"
+
+# docs_files — ordered doc file list: README first, then docs/*.md sorted.
+docs_files() {
+  [ -f "$DOCS_README" ] && printf '%s\n' "$DOCS_README"
+  _docs_page_files
+}
+
+# _docs_page_files — single source of truth for which doc pages are in the union.
+# Includes symlinks for the same reason _spec_ref_files does.
+_docs_page_files() {
+  [ -d "$DOCS_DIR" ] || return 0
+  find "$DOCS_DIR" -maxdepth 1 -name '*.md' \( -type f -o -type l \) 2>/dev/null | LC_ALL=C sort
+}
+
+# _docs_validate — fail-closed guards for the docs union, run at CALL time.
+#
+# The spec union's equivalent guards run at source time, because every consumer of this
+# library needs the spec. The docs guards must NOT: tests/spec-helper.test.sh points
+# SPEC_ROOT at synthetic fixture trees that legitimately have no README and no docs/,
+# and a source-time docs guard would abort those runs (it did — that is why this is a
+# function). Scoping the guards to docs_concat_into keeps them mandatory for every
+# consumer that actually reads the docs, without imposing them on consumers that don't.
+#
+# Failure mode being prevented is the same one: a missing, unreadable, or empty page
+# contributes 0 matches silently, so an `assert_absent` against the docs — "this stale
+# phrasing is gone" — would pass for the wrong reason.
+_docs_validate() {
+  if [ ! -f "$DOCS_README" ] || [ ! -r "$DOCS_README" ] || [ ! -s "$DOCS_README" ]; then
+    echo "spec.sh: FATAL — README at '$DOCS_README' is missing, unreadable, or empty." >&2
+    exit 2
+  fi
+  if [ ! -d "$DOCS_DIR" ]; then
+    echo "spec.sh: FATAL — docs dir '$DOCS_DIR' does not exist (or is not a directory)." >&2
+    echo "  Refusing to continue: the docs union would silently narrow to README and absence assertions would pass vacuously." >&2
+    exit 2
+  fi
+  if [ -z "$(_docs_page_files | head -1)" ]; then
+    echo "spec.sh: FATAL — '$DOCS_DIR' contains no *.md; the docs union would silently narrow to README." >&2
+    exit 2
+  fi
+  local __docs_page
+  while IFS= read -r __docs_page; do
+    [ -n "$__docs_page" ] || continue
+    if [ ! -f "$__docs_page" ] || [ ! -r "$__docs_page" ] || [ ! -s "$__docs_page" ]; then
+      echo "spec.sh: FATAL — doc page '$__docs_page' is not a readable, non-empty regular file." >&2
+      exit 2
+    fi
+  done < <(_docs_page_files)
+}
+
+# docs_concat_into <varname> — build the README + docs/*.md concatenation, assign its
+# path to <varname>, and register cleanup. Same calling convention, cleanup chaining and
+# fail-closed-on-empty behaviour as spec_concat_into; see its contract note above.
+docs_concat_into() {
+  local __docs_var="$1" __docs_out __docs_f
+  _docs_validate
+  case "$__docs_var" in
+    __docs_*|"")
+      echo "docs_concat_into: refusing target name '$__docs_var' (collides with this function's locals)" >&2
+      return 1 ;;
+  esac
+  __docs_out="$(mktemp "${TMPDIR:-/tmp}/docs-concat.XXXXXX")" || {
+    echo "docs_concat_into: mktemp failed" >&2; return 1; }
+  while IFS= read -r __docs_f; do
+    [ -n "$__docs_f" ] || continue
+    cat "$__docs_f" >> "$__docs_out" || {
+      echo "docs_concat_into: cannot read doc file '$__docs_f'" >&2
+      rm -f "$__docs_out"
+      return 1; }
+  done < <(docs_files)
+  if [ ! -s "$__docs_out" ]; then
+    echo "docs_concat_into: FATAL — the docs concatenation is empty (unreadable or zero-byte README at '$DOCS_README'?). Refusing to continue: absence assertions would pass vacuously." >&2
+    rm -f "$__docs_out"
+    exit 2
+  fi
+  # Reuse the spec cleanup list and its trap-chaining logic verbatim, so both unions are
+  # reclaimed by one EXIT handler and a caller that chains for one has chained for both.
+  case "$(trap -p EXIT)" in
+    *_spec_concat_cleanup*) : ;;
+    *)
+      local __docs_trap=() __docs_prev
+      # shellcheck disable=SC2207
+      eval "__docs_trap=($(trap -p EXIT))" 2>/dev/null || __docs_trap=()
+      __docs_prev="${__docs_trap[2]:-}"
+      if [ -n "$__docs_prev" ]; then
+        # shellcheck disable=SC2064
+        trap "_spec_concat_cleanup; $__docs_prev" EXIT
+      else
+        trap '_spec_concat_cleanup' EXIT
+      fi ;;
+  esac
+  _SPEC_CONCAT_FILES="${_SPEC_CONCAT_FILES:+$_SPEC_CONCAT_FILES$_SPEC_NL}$__docs_out"
+  printf -v "$__docs_var" '%s' "$__docs_out"
+}
+
+# ---------------------------------------------------------------------------
 # SOURCE-TIME FAIL-CLOSED GUARD (must stay at the bottom — it runs on `source`).
 #
 # Every helper above consumes `spec_files` from a subshell, so a missing spine
@@ -331,3 +444,5 @@ if true; then
   done < <(_spec_ref_files)
   unset _spec_ref
 fi
+# NOTE: the docs-union guards are deliberately NOT here. They run inside
+# _docs_validate, called from docs_concat_into — see the comment on that function.

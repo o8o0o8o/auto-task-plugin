@@ -33,7 +33,7 @@ ARCH="$ROOT/skills/auto-task/ARCHITECTURE.md"
 REL="$ROOT/skills/auto-task-release/SKILL.md"
 SETTINGS="$ROOT/hooks/settings.sh"
 INSTALL="$ROOT/install.sh"
-README="$ROOT/README.md"
+docs_concat_into README   # README.md + docs/*.md (see tests/lib/spec.sh)
 
 PASS=0; FAIL=0
 expect(){ if [ "$2" = "$3" ]; then PASS=$((PASS+1)); printf '  PASS  %-56s (%s)\n' "$1" "$2"
@@ -821,10 +821,10 @@ expect "settings: not a first-run question"    "$(has "$SKILL" 'Not a First-run-
 # --- install + docs surfaces --------------------------------------------
 expect "install: SKILLS array has the skill"   "$(grep -c '^SKILLS=(.*auto-task-release' "$INSTALL")"                    "1"
 at_least "readme: documents the step"          "$(grep -c 'auto-task-release' "$README")"                               1
-expect "readme: Release at handover section"   "$(grep -c '^### Release at handover' "$README")"                          "1"
+expect "readme: Release at handover section"   "$(grep -cE '^#+ Release at handover' "$README")"                          "1"
 # GB5#4: the count the diff itself authored must match its bullets. R10's guard only
 # covered counts the new phase FALSIFIED, so a newly-written wrong count was unpinned.
-rel_props="$(awk '/properties worth knowing, because they are what stop an automated release/,/^### Post-PR/' "$README" | grep -c '^- \*\*')"
+rel_props="$(awk '/properties worth knowing, because they are what stop an automated release/,/^#+ Post-PR/' "$README" | grep -c '^- \*\*')"
 expect "readme: release property count matches"  "$(awk '/properties worth knowing, because they are what stop an automated release/{print $1}' "$README")" "Five"
 expect "readme: release has five property bullets" "$rel_props"                                                          "5"
 expect "readme: release_mode settings row"     "$(grep -c '^| `release_mode` |' "$README")"                               "1"

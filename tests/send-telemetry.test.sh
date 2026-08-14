@@ -286,7 +286,7 @@ expect "comment null when unset" "$(printf '%s' "$P" | jq -r '.comment')" "null"
 # next bump fails here instead of silently splitting the surfaces again.
 SV="$(grep -oE '^SCHEMA_VERSION=[0-9]+' "$SH" | cut -d= -f2)"
 expect "sender declares a numeric SCHEMA_VERSION" "$([ -n "$SV" ] && echo yes || echo no)" "yes"
-for doc in "$REPO_ROOT/README.md" "$REPO_ROOT/skills/auto-task/references/settings.md"; do
+for doc in "$REPO_ROOT/docs/telemetry.md" "$REPO_ROOT/skills/auto-task/references/settings.md"; do
   expect "$(basename "$doc") states schema_version $SV" \
     "$(grep -c "schema_version: $SV" "$doc")" "1"
   expect "$(basename "$doc") has no stale schema_version literal" \

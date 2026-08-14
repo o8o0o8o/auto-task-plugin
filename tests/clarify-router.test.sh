@@ -28,7 +28,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 spec_concat_into SKILL
 SPINE_ONLY="$ROOT/skills/auto-task/SKILL.md"   # for spine-only assertions
 
-README="$ROOT/README.md"
+docs_concat_into README   # README.md + docs/*.md (see tests/lib/spec.sh)
 CHANGELOG="$ROOT/CHANGELOG.md"
 
 PASS=0; FAIL=0
