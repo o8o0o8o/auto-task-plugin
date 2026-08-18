@@ -1,5 +1,4 @@
 {
-  "0.29.0": "Gate B ran away — 4 to 11 adversarial passes per run, and three of seven runs ended by human fiat rather than by a clean pass.",
   "0.30.0": "Bounding Gate B moved the churn one phase upstream — Phase 4 then ran 9 and 5 review rounds against a STANDARD cap of 4.",
   "0.30.1": "The mandatory high-risk merge gate is now enforced by the hook itself. Previously it was armed only by a Phase-5 prompt step, so a run that skipped that step could push with no human stop at all.",
   "0.31.0": "Verifier and critique agents are now spawned synchronously. The harness began backgrounding them, which returned launch metadata instead of a report and left runs thrashing against the anti-stall hook — eight blocked turn-ends in five minutes on one observed run, with the verifier's work never…",
@@ -8,5 +7,6 @@
   "0.34.0": "PR bodies now open with a short plain-prose lede instead of a Summary bullet list, and may carry a \"Review this first\" section pointing at the few places worth reading before the rest of the diff — a removed guard, a migration, logic that gained no test, or the files the run itself kept…",
   "0.35.0": "Every prompt auto-task asks you is now written in plain language. Two of them also said less than the truth: the telemetry ask claimed only metrics left your machine, and the push prompt offered \"hold\" alongside \"nothing leaves your machine\" while the satisfaction question in the same dialog…",
   "0.36.0": "Code review now tells you two things per finding: which acceptance criterion it breaks, and whether it is reachable when the code actually runs. The pipeline used to work those out for itself and then quietly park findings the reviewer had marked required — 49 of them across three runs, never…",
-  "0.37.0": "Gate B used to stop and ask for your approval on a verification pass that had already passed — it just happened to be the last pass allowed, or the second one that found fault with an earlier fix. Now a pass that finds nothing to reopen simply passes."
+  "0.37.0": "Gate B used to stop and ask for your approval on a verification pass that had already passed — it just happened to be the last pass allowed, or the second one that found fault with an earlier fix. Now a pass that finds nothing to reopen simply passes.",
+  "0.38.0": "The code review used to be handed every problem your linter can find, including the hundreds that were already there before you started. Now it sees only what your change introduced."
 }

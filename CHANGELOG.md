@@ -2,6 +2,24 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.38.0]
+
+<!-- release-notes: The code review used to be handed every problem your linter can find, including the hundreds that were already there before you started. Now it sees only what your change introduced. -->
+
+### Added
+
+- **The Phase-4 code review now receives only the analyzer findings a run INTRODUCED, not everything the linter can find.** A static analyzer run against a codebase reports everything already wrong with it, and handing that to a reviewer buries the change's own defects in pre-existing noise. This repo is the worked example: it carries **366** ShellCheck findings, and every one of them used to reach the review. `hooks/analyzer-delta.sh` runs the analyzer **twice** — once against the tree at `<base>`, once against the current tree — and passes on only the difference. Measured on the change that introduced it: `introduced: 0, resolved: 0 (base 366, current 366)`.
+
+  Configured by two new settings keys, `analyzer_command` and `analyzer_timeout_sec`, both documented under [Settings → Code review](docs/settings.md#code-review). Leaving them unset does **not** turn the layer off: the helper constructs a direct invocation itself when a marker is in the repo *and* the tool is already on `PATH`, and skips otherwise. It never installs anything and adds no dependency.
+
+  **Four design decisions carry the feature**, each measured rather than assumed. **Two runs, never a stored baseline** — a baseline goes stale, has to be regenerated, and becomes a second artifact to maintain, while a delta recomputed from both trees is correct by construction and absorbs analyzer-version drift for free. **Findings are keyed by identity, never by position** — `(file, position-stripped message)`, because a line-keyed set difference reports every finding below an insertion as new, which is a noise flood on precisely the change that touched the most code. **The base side comes from a detached worktree, never `git stash`** — stashing mutates the live tree and moves the very hash `reviewed_diff_sha` pins. And **only stdout is keyed**, with output carrying no `file:line` shape skipped rather than guessed at, regardless of exit code.
+
+  It is **advisory and never blocks**: severity comes from the tool, the reachability grading that decides control flow stays with the orchestrator, and every failure path is `status: "skip"` with a stated reason and exit 0 — a missing analyzer, an unusable base, a hang, or a command that would auto-fix all degrade to a skip that names its cause.
+
+  **Spec accounting.** The always-loaded spine is unchanged at **122,842 B spine**, with **38 B of headroom** against the 122,880 B cap — this entry added wiring to `references/phase-3-gates.md`, which is loaded on demand, not to the spine. `tests/spec-inventory.sh` reports `retired=83`, unchanged from `0.37.0`, with conservation at `missing=0 duplicated=0 restated=0`.
+
+  **Guards.** **`tests/analyzer-delta.test.sh`** — 162 assertions, covering the identity key against line shifts, renames and duplicate counts; the discovery ladder; the auto-fix refusal and its flag false-positives; bounded execution and the non-positive-timeout fallback; cache warm/truncated/format-bump behaviour; residue and stale-slot self-healing; and — added across the review loop — the axes the original fixtures could not express: path form (`./`, `.//`, `././`), submodule count, a backslash in the checkout path, cache-argument form (absolute, relative, `./`-relative, symlinked, `CDPATH`-exposed), and a TAB inside a filename. `tests/settings.test.sh` grows to cover both keys across all three lockstep sites, and `tests/enforcement-spine.test.sh` adds five wording pins for the Step-0 wiring.
+
 ## [0.37.0]
 
 <!-- release-notes: Gate B used to stop and ask for your approval on a verification pass that had already passed — it just happened to be the last pass allowed, or the second one that found fault with an earlier fix. Now a pass that finds nothing to reopen simply passes. -->
