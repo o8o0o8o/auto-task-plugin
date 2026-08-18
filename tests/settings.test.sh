@@ -411,6 +411,37 @@ expect "present either-scope: true via global" \
 expect "present global-scope: true" \
   "$(AUTO_TASK_SETTINGS_FILE="$RP" AUTO_TASK_GLOBAL_SETTINGS_FILE="$RG" bash "$SH" present --scope global telemetry_enabled)" "true"
 
+# --- analyzer keys (analyzer-delta.sh) ---------------------------------------
+# Both keys must be registered at all THREE lockstep sites — default_for(),
+# defaults_json() and known_keys — or they resolve inconsistently. `get` covers the
+# first, `all` the second, and the unknown-key path the third.
+expect "analyzer_command default is empty" \
+  "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get analyzer_command)" ""
+expect "analyzer_timeout_sec default is 120" \
+  "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" get analyzer_timeout_sec)" "120"
+printf '{"analyzer_command":"eslint --format unix .","analyzer_timeout_sec":45}' > "$T/an.json"
+expect "analyzer_command override" \
+  "$(AUTO_TASK_SETTINGS_FILE="$T/an.json" bash "$SH" get analyzer_command)" "eslint --format unix ."
+expect "analyzer_timeout_sec override" \
+  "$(AUTO_TASK_SETTINGS_FILE="$T/an.json" bash "$SH" get analyzer_timeout_sec)" "45"
+# The THIRD lockstep site is `known_keys`, and it is read only by `cmd_keys()` — so
+# neither `get` nor `all` proves it. Assert it directly rather than claiming coverage
+# a comment cannot deliver: a key missing here is invisible to key enumeration while
+# still resolving through the other two sites.
+expect "both analyzer keys registered in known_keys" \
+  "$(bash "$SH" keys 2>/dev/null | grep -c '^analyzer_')" "2"
+expect "analyzer_command in defaults_json (known key)" \
+  "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" all | grep -c '"analyzer_command"')" "1"
+expect "analyzer_timeout_sec in defaults_json (known key)" \
+  "$(AUTO_TASK_SETTINGS_FILE="$T/nope.json" bash "$SH" all | grep -c '"analyzer_timeout_sec"')" "1"
+# The feature adds keys but NOT a policy question, so the schema version must not move:
+# bumping it would clear every existing user's project settings and re-run first-run setup.
+printf '{"settings_schema_version":3,"autonomy":"supervised"}' > "$T/old.json"
+expect "adding analyzer keys does NOT make an existing file stale" \
+  "$(AUTO_TASK_SETTINGS_FILE="$T/old.json" bash "$SH" schema-status)" "current"
+expect "a file lacking the key still resolves the default" \
+  "$(AUTO_TASK_SETTINGS_FILE="$T/old.json" bash "$SH" get analyzer_timeout_sec)" "120"
+
 echo "--------------------------------------------------------"
 echo "settings.sh: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

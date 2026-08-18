@@ -1530,6 +1530,29 @@ expect "spine: at least one directive per reference"    \
 expect "spine: CHANGELOG spec-helper count is current" \
   "$(grep -oE '`tests/spec-helper\.test\.sh`\*\* — [0-9]+ assertions' "$HOOKS/../CHANGELOG.md" | grep -oE '[0-9]+')" \
   "$(bash "$HOOKS/../tests/spec-helper.test.sh" </dev/null 2>&1 | grep -oE '[0-9]+ passed' | head -1 | grep -oE '[0-9]+')"
+# --- analyzer-delta wiring in Step 0 ------------------------------------------
+# The layer is only real if Step 0 actually tells the orchestrator to run it and what
+# to do with the result. Prose that drifts here silently disables the feature, so each
+# of the five load-bearing clauses is pinned separately: WHAT to run, WHEN, WHAT is
+# handed to the reviewer, WHERE severity comes from, and WHO grades.
+expect "spine: Step 0 names the analyzer-delta helper" \
+  "$(spine_has "$AW_GATES" 'hooks/analyzer-delta.sh')"                                                                 "yes"
+expect "spine: Step 0 runs the analyzer before spawning the reviewer" \
+  "$(spine_has "$AW_GATES" 'BEFORE spawning the reviewer')"                                                            "yes"
+# shellcheck disable=SC2016  # the backticks are LITERAL: this needle is a verbatim spec
+# phrase, and the spec writes `introduced` in backticks. An earlier version dropped them
+# to clear SC2016, which silently removed the word `introduced` from the needle — the
+# assertion kept its NAME while no longer pinning the thing it exists to pin, so
+# rewording the spec to "the resolved array" would have left the suite green while
+# inverting the feature. Gate A caught that. Suppressing a false-positive warning is
+# correct here; weakening the assertion to appease it was not.
+expect "spine: Step 0 hands introduced findings to the reviewer" \
+  "$(spine_has "$AW_GATES" 'Pass the `introduced` array into the reviewer')"                     "yes"
+expect "spine: Step 0 says severity comes from the tool" \
+  "$(spine_has "$AW_GATES" 'severity on each entry comes from the tool')"                                              "yes"
+expect "spine: Step 0 keeps grading with the orchestrator" \
+  "$(spine_has "$AW_GATES" 'Grade them exactly like any other Phase-4 finding, by the Step-A reachability test')"       "yes"
+
 expect "spine: CHANGELOG spine-guard count is current" \
   "$(grep -oE 'enforcement-spine\.test\.sh`\*\* \(([0-9]+) assertions' "$HOOKS/../CHANGELOG.md" | grep -oE '[0-9]+' | head -1)" \
   "$(grep -cE '^expect "spine: ' "$HOOKS/../tests/enforcement-spine.test.sh" | tr -d ' ')"

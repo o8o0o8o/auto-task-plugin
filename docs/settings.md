@@ -145,6 +145,8 @@ It's delegated on purpose — only your project knows its full version-file set.
 |---|---|---|
 | `review_in_subagent` | `true` | Where Phase 4's code review runs — a fresh-context agent, or inline. |
 | `shadow_review` | `false` | **Measurement only.** Re-reviews the diff once per run to record what a self-review missed. Decides nothing. |
+| `analyzer_command` | `""` | The static analyzer the Phase-4 delta layer runs. Unset falls back to a self-constructed invocation, then to a skip. |
+| `analyzer_timeout_sec` | `120` | Per-side bound on the analyzer. A non-positive value falls back to the default. |
 
 **On `review_in_subagent`.** `true` spawns ONE fresh-context `general-purpose` agent that **invokes the `auto-task-code-review` skill** via the Skill tool, so the model that wrote the diff is not the model that reviews it. `false` invokes the same skill inline in the main loop, restoring the earlier behaviour.
 
@@ -159,6 +161,10 @@ The agent's prompt forbids edits and forbids writing anything under `.auto-task/
 It is **skipped while `review_in_subagent` is on**, which is the default — with the review already independent there's no self-review left to measure. The skip is recorded as a status rather than omitted. It exists for the `review_in_subagent: false` configuration, where Phases 2–4 all run in the main loop.
 
 Cost: roughly one Gate-A-sized pass (~24k output tokens) per run, while it actually runs.
+
+**On `analyzer_command`.** Before the reviewer spawns, `hooks/analyzer-delta.sh` runs this command twice — at `<base>` and on the current tree — and hands the review only the findings the run introduced. Point it at a tool that prints **machine-readable `file:line` output on stdout**, not at a wrapper. Two things follow. Stdout with no positional shape is skipped rather than guessed at, regardless of exit code — so a script that prints a success banner produces a permanent skip. And **only stdout is keyed**: stderr is discarded before the output is examined at all, so findings written there are simply not seen. Redirect such a tool (`2>&1`) or choose a formatter that writes to stdout. Leaving it unset is fine — the helper constructs a direct invocation itself when a marker is in the repo *and* the tool is already on `PATH`, and skips otherwise. It never installs anything. A command containing `--fix`, `--write`, `-w`, `--apply` or `--fix-dry-run=false` is refused, which is why project scripts like `npm run lint` are reachable only by naming them here — a `--fix` hidden inside `package.json` is invisible to a surface check. Full behaviour: [Components → The analyzer-delta layer](components.md#the-analyzer-delta-layer).
+
+**On `analyzer_timeout_sec`.** Bounds each side independently, killing the whole process group. A non-positive value is meaningless here and falls back to the default rather than disarming the bound.
 
 ## Visual assets
 

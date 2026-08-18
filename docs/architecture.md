@@ -119,6 +119,8 @@ Phase 4 used to be a self-review and no longer is. It is still the `auto-task-co
 
 ### Phase 4 — code review
 
+Before the reviewer spawns, `hooks/analyzer-delta.sh` runs the project's static analyzer at `<base>` and on the current tree and hands the review **only the findings this run introduced** — pre-existing noise appears on both sides and cancels. Matching is by finding identity, not line number, so an insertion that shifts a hundred findings introduces none of them. It is advisory: severity comes from the tool, grading stays with the orchestrator, and every failure path is a `skip` with a stated reason rather than a block. See [Components](components.md#the-analyzer-delta-layer).
+
 Round 1 reads the full diff; every later round reads only the delta since the previous round. (Delta review applies on the `review_in_subagent: true` path only — that's what keeps the cost near half of a full re-review rather than doubling it.)
 
 **Findings are graded by reachability, not by their severity label.** A finding reopens the loop only if it:

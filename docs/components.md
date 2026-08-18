@@ -100,6 +100,38 @@ All wired automatically by the plugin install, via `hooks/hooks.json`.
 
 Every non-blocking hook fails open and silent on every error path.
 
+### Deterministic helpers (NOT hooks)
+
+Pure, deterministic scripts the orchestrator calls directly. No hook event, no `hooks.json` entry — they read, compute and print JSON.
+
+| Helper | Called at | What it does |
+|---|---|---|
+| `checks.sh` | Phase 3, and again at commit time | Seven hygiene/defect rows over the diff — secret-scan, conflict markers, debug artifacts, large files, **test-integrity**, diff size, tests-added. A `fail` row blocks. |
+| `analyzer-delta.sh` | Phase 4, before the reviewer spawns | Runs a static analyzer **twice** — at `<base>` and on the current tree — and returns only the findings the run **introduced**. Never blocks: every failure is `status: "skip"` with a reason. [Details below](#the-analyzer-delta-layer). |
+| `requirements-coverage.sh` | Phase 1 and Phase 5 | Reports whether every dissected requirement is covered by an AC and satisfied at the end. |
+| `estimate.sh` | Phase 1 | Pre-execution duration/token estimate from tier, D/R, AC count and file count. |
+
+### The analyzer-delta layer
+
+The problem it solves: a linter run against a codebase reports everything already wrong with it. Handing that to a code review buries the change's own defects in pre-existing noise.
+
+So the analyzer runs on both sides and only the difference is reported. Anything broken before appears in both runs and cancels.
+
+**Findings are matched by identity, never by position.** Inserting ten lines at the top of a file shifts every finding below it; a position-keyed comparison would report all of them as new — a noise flood on exactly the change that touched the most code. A finding is keyed on `(file, position-stripped message)`: the line number never enters the key, the column is stripped, remaining digit-only tokens collapse to `#`, and paths are made tree-relative so a tool that prints absolute paths still keys identically on both sides. `SC2086` survives, so the rule is still identified; repeated occurrences of one rule in one file are told apart by count.
+
+**Which analyzer runs**, in order: the `analyzer_command` setting → a direct invocation the helper constructs itself (a marker in the repo *and* the tool already on `PATH`) → skip. It never installs anything and adds no dependency; a machine without a suitable tool simply gets a skip row. Project scripts like `npm run lint` are reachable only by naming them in the setting, because a `--fix` hidden inside `package.json` is invisible to a surface check. Name a tool that prints **machine-readable `file:line` output on stdout** rather than a wrapper. **Only stdout is keyed** — stderr carries diagnostics, not findings, and mixing the two is what made "did this side run?" ambiguous; it is discarded before the output is examined at all, so findings written there are simply not seen. Redirect such a tool (`2>&1`) or pick a stdout formatter. Separately, stdout with no positional shape is skipped rather than guessed at, regardless of exit code, so a clean-run banner ("All checks passed!", a `make` recipe echo) produces a permanent skip whose `detail` names the shape.
+
+**Safety properties**, each measured rather than assumed:
+
+- The base tree comes from a detached worktree, never `git stash` — stashing moves the very hash `reviewed_diff_sha` pins.
+- A command containing `--fix`, `--write`, `-w`, `--apply` or `--fix-dry-run=false` is refused; if one mutates the tree anyway it is detected and reported, never auto-reverted.
+- Both sides are bounded by `analyzer_timeout_sec`, killing the whole process group; a timeout always outranks the "did this side run?" test so a truncated scan cannot inflate the result.
+- The base result is cached per `(base sha, command, tool version, key format)`, written atomically with a record-count sentinel — a truncated cache is recomputed, never trusted. The **key format** component is the one whose omission was measured to matter: the cache stores keys, so changing how a key is built made a warm cache incomparable with a fresh scan and reported every finding as both introduced and resolved.
+- Renames are followed, so moving a file does not double-report every finding in it.
+- Submodule contents are excluded from both sides. `git worktree add` does not initialise submodules, so a submodule's pre-existing findings would otherwise exist only on the current side and report wholesale as introduced — measured at 2 false positives on a tree whose true answer was 0.
+
+Findings reach Phase 4 as **advisory context**: severity comes from the tool, and the reachability grading that decides control flow stays with the orchestrator.
+
 ### The run clock
 
 `stamp-run-clock.sh` writes into a hook-owned sidecar, `.auto-task/<branch>/.run-clock.json`, so a run's duration is **observed rather than narrated**. It previously came from the first and last `state.history[].at` strings, which the model writes without access to a clock.
@@ -171,4 +203,4 @@ Committing while the working tree sits on a branch other than an active in-place
 
 Two of those 139 are skipped where a mode-000 file is still readable — for example, running as root.
 
-Plus 31 other suites. Every measurement helper has a focused test under `tests/`.
+Plus 32 other suites. Every measurement helper has a focused test under `tests/`.
