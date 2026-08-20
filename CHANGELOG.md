@@ -2,6 +2,24 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.39.0]
+
+<!-- release-notes: Your PR body no longer opens with the run grading its own performance. The four run-metrics sections moved to the local run context and telemetry, where trends across runs — not one run's numbers — are the readable signal. -->
+
+### Changed
+
+- **The PR body no longer carries run-metrics sections.** `## Test plan`, `## Estimate vs actual`, `## Checks performed` and `## Quality signals` are removed from the Phase-5 PR-body template. They still render in full into `.auto-task/<branch>/CONTEXT.md`, and `state.estimate` / `actuals` / `checks[]` / `quality` are assembled exactly as before — the assembly steps are untouched, so the telemetry payload is unchanged and **no data is lost**.
+
+  **This is an audience split, not a size trim.** Those four sections measure *the run*: how long it took, how close its own estimate was, how many checks it executed, how many defects it caught early versus late. A reviewer is deciding about *the change* — whether the diff is correct and whether it should land — and for that question the run's self-reported effort is not evidence. Worse, it is **self-reported**: the run grading its own delivery reliability, inside the artifact asking a human to trust it, is the material a reader can least check and most reliably learns to skim. A block that fires on every PR and cannot be verified *from* the PR trains reviewers to scroll — and `## Review this first`, `## Task breakdown` and `## Acceptance Criteria` sit in the same scroll.
+
+  What a reviewer genuinely needs stays in the PR: each AC's bound check is under `## Acceptance Criteria`, and a check that failed or warned is not a metric but a defect — it cannot reach Phase 5 unresolved, so its absence from the body is not a gap. The metrics keep full fidelity in `CONTEXT.md` and telemetry, where the audience is whoever audits the pipeline and where **trends across runs, not one run's figures, are the signal**.
+
+  The rule also closes the obvious workaround: folding the content into another section under a different heading is the same block renamed, and is prohibited explicitly.
+
+  **Spec accounting.** The always-loaded spine is unchanged at **122,842 B**, with **38 B of headroom** against the 122,880 B cap — the edit is in `references/phase-5-handover.md`, loaded on demand. The deletions are forgiven through `spec-inventory`'s `RETIRED_PREFIXES` rather than a re-baseline, which is the narrower fix: each of the three shared headings existed **twice** in the base (CONTEXT.md template + PR template) and is retired at 1, so the CONTEXT.md copy stays under guard and would still report if it ever vanished; `## Test plan` was PR-only and retires outright. `tests/spec-inventory.sh` reports `retired=83` -> **`retired=90`**, conservation unchanged at `missing=0 duplicated=0 restated=0`.
+
+  `docs/telemetry.md` is corrected in the same change — it claimed "`CONTEXT.md` and the PR carry an `## Estimate vs actual` table" — and now states plainly that all four sections are local-plus-telemetry only.
+
 ## [0.38.0]
 
 <!-- release-notes: The code review used to be handed every problem your linter can find, including the hundreds that were already there before you started. Now it sees only what your change introduced. -->

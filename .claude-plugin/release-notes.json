@@ -1,5 +1,4 @@
 {
-  "0.30.0": "Bounding Gate B moved the churn one phase upstream — Phase 4 then ran 9 and 5 review rounds against a STANDARD cap of 4.",
   "0.30.1": "The mandatory high-risk merge gate is now enforced by the hook itself. Previously it was armed only by a Phase-5 prompt step, so a run that skipped that step could push with no human stop at all.",
   "0.31.0": "Verifier and critique agents are now spawned synchronously. The harness began backgrounding them, which returned launch metadata instead of a report and left runs thrashing against the anti-stall hook — eight blocked turn-ends in five minutes on one observed run, with the verifier's work never…",
   "0.32.0": "LIGHT-tier runs now get an independent adversarial pass. Previously the model that wrote the diff also self-verified and code-reviewed it, with nothing independent following — on LIGHT the self-review was the only review the code ever got. Also adds an opt-in, off-by-default shadow reviewer…",
@@ -8,5 +7,6 @@
   "0.35.0": "Every prompt auto-task asks you is now written in plain language. Two of them also said less than the truth: the telemetry ask claimed only metrics left your machine, and the push prompt offered \"hold\" alongside \"nothing leaves your machine\" while the satisfaction question in the same dialog…",
   "0.36.0": "Code review now tells you two things per finding: which acceptance criterion it breaks, and whether it is reachable when the code actually runs. The pipeline used to work those out for itself and then quietly park findings the reviewer had marked required — 49 of them across three runs, never…",
   "0.37.0": "Gate B used to stop and ask for your approval on a verification pass that had already passed — it just happened to be the last pass allowed, or the second one that found fault with an earlier fix. Now a pass that finds nothing to reopen simply passes.",
-  "0.38.0": "The code review used to be handed every problem your linter can find, including the hundreds that were already there before you started. Now it sees only what your change introduced."
+  "0.38.0": "The code review used to be handed every problem your linter can find, including the hundreds that were already there before you started. Now it sees only what your change introduced.",
+  "0.39.0": "Your PR body no longer opens with the run grading its own performance. The four run-metrics sections moved to the local run context and telemetry, where trends across runs — not one run's numbers — are the readable signal."
 }
