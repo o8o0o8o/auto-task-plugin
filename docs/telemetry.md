@@ -209,9 +209,11 @@ A negative or over-12h span is **rejected to `null`**. A run paused overnight �
 
 **Caveat:** token accounting is approximate for sub-agent sidechains and any concurrent unrelated work in the same session. A failed measurement is recorded as `null`, never a fabricated `0`.
 
+**These three sections are local + telemetry only — they are not in the PR body.** `## Estimate vs actual`, `## Checks performed` and `## Quality signals` (and `## Test plan` with them) render into `.auto-task/<branch>/CONTEXT.md` and into `state`, which is what the payload below reads. They are deliberately kept out of the PR because they measure *the run*, while a reviewer is deciding about *the change* — and because they are self-reported, so they are the part of a PR body a reader can least check and most reliably learns to skim. Trends across runs, not one run's figures, are where these numbers read as signal, and that is here rather than on a pull request.
+
 ### Estimate vs actual
 
-`CONTEXT.md` and the PR carry an `## Estimate vs actual` table (estimated · actual · Δ · ratio) for time and **output** tokens. The measured grand total (`tokens_total`, cache_read-dominated) is listed for the record but carries **no ratio** — nothing estimates it.
+`CONTEXT.md` carries an `## Estimate vs actual` table (estimated · actual · Δ · ratio) for time and **output** tokens. The measured grand total (`tokens_total`, cache_read-dominated) is listed for the record but carries **no ratio** — nothing estimates it.
 
 ### Checks manifest
 

@@ -631,6 +631,29 @@ RETIRED_PREFIXES = {
   '   - **Why stopped** — which loop-rule clause triggered, with evidence.': 1,
   '   - **Suggested next move** — one or two concrete options for the user.': 1,
   '   - `ask` → **degrade to `always`, without yielding, when the run cannot legitimately stop**: `stat': 1,
+
+  # --- the PR body stopped carrying run-metrics sections --------------------
+  # `## Test plan` / `## Estimate vs actual` / `## Checks performed` /
+  # `## Quality signals` were rendered into BOTH CONTEXT.md and the PR body. The
+  # PR copies are removed in this commit; the CONTEXT.md copies are untouched and
+  # still carry the full contract, and `state.estimate`/`actuals`/`checks[]`/
+  # `quality` are still assembled exactly as before (the telemetry payload reads
+  # those, not the PR). So each contract below still holds in its CONTEXT.md home
+  # — this is a change of audience, not a repeal.
+  #
+  # Counts: the three shared headings existed TWICE in the base (once per
+  # template), so one copy is retired and the CONTEXT.md copy stays under guard —
+  # if it ever disappears too, that still reports. `## Test plan` was PR-only, and
+  # its body line with it, so both retire at 1.
+  '   ## Test plan': 1,
+  '   <quality checks run + their results>': 1,
+  '   ## Estimate vs actual': 1,
+  # (the `<compact table ...` body line is already retired above, by the
+  # output-vs-output rewording — one entry covers its single base copy.)
+  '   ## Checks performed': 1,
+  '   <one-line tally `N checks: X pass / Y warn / Z fail / W info` from state.checks[]': 1,
+  '   ## Quality signals': 1,
+  '   <the state.quality panel as bullets': 1,
 }
 
 bc = collections.Counter(l for l in base if l.strip())

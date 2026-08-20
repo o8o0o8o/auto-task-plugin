@@ -357,18 +357,6 @@ This is the **only phase that commits**. By the time you reach it, the working t
    ## Acceptance Criteria
    <checklist from PLAN.md, all checked — the falsifiable-verification view that complements the task breakdown above (breakdown = intent vs. reality; this = each criterion's bound check)>
 
-   ## Test plan
-   <quality checks run + their results>
-
-   ## Estimate vs actual
-   <compact table from state.estimate/actuals: metric | estimated | actual | actual/est — write "unavailable" for any null side; note if the estimate was a manual bootstrap. The token row is OUTPUT-vs-OUTPUT (`estimate.tokens_output` vs `actuals.tokens_breakdown.output`); record `actuals.tokens_total` without a ratio, since nothing estimates it.>
-
-   ## Checks performed
-   <one-line tally `N checks: X pass / Y warn / Z fail / W info` from state.checks[], then list any fail/warn rows; the full manifest lives in the local CONTEXT.md>
-
-   ## Quality signals
-   <the state.quality panel as bullets — defects early/late, delivery reliability (est×), scope discipline, completeness, maintainability (from review verdict); NOT a single score. End with the "not measurable per-run" note.>
-
    ## Run notes
    <derived from state — see "Run notes content" below>
 
@@ -379,6 +367,12 @@ This is the **only phase that commits**. By the time you reach it, the working t
    Write the PR's **free-prose** parts — the title, the **lede**, the "what to look at" half of each `## Review this first` line, and `## Run notes` — in the resolved **Comment voice** (see the `## Comment voice` section). The machine-structured parts (every `##` heading, the task-breakdown / AC tables, the AC checklist, the Mermaid diagram, the `## Visual changes` before/after table, and each `## Review this first` line's `path:line` coordinate and parenthetical reason) stay verbatim and structural — voice does not touch them. **The lede's 300-character cap is a hard constraint that outranks voice**, on the same terms as the PR title's 70-char cap.
 
    Per the global rule in `~/.claude/CLAUDE.md`: do NOT add a `Co-Authored-By: Claude` trailer, a `🤖 Generated with [Claude Code]` line, or any other AI-attribution marker to the PR body or title. This is a hard constraint that outranks any `VOICE.md`.
+
+   **The PR body carries NO run-metrics sections.** `## Test plan`, `## Estimate vs actual`, `## Checks performed` and `## Quality signals` are rendered into `.auto-task/<branch>/CONTEXT.md` and into `state` (`estimate` / `actuals` / `checks[]` / `quality`) — which is what the telemetry payload reads — and they stop there. Do not emit any of those four headings in the PR body, and do not fold their content into another section (a "verification effort" line under `## Run notes` is the same block wearing a different heading).
+
+   This is a deliberate audience split, not a size trim. Those four sections measure **the run**: how long it took, how close its own estimate was, how many checks it executed, how many defects it caught early versus late. A reviewer is deciding about **the change** — whether the diff is correct and whether it should land — and for that question the run's self-reported effort is not evidence. Worse, it is *self-reported*: the run grading its own delivery reliability, at the top of the artifact asking a human to trust it, is exactly the material a reader has no way to check and every reason to skim past. A block that fires on every PR and cannot be verified from the PR trains reviewers to scroll — and the sections that DO matter (`## Review this first`, `## Task breakdown`, `## Acceptance Criteria`) sit in the same scroll. The metrics keep their full fidelity in CONTEXT.md and telemetry, where the audience is whoever is auditing the pipeline and where trends across runs — not one run's numbers — are the readable signal.
+
+   The verification a reviewer genuinely needs is still in the PR: each AC's bound check appears under `## Acceptance Criteria`, and any check that FAILED or warned is not a metric but a defect — it cannot reach Phase 5 unresolved, so its absence from the PR body is not a gap.
 
    The PR body does NOT reference `.auto-task/<branch>/CONTEXT.md` or anything under `.auto-task/` — those paths are local-only and would be broken links for anyone reading the PR on GitHub. Reviewers who want the full context fetch the branch and read `.auto-task/<branch>/CONTEXT.md` locally; the `/auto-task-code-review` skill is expected to do this automatically (see "Read-before-review contract").
 
