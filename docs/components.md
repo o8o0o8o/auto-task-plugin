@@ -53,7 +53,7 @@ Only `SKILL.md` is loaded into context on every turn of every run, so the spec i
 
 ### What the split cost and what guards it
 
-The carve cut the always-loaded spine from **397,676 B to 122,842 B (−69.1%)** — roughly 97k tokens down to ~30k on every turn.
+The carve cut the always-loaded spine from **397,676 B to 122,866 B (−69.1%)** — roughly 97k tokens down to ~30k on every turn.
 
 **Every line of the original spec was preserved byte-for-byte at the time of the carve**, so no contract was dropped or reworded by the split itself.
 
@@ -197,10 +197,10 @@ Committing while the working tree sits on a branch other than an active in-place
 
 ## Test coverage
 
-**`tests/enforcement-spine.test.sh`** — 503 assertions covering the full STANDARD + LIGHT lifecycle, gate ordering, review-staleness (including enforcement during a merge and under hostile git config), raw-mode commit detection, the Stop-hook stall-breaker, the AI-attribution block, the fail-open/fail-closed edges, per-worktree / subdirectory / nested-repo state resolution, worktree-isolated-run resolution with `CLAUDE_PROJECT_DIR` pinned to the main checkout, the checkout-drift block and warning, and `check-version.sh --plain` behavior.
+**`tests/enforcement-spine.test.sh`** — 584 assertions covering the full STANDARD + LIGHT lifecycle, gate ordering, review-staleness (including enforcement during a merge and under hostile git config), raw-mode commit detection, the Stop-hook stall-breaker, the AI-attribution block, the fail-open/fail-closed edges, per-worktree / subdirectory / nested-repo state resolution, worktree-isolated-run resolution with `CLAUDE_PROJECT_DIR` pinned to the main checkout, the checkout-drift block and warning, and `check-version.sh --plain` behavior.
 
 **`tests/enforce-gates-hygiene.test.sh`** — 139 assertions on the commit-time diff-hygiene gate: non-ASCII, tab-bearing, pathspec-magic and option-shaped paths (including a file named `-`); a credential on a `++`-prefixed line; an invalid-UTF-8 byte under a UTF-8 locale; the commit detector under a multi-line command padded past the pipe buffer, with a padded non-commit negative control; each blocking row; the `warn`-demotion pass-through; the index scan, including a staged secret whose file was deleted from the worktree; the fail-closed cases both symmetric and *asymmetric*; the `.gitattributes` / `diff.external` off-switches with a genuinely-binary negative control; **large** diffs above the pipe buffer in both the attribute-marked and plain shapes; every non-array shape of the override record; the override's pinning under tracked/untracked/index drift; the hook's own printed override snippet executed as-shipped from a path containing a space; and the ordinary diffs that trip the rename-blind scanner.
 
 Two of those 139 are skipped where a mode-000 file is still readable — for example, running as root.
 
-Plus 32 other suites. Every measurement helper has a focused test under `tests/`.
+Plus 33 other suites. Every measurement helper has a focused test under `tests/`.

@@ -654,6 +654,41 @@ RETIRED_PREFIXES = {
   '   <one-line tally `N checks: X pass / Y warn / Z fail / W info` from state.checks[]': 1,
   '   ## Quality signals': 1,
   '   <the state.quality panel as bullets': 1,
+
+  # --- AC pre-flight gained POLARITY and the discrimination check ------------
+  # Pre-flight dry-ran every executable AC and pinned its baseline, but never
+  # asked whether that baseline could MOVE. A `change` AC whose check already
+  # passes before any code changed cannot tell "done" from "not done": Phase 3
+  # records a pass, Gate A has no movement to compare, and the run greens without
+  # verifying anything — the silent failure the INCONCLUSIVE floor exists to stop,
+  # arriving through the one door it did not cover. Measured cause, not a
+  # hypothetical: an assertion written with the implementation in view takes its
+  # expected value from the observed behaviour rather than from the criterion
+  # (independent test generation detects 25% of faults, post-implementation 14%).
+  #
+  # Each line below is replaced, in this same commit, by an equivalent that states
+  # the contract at least as strongly: the step list keeps every one of its old
+  # obligations and gains a polarity classification with two named defect cells
+  # (`vacuous`, `pre-broken`) and their asymmetric routing; the outcome list grows
+  # from three routes to five with the original three unchanged in meaning; and the
+  # PLAN.md evidence bullet gains the polarity + baseline direction it must surface
+  # at the human gate. Full contract: `references/phase-1-preamble.md`
+  # ("ac-preflight"), guarded by `tests/ac-preflight-polarity.test.sh`.
+  #
+  # Steps 2-4: step 2's history entry widened (polarity + two result values), and
+  # steps 3 and 4 renumbered to 4 and 5 to make room for the discrimination check.
+  '2. **Pin the baseline**': 1,
+  '3. **Sample-verify when the AC depends': 1,
+  '4. **Pre-flight syntax check.**': 1,
+  # The outcome list: header recount plus the three original routes, each restated
+  # with its result value named so the list and the defect cells cannot disagree.
+  'Pre-flight produces one of three outcomes:': 1,
+  '- **All ACs pinned, FP': 1,
+  "- **Any AC's command errors**": 1,
+  '- **Any sampled list shows FP > 20%**': 1,
+  # The evidence bullet now carries polarity and whether the baseline fails/passes
+  # as required — the field a human would check to catch a vacuous AC at the gate.
+  'Pre-flight evidence (the pinned baselines': 1,
 }
 
 bc = collections.Counter(l for l in base if l.strip())

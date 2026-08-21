@@ -1578,6 +1578,27 @@ expect "spine: CHANGELOG size claim matches the actual spine" \
   "$(wc -c < "$SPINE_ONLY" | tr -d ' ')"
 
 expect "spine: under the 120 KB budget"            "$([ "$(wc -c < "$SPINE_ONLY")" -le 122880 ] && echo yes || echo no)" "yes"
+
+# The docs' SUITE COUNT, pinned. Both user-facing docs state how many test suites
+# exist, by hand, and both had rotted: README claimed 31 and docs/components.md 32
+# while the tree held 35 files. Adding a test file is what silently falsifies them,
+# so the claim is pinned to a live count rather than to a maintainer's memory.
+# The two framings differ deliberately and both are checked: README excludes only
+# enforcement-spine ("alongside N other suites — including enforce-gates-hygiene"),
+# while components.md names two suites before its "Plus N other suites".
+SUITE_N="$(ls "$HOOKS"/../tests/*.test.sh 2>/dev/null | wc -l | tr -d ' ')"
+expect "docs: README 'other suites' = files - 1" \
+  "$(grep -oE 'alongside [0-9]+ other suites' "$LBRDME" | head -1 | grep -oE '[0-9]+')" \
+  "$((SUITE_N - 1))"
+expect "docs: components 'Plus N other suites' = files - 2" \
+  "$(grep -oE 'Plus [0-9]+ other suites' "$LBRDME" | head -1 | grep -oE '[0-9]+')" \
+  "$((SUITE_N - 2))"
+# The hygiene suite's assertion count is stated in both docs; measure it rather than
+# trust it. (This suite's OWN count cannot be self-pinned — asserting it would change
+# it — which is why 503 rotted to 581 unnoticed. Recorded as a known gap.)
+expect "docs: hygiene assertion count matches a live run" \
+  "$(grep -oE '\(139 assertions on the commit-time diff-hygiene gate\)' "$LBRDME" | head -1 | grep -oE '[0-9]+')" \
+  "$(bash "$HOOKS/../tests/enforce-gates-hygiene.test.sh" </dev/null 2>&1 | grep -oE 'SUMMARY: [0-9]+ passed' | grep -oE '[0-9]+')"
 # CO-LOCATION — positionally-coupled prose must stay in ONE file, or an ordering
 # assertion silently degrades into a meaningless cross-file line comparison.
 # Phase 5's three step anchors are the live case (tests/docs-step.test.sh indexes

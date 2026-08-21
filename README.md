@@ -141,7 +141,7 @@ MIT — see [`LICENSE`](LICENSE).
 
 ## Status
 
-**v0.36.0.** The install path is verified in a throwaway directory, and the enforcement spine (state machine ↔ hooks) is covered by automated integration tests: `tests/enforcement-spine.test.sh` carries 503 assertions across the full STANDARD + LIGHT lifecycle, alongside 31 other suites — including `tests/enforce-gates-hygiene.test.sh` (139 assertions on the commit-time diff-hygiene gate). See [Components](docs/components.md#test-coverage) for what those suites actually cover.
+**v0.36.0.** The install path is verified in a throwaway directory, and the enforcement spine (state machine ↔ hooks) is covered by automated integration tests: `tests/enforcement-spine.test.sh` carries 584 assertions across the full STANDARD + LIGHT lifecycle, alongside 34 other suites — including `tests/enforce-gates-hygiene.test.sh` (139 assertions on the commit-time diff-hygiene gate). See [Components](docs/components.md#test-coverage) for what those suites actually cover.
 
 The *model-follows-the-prose* path is no longer untested either: Gate A/B and the orchestrator's phase-driving have driven many live `/auto-task` runs against real tasks, and the telemetry those runs record is what several releases — including the Gate B bounding in 0.29.0 — were derived from.
 
