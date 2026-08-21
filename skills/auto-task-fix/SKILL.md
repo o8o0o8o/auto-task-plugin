@@ -67,6 +67,7 @@ Goal: implement the minimum change that satisfies the criteria.
 - No new files unless strictly necessary.
 - Reuse existing patterns and utilities.
 - Follow project conventions (`CLAUDE.md`, neighboring code).
+- **No narration.** Do not annotate the fix in the source — no `// fixed the null case`, no step banners, no restating the line below. A comment is justified only when it records something the code cannot say: the non-obvious constraint the bug came from, or a "do not simplify this back" warning. Everything else about the fix belongs in the commit message and the patch file.
 
 ## Phase 4 — Prevent (mandatory)
 
@@ -74,7 +75,7 @@ Goal: make this class of bug harder to recur.
 
 - **Classify the root cause** with a tag: e.g. `null-check`, `async`, `race-condition`, `off-by-one`, `state`, `types`, `css`, `api`, `validation`.
 - **Search for siblings.** Grep the codebase for the same class of issue (same pattern, same missing check, same misuse). Fix the ones you find, or list them in the patch file as follow-ups if out of scope.
-- **Add a guardrail** appropriate to the cause: a unit test that pins the fixed behavior, a type tightening, a lint rule, a runtime assertion at a boundary, or a comment explaining a non-obvious invariant. Pick the lightest one that actually prevents recurrence.
+- **Add a guardrail** appropriate to the cause: a unit test that pins the fixed behavior, a type tightening, a lint rule, a runtime assertion at a boundary, or a comment recording a non-obvious invariant. Pick the lightest one that actually prevents recurrence — and prefer one that fails loudly (test, type, assertion) over one that only asks the next reader to notice.
 - **Write the patch file.** Ensure `.auto-task/<branch>/fixes/` exists. Create `.auto-task/<branch>/fixes/YYYY-MM-DD-HH.mm.md`:
 
   ```markdown

@@ -71,6 +71,14 @@ After you type `approved` / `proceed` / `yes`, the pipeline runs unattended thro
 
 Phases 4 and Gate B carry the most nuance — how findings are graded, when a round reopens the loop, and what the caps are. That contract is in **[Architecture → The review loop](architecture.md#the-review-loop)**.
 
+### Code comments
+
+The code the pipeline writes is meant to read without narration. `auto-task-implement` and `auto-task-fix` will not annotate their own work — no `// Step 3: validate`, no restating the line below, no "replaces the old approach" notes. A comment is written only when it carries something the code cannot: a non-obvious constraint, a workaround for an upstream bug, an invariant no name or type expresses, or a "do not simplify this back" warning. When code seems to *need* a comment to be readable, the first move is to make it readable.
+
+`auto-task-code-review` reviews this as its own dimension, scoped to the comments the diff added or touched — so noise gets caught even when a fix introduced it. Findings there are `required` at most, never blockers — so they are deferred rather than round-triggering: normally they are fixed in the deferred batch before the commit, and once that batch is spent they park as follow-ups instead. Comments the run did not write are left alone.
+
+Project conventions win where they conflict — if your `CLAUDE.md` mandates docstrings on exported symbols, that is followed.
+
 ## Resume an interrupted run
 
 ```

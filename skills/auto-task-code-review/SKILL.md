@@ -66,7 +66,7 @@ Produce a short report:
 1. **Scope** — exact files/functions/diff under review.
 2. **Blast radius** — modules and callers that depend on this code.
 3. **Risk** — low or high, with a one-line justification.
-4. **Review dimensions** — which of {correctness, bugs, regressions, edge cases, complexity, consistency} apply, and any to skip with reason.
+4. **Review dimensions** — which of {correctness, bugs, regressions, edge cases, complexity, consistency, comments} apply, and any to skip with reason.
 5. **Out of scope** — things the user might expect but won't be covered (e.g. performance if not asked, security if not relevant).
 
 Print the report so the user can see the framing, then proceed directly to Phase 3 in the same turn. Do not wait for approval.
@@ -123,6 +123,13 @@ State both on every finding, including one you rate a blocker:
 - Diverges from neighboring style, naming, or error-handling patterns?
 - New patterns introduced where existing ones would do?
 - Project conventions from `CLAUDE.md` violated?
+
+**Comments** — *only comments this diff added or touched. Pre-existing comments elsewhere are out of scope.*
+- **Narration.** A comment restating the line below it, step numbering, a section banner, commentary on the change itself (`// new logic for X`, `// replaces the old approach`), or an attribution note.
+- **A comment standing in for readable code.** If it exists to explain a name, a nesting level, or a magic value, the finding is the *code* — say which change (rename, extract, named constant, early return) removes the need for the sentence.
+- **Stale or wrong.** The comment describes behavior this diff changed, or the diff deleted a load-bearing "do not simplify / this must stay in two calls" note while keeping the code it protected. The second is the more expensive one: it silently removes the only warning the next author would get.
+- **Commented-out code, and TODOs with no issue reference.**
+- **Severity: `required` at most, never a blocker.** These are `reachable: docs-only` and normally `ac: none` — real defects worth fixing in this change, but they do not justify holding the diff. Do not pad: if the diff's comments are fine, this dimension gets one line.
 
 ## Phase 4 — Prevent
 

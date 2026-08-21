@@ -56,6 +56,28 @@ When all tasks are checked:
 - Update the Status in PLAN.md from "IN PROGRESS" to "COMPLETE".
 - Tell the user: "All tasks complete. Run `/auto-task-verify` to check the work, then `/auto-task-commit` to save."
 
+## Comment discipline
+
+Code should read without narration. Before writing a comment, try to make it unnecessary — a clearer name, a smaller function, an early return, a named constant. A comment you cannot remove that way is often a signal to reconsider the implementation, not to explain it harder.
+
+**Write one only when it carries what the code cannot:**
+
+- **Why, not what** — a non-obvious constraint, a spec or protocol quirk, a workaround for an upstream bug (name it, link the issue).
+- **A load-bearing warning** — "do not fold these into one call, it breaks X" — where the next reader would otherwise tidy the code away.
+- **An invariant or a unit** that no name or type carries: `ms`, "caller holds the lock", "input is already sorted".
+- **The project's own API-doc convention** — a JSDoc/docstring on an exported symbol, where neighbouring code already does that.
+
+**Never write:**
+
+- A restatement of the line below it: `// increment the counter`, `// loop over users`.
+- Step numbering, section banners, or commentary on your own work: `// Step 3: validate`, `// new logic for the feature`, `// replaces the old approach`.
+- Attribution or changelog notes — the commit message and git history own that.
+- Commented-out code, or a TODO with no issue reference.
+
+**Style, when a comment earns its place:** one line if one line does it, plain human sentence, present tense, directly above what it explains, no internal vocabulary. Match the file you are in — do not be the one function in the module carrying a banner every ten lines.
+
+**Do not sweep comments you did not write.** Rewrite or delete an existing comment only when your change made it wrong or stale. A "do not simplify this" note that reads like noise is usually the reason the code still works.
+
 ## Rules
 
 - Implement tasks in the order specified. Do not skip or reorder.
@@ -64,3 +86,4 @@ When all tasks are checked:
 - Always update the checkbox in PLAN.md immediately after completing each task. This is critical for session resumption.
 - Do not modify the plan structure -- only update checkboxes and add notes under tasks if needed.
 - Apply lessons from patches: if past patches warn about specific patterns, follow their guidance.
+- Apply the comment discipline above. If a piece of code seems to need a comment to be readable, first try making it readable; add the comment only when the thing it says is genuinely not expressible in the code.
