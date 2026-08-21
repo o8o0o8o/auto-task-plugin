@@ -2,6 +2,26 @@
 
 All notable changes to `auto-task-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.40.0]
+
+<!-- release-notes: The code the pipeline writes no longer narrates itself. Step banners, restatements of the line below, and "replaces the old approach" notes are out; a comment is written only when it says something the code cannot — and when code seems to need one to be readable, the code changes instead. -->
+
+### Changed
+
+- **Generated code is now held to a comment-discipline rule, and the review enforces it.** Team feedback: the code the pipeline writes carries junk inline comments that clutter the file and get in the way of reading it. The sharper half of that complaint is that a comment is often a *smell* — if code needs a sentence to be readable, the implementation is what should change — and demanding that sometimes makes the agent reconsider the solution rather than annotate it.
+
+  `auto-task-implement` gains a `## Comment discipline` section that leads with exactly that move: before writing a comment, try to make it unnecessary — a clearer name, a smaller function, an early return, a named constant. What survives is a short allowlist (why-not-what, a load-bearing "do not simplify this" warning, an invariant or unit no type carries, the project's own docstring convention) against an explicit banlist (restating the line below, step numbering, section banners, commentary on the agent's own work, attribution or changelog notes, commented-out code, ownerless TODOs). Style is pinned too: one line if one line does it, plain human sentence, present tense, matching the density of the file it lands in.
+
+  `auto-task-fix` carries the same rule at its narrowest point — no `// fixed the null case`; what the fix was belongs in the commit message and the patch file — and its Phase-4 guardrail list now prefers a guardrail that **fails loudly** (test, type, assertion) over one that only asks the next reader to notice.
+
+  **`auto-task-code-review` gets `comments` as a review dimension, which is what makes the rule hold for every producer.** Whatever writes into the diff — implement, fix, or an orchestrator-applied review fix — is read by the same pass. Two properties keep it from becoming its own kind of noise. Scope is **only comments the diff added or touched**, so it cannot turn into a codebase-wide comment audit, and the existing no-padding rule applies — a clean diff gets one line, not invented nits. Severity is **`required` at most, never a blocker**: these are `reachable: docs-only` and normally `ac: none`, so under the Phase-4 grading test they *defer* rather than reopen — fixed in the deferred batch before the commit, never buying themselves a review round. That is deliberate, and it is the failure mode the review contract already documents: a self-assigned `required` on prose used to reopen the whole loop.
+
+  **Two guards against over-correction**, since the cheap reading of this rule is "delete comments". Existing comments are not the run's to sweep — rewritten only when the change made them wrong or stale — and a "do not simplify this" note that reads like noise is usually the reason the code still works. Project conventions win where they conflict: a repo whose `CLAUDE.md` mandates docstrings on exported symbols still gets them.
+
+  **No hook check, on purpose.** A comment-to-code ratio heuristic would fire constantly on this repo's own shell files, where the dense commentary is intentional and load-bearing, and a row that cries wolf teaches people to ignore it.
+
+  **Spec accounting.** The always-loaded spine and its reference files are untouched — the change lands in three sibling skills plus `docs/usage.md` — so `tests/spec-inventory.sh` is unchanged at `missing=0 retired=90 duplicated=0 restated=0`, with `directives=7/7`.
+
 ## [0.39.0]
 
 <!-- release-notes: Your PR body no longer opens with the run grading its own performance. The four run-metrics sections moved to the local run context and telemetry, where trends across runs — not one run's numbers — are the readable signal. -->
